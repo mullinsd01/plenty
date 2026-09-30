@@ -188,8 +188,10 @@ describe("predictRunOut — uncertainty, basis and wording", () => {
     const p = predict([batch({ id: "milk", purchasedAgo: 2 * HOUR, quantity: 2000 })], milkEstimate)!;
     const days = p.daysRemaining;
     expect(p.basis).toBe("estimate");
-    expect(p.daysLow).toBeCloseTo(days * 0.5, 6);
-    expect(p.daysHigh).toBeCloseTo(days * 1.5, 6);
+    // ±50% of how long the 2 L lasts from purchase (5 days at 400 ml/day), so
+    // the band doesn't shrink as the estimate ages.
+    expect(p.daysLow).toBeCloseTo(days - 0.5 * 5, 6);
+    expect(p.daysHigh).toBeCloseTo(days + 0.5 * 5, 6);
     // ~4.98 days, low confidence → 2–7 days rather than a precise-sounding "about 5 days".
     expect(p.label).toBe("2–7 days");
     expect(p.reason).toBe(

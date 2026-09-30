@@ -106,6 +106,7 @@ describe("cleanReceiptText", () => {
       tokens: ["full", "cream"],
       size: { quantity: 2, unit: "l" },
       packCount: null,
+      sizeIsTotal: false,
       perKg: false,
       removedBrandTokens: ["wm"],
     });

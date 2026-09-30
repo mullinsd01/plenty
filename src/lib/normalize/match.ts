@@ -1098,10 +1098,17 @@ function roundAmount(quantity: number): number {
   return Math.round(quantity * 1000) / 1000;
 }
 
-/** Explicit size (× pack count) expressed in the product's tracking unit where that makes sense. */
-function amountFromSize(size: Amount, packCount: number | null, product: CatalogProduct): Amount {
+/** The whole line's amount as printed: one item's size × the pack count, unless the size already covers the pack. */
+function printedTotal(cleaned: CleanedReceiptText, size: Amount): Amount {
+  const items = cleaned.sizeIsTotal ? 1 : (cleaned.packCount ?? 1);
+  return { quantity: size.quantity * items, unit: size.unit };
+}
+
+/** The line's printed amount (see `printedTotal`) in the product's tracking unit where that makes sense. */
+function amountFromSize(cleaned: CleanedReceiptText, size: Amount, product: CatalogProduct): Amount {
   const productUnit = product.unit;
-  const total: Amount = { quantity: size.quantity * (packCount ?? 1), unit: size.unit };
+  const packCount = cleaned.packCount;
+  const total = printedTotal(cleaned, size);
 
   if (unitDimension(productUnit) === "count") {
     // Each item of a multipack is one tracked unit (24 × 375 ml beer → 24).
@@ -1132,18 +1139,21 @@ function onePiece(product: CatalogProduct): Amount | null {
 }
 
 /**
- * Quantity bought: the explicit size on the line (× pack count), then one
- * piece for lines sold each, then the matched product's package, then one
- * each. Converted into the product's tracking unit when the conversion is
- * unambiguous.
+ * Quantity bought: the explicit size on the line (× pack count, unless the
+ * size is the pack's net weight), then one piece for lines sold each, then
+ * the matched product's package, then one each. Converted into the
+ * product's tracking unit when the conversion is unambiguous.
  */
 function resolveAmount(cleaned: CleanedReceiptText, product: CatalogProduct | null, soldEach: boolean): Amount {
   const { size, packCount } = cleaned;
   if (!product) {
-    if (size) return { quantity: roundAmount(size.quantity * (packCount ?? 1)), unit: size.unit };
+    if (size) {
+      const total = printedTotal(cleaned, size);
+      return { quantity: roundAmount(total.quantity), unit: total.unit };
+    }
     return { quantity: packCount ?? 1, unit: "each" };
   }
-  if (size) return amountFromSize(size, packCount, product);
+  if (size) return amountFromSize(cleaned, size, product);
   if (packCount !== null && unitDimension(product.unit) === "count") return { quantity: packCount, unit: product.unit };
   const piece = soldEach && packCount === null ? onePiece(product) : null;
   return piece ?? { quantity: product.packageQuantity, unit: product.unit };

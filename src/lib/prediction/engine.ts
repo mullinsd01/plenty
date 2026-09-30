@@ -232,6 +232,24 @@ function relativeSpread(stats: PredictionStats): number {
   return stats.observations < FEW_OBSERVATIONS ? spread * FEW_OBSERVATIONS_SPREAD_FACTOR : spread;
 }
 
+/**
+ * Pessimistic/optimistic days left. The spread applies to how long the stock
+ * lasts from its latest confirmed level (purchase, adjustment or check-in) —
+ * not merely to what the simulation says is left — so the band widens, rather
+ * than shrinks, the longer Plenty has been extrapolating from an uncertain
+ * rate. Right after a snapshot it is simply `daysRemaining × (1 ± spread)`.
+ */
+function daysBand(
+  sim: BatchSimulation,
+  dailyRate: number,
+  daysRemaining: number,
+  spread: number,
+): { daysLow: number; daysHigh: number } {
+  const lastsFromSnapshot = Math.max(daysRemaining, sim.remainingAtLastSnapshot / dailyRate);
+  const margin = spread * lastsFromSnapshot;
+  return { daysLow: Math.max(0, daysRemaining - margin), daysHigh: daysRemaining + margin };
+}
+
 function describeAmount(amount: number, unit: BaseUnit): string {
   if (unit !== "each") return formatBase(amount, unit);
   return Math.abs(amount - 1) < 0.05 ? "one of these" : `${formatAmount(amount)} of these`;
@@ -281,7 +299,8 @@ function shouldCheckIn(sim: BatchSimulation, batches: readonly BatchState[], dai
  * level above zero) or no usable daily rate. Otherwise simulates the batches
  * (see `simulateBatches`) and reports days remaining with a low/high band:
  * ±50% for estimates, ±variability (10–80%, widened ×1.25 below three
- * observations) for history. The label avoids false precision and the
+ * observations) for history, applied to how long the stock lasts from its
+ * latest confirmed level (see `daysBand`). The label avoids false precision and the
  * reason explains the basis in plain language.
  */
 export function predictRunOut(input: PredictRunOutInput): RunOutPrediction | null {
@@ -293,9 +312,7 @@ export function predictRunOut(input: PredictRunOutInput): RunOutPrediction | nul
 
   const sim = simulateBatches(batches, dailyRate, now);
   const daysRemaining = sim.remainingBase / dailyRate;
-  const spread = relativeSpread(stats);
-  const daysLow = Math.max(0, daysRemaining * (1 - spread));
-  const daysHigh = daysRemaining * (1 + spread);
+  const { daysLow, daysHigh } = daysBand(sim, dailyRate, daysRemaining, relativeSpread(stats));
 
   return {
     remainingBase: sim.remainingBase,

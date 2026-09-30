@@ -51,6 +51,8 @@ const SOURCE_PRIORITY: Record<NeedSource, number> = { meal_plan: 0, predicted: 1
 
 const DAYS_PER_WEEK = 7;
 const DAYS_PER_MONTH = 30;
+/** Below a week and a half it's "every week"; from there, whole weeks round to 2 or more. */
+const WEEKLY_MAX_DAYS = 1.5 * DAYS_PER_WEEK;
 
 export interface WasteStats {
   wasteRatio: number;
@@ -103,7 +105,7 @@ export function runOutReason(prediction: Pick<PredictionInput, "daysRemaining" |
 function intervalPhrase(days: number): string {
   if (days < 1.5) return "every day";
   if (days < 6.5) return `every ${Math.round(days)} days`;
-  if (days < 10) return "every week";
+  if (days < WEEKLY_MAX_DAYS) return "every week";
   if (days < 26) return `every ${Math.round(days / DAYS_PER_WEEK)} weeks`;
   if (days < 45) return "every month";
   return `every ${Math.round(days / DAYS_PER_MONTH)} months`;

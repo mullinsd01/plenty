@@ -21,6 +21,7 @@ export const TREND_MIN_WEEKS_WITH_SPEND = 2;
 export const TREND_THRESHOLD = 0.1;
 /** Averages at or above this are rounded to the nearest 5 in labels. */
 const ROUND_TO_FIVE_FROM = 50;
+const ROUNDED_MONEY_STEP = 5;
 const DAYS_PER_WEEK = 7;
 
 const CURRENCY_SYMBOLS: Record<Currency, string> = {
@@ -123,10 +124,28 @@ function trendOf(weeks: readonly SpendWeek[]): SpendTrend | null {
   return "steady";
 }
 
+/** Rounding step used when showing `amount`: 5 for larger amounts, else 1. */
+function approxMoneyStep(amount: number): number {
+  return amount >= ROUND_TO_FIVE_FROM ? ROUNDED_MONEY_STEP : 1;
+}
+
 /** "$185" — whole units, nearest 5 for larger amounts to avoid false precision. */
 function formatApproxMoney(amount: number, currency: Currency): string {
-  const rounded = amount >= ROUND_TO_FIVE_FROM ? Math.round(amount / 5) * 5 : Math.round(amount);
-  return `${CURRENCY_SYMBOLS[currency]}${rounded}`;
+  const step = approxMoneyStep(amount);
+  return `${CURRENCY_SYMBOLS[currency]}${Math.round(amount / step) * step}`;
+}
+
+/**
+ * Where the average sits against the budget, judged no more finely than the
+ * figures shown: within half a rounding step of the (whole-unit) budget it is
+ * "right on" it, so the label never reads "about $200 a week, over your $200
+ * budget".
+ */
+function budgetPhrase(average: number, budget: number, currency: Currency): string {
+  const shownBudget = Math.round(budget);
+  const budgetText = `${CURRENCY_SYMBOLS[currency]}${shownBudget}`;
+  if (Math.abs(average - shownBudget) < approxMoneyStep(average) / 2) return `right on your ${budgetText} budget`;
+  return average > budget ? `over your ${budgetText} budget` : `within your ${budgetText} budget`;
 }
 
 function spendLabel(
@@ -137,10 +156,7 @@ function spendLabel(
 ): string | null {
   if (average === null) return null;
   const base = `You spend about ${formatApproxMoney(average, currency)} a week`;
-  if (budget !== null) {
-    const budgetText = `${CURRENCY_SYMBOLS[currency]}${Math.round(budget)}`;
-    return average > budget ? `${base}, over your ${budgetText} budget` : `${base}, within your ${budgetText} budget`;
-  }
+  if (budget !== null) return `${base}, ${budgetPhrase(average, budget, currency)}`;
   if (trend === "up") return `${base}, and it's been creeping up`;
   if (trend === "down") return `${base}, and it's been coming down`;
   return base;

@@ -19,11 +19,13 @@ import type { ProductInfo } from "@/lib/catalog/types";
 import { WEEKDAY_NAMES, weekdayOf } from "@/lib/dates";
 import type { Aisle } from "@/lib/domain";
 import {
-  allocateMealIngredients,
+  allocateIngredientGroup,
   convertForProduct,
+  mergeIngredientGroups,
   roundQuantity,
   summarizeAvailability,
   type IngredientAllocation,
+  type IngredientGroup,
   type LotBalances,
 } from "@/lib/meals/matching";
 import type { InventoryLot, MissingIngredient, PlanMealInput, PlanRequirementsResult } from "@/lib/meals/types";
@@ -284,7 +286,9 @@ function chronological(items: readonly PlanMealInput[]): Array<{ item: PlanMealI
  * What a meal plan needs to buy, net of the kitchen.
  *
  * Meals claim inventory chronologically (see module doc), so availability
- * per meal reflects what earlier meals have already used. Required
+ * per meal reflects what earlier meals have already used — required
+ * ingredients across the whole plan first, then optional extras from what's
+ * left, so a garnish never makes another meal short. Required
  * ingredients that are missing or only partly covered (< 75%) become
  * shortfalls, aggregated per product (or normalised name) across meals in
  * the product's tracking unit, and rounded up to whole packages (loose
@@ -296,15 +300,22 @@ export function computePlanRequirements(input: PlanRequirementsInput): PlanRequi
   const balances: LotBalances = new Map();
   const allocations: IngredientAllocation[][] = new Array(input.items.length);
   const lines: Line[] = [];
+  const order = chronological(input.items);
+  const allocate = (item: PlanMealInput, group: IngredientGroup) =>
+    allocateIngredientGroup(item.meal, group, input.lots, input.products, { servings: item.servings, date: item.date }, balances);
 
-  for (const { item, index } of chronological(input.items)) {
-    const allocated = allocateMealIngredients(item.meal, input.lots, input.products, { servings: item.servings, date: item.date }, balances);
-    allocations[index] = allocated;
+  // Every meal's required ingredients claim stock before any meal's optional garnish.
+  const required = order.map(({ item }) => {
+    const allocated = allocate(item, "required");
     const plan: PlanRef = { planItemId: item.planItemId, date: item.date, mealName: item.meal.name };
-    for (const allocation of allocated) {
+    for (const allocation of allocated.values()) {
       if (allocation.needsPurchase) addShortfall(lines, toShortfall(allocation, plan));
     }
-  }
+    return allocated;
+  });
+  order.forEach(({ item, index }, k) => {
+    allocations[index] = mergeIngredientGroups(item.meal, required[k] ?? new Map(), allocate(item, "optional"));
+  });
 
   const meals = input.items.map((item, index) => {
     const ingredients = (allocations[index] ?? []).map((a) => a.availability);

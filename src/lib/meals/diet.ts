@@ -21,9 +21,9 @@
 import type { ProductInfo } from "@/lib/catalog/types";
 import { ALLERGEN_LABELS, CONTAINS_FLAGS, DIET_EXCLUDES, type Allergen, type ContainsFlag, type Diet } from "@/lib/domain";
 import { slugKeyedCatalogProducts } from "@/lib/meals/adapters";
-import { isAssumedAvailable } from "@/lib/meals/matching";
+import { isAssumedAvailable, singularIngredientWord } from "@/lib/meals/matching";
 import type { MealIngredientInput, PlannableMeal, PlannerPreferences } from "@/lib/meals/types";
-import { normalizeText, singularize } from "@/lib/normalize";
+import { normalizeText } from "@/lib/normalize";
 
 export type DietPreferences = Pick<PlannerPreferences, "diets" | "allergies" | "dislikedIngredients">;
 
@@ -56,7 +56,8 @@ export const DIET_CONFLICT_REASONS: Record<Diet, string> = {
 
 /** Regional names rewritten to Plenty's Australian vocabulary (applied to singular text). */
 const DISLIKE_SYNONYMS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\bbell pepper\b/g, "capsicum"],
+  // "bell capsicum" is "bell peppers" after the plural rewrite below.
+  [/\bbell (?:pepper|capsicum)\b/g, "capsicum"],
   [/\baubergine\b/g, "eggplant"],
   [/\bcourgette\b/g, "zucchini"],
   [/\bcilantro\b/g, "coriander"],
@@ -111,7 +112,7 @@ export function dislikeTokens(text: string): string[] {
   let joined = normalizeText(text)
     .split(" ")
     .filter((word) => word && !/\d/.test(word))
-    .map(singularize)
+    .map(singularIngredientWord)
     .join(" ");
   for (const [pattern, replacement] of DISLIKE_SYNONYMS) joined = joined.replace(pattern, replacement);
   return joined.split(" ").filter(Boolean);
@@ -176,8 +177,12 @@ function cleanDislikes(dislikes: readonly string[]): string[] {
   return dislikes.map((d) => d.trim().replace(/\s+/g, " ")).filter((d) => dislikeTokens(d).length > 0);
 }
 
+function lookupProduct(ingredient: MealIngredientInput, products: ReadonlyMap<string, ProductInfo>): ProductInfo | undefined {
+  return ingredient.productId ? products.get(ingredient.productId) : undefined;
+}
+
 function ingredientNames(ingredient: MealIngredientInput, products: ReadonlyMap<string, ProductInfo>): string[] {
-  const product = ingredient.productId ? products.get(ingredient.productId) : undefined;
+  const product = lookupProduct(ingredient, products);
   return product && product.name !== ingredient.name ? [ingredient.name, product.name] : [ingredient.name];
 }
 
@@ -249,9 +254,10 @@ function flagConflict(flags: ReadonlySet<ContainsFlag>, prefs: DietPreferences):
  * allergies ("Contains peanuts"), then diets ("Not vegetarian"), then
  * dislikes ("Contains mushroom, which you don't like"). Only required
  * ingredients and the meal's main ingredient count — optional ones that
- * conflict are left out instead (see `ingredientsToOmit`). `products`
- * resolves ingredient product ids for flag attribution; it defaults to the
- * catalog keyed by slug.
+ * conflict are left out instead (see `ingredientsToOmit`) — and dislikes
+ * ignore to-taste basics (salt, black pepper, water), so "peppers" doesn't
+ * rule out every dish seasoned with pepper. `products` resolves ingredient
+ * product ids for flag attribution; it defaults to the catalog keyed by slug.
  */
 export function isMealAllowed(
   meal: PlannableMeal,
@@ -266,7 +272,8 @@ export function isMealAllowed(
     const mainDislike = matchingDislike([meal.mainIngredient], dislikes);
     if (mainDislike) return { allowed: false, reason: dislikeReason(mainDislike) };
     for (const ingredient of meal.ingredients) {
-      if (ingredient.optional) continue;
+      // To-taste seasonings (salt, black pepper, water) never define a dish: "peppers" means capsicum.
+      if (ingredient.optional || isAssumedAvailable(ingredient, lookupProduct(ingredient, products))) continue;
       const dislike = matchingDislike(ingredientNames(ingredient, products), dislikes);
       if (dislike) return { allowed: false, reason: dislikeReason(dislike) };
     }

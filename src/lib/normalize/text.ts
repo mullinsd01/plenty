@@ -24,10 +24,20 @@ export interface CleanedReceiptText {
   cleaned: string;
   /** `cleaned` split into words (not singularised). */
   tokens: string[];
-  /** Size of ONE item as printed ("2L" → 2 l; "6X375ML" → 375 ml), or null. */
+  /**
+   * Size as printed, or null: one item's ("2L" → 2 l; "6X375ML" → 375 ml),
+   * or the whole pack's when `sizeIsTotal`.
+   */
   size: ReceiptSize | null;
   /** Items in the pack ("6PK", "X6", "12S", "DOZEN", "6X375ML" → 6), or null. */
   packCount: number | null;
+  /**
+   * `size` is the whole pack's net amount, not one item's: a weight beside a
+   * pack count that isn't a multiplier ("SAUSAGES 8PK 500G" is 500 g of
+   * sausages). Multipliers ("6X375ML", "500G X2", "X6") and volumes
+   * ("COKE 24PK 375ML", sold by the can) give one item's size.
+   */
+  sizeIsTotal: boolean;
   /** Sold by weight ("BANANAS KG", "$3.90/KG"). */
   perKg: boolean;
   /** Store-brand / range / national-brand words that were removed. */
@@ -296,8 +306,13 @@ interface SizeExtraction {
   text: string;
   size: ReceiptSize | null;
   packCount: number | null;
+  /** The pack count was written as a multiplier ("6X375ML", "X6"), so the size is per item. */
+  packFromMultiplier: boolean;
   perKg: boolean;
 }
+
+/** Units a pack's net weight is printed in. */
+const MASS_SIZE_UNITS: ReadonlySet<Unit> = new Set<Unit>(["g", "kg"]);
 
 function roundSize(quantity: number, unit: Unit): number {
   if (unit === "l" || unit === "kg") return Math.round(quantity * 1000) / 1000;
@@ -344,18 +359,24 @@ function extractNumericSizes(input: string, found: SizeExtraction): string {
   const setSize = (next: ReceiptSize | null) => {
     if (found.size === null) found.size = next;
   };
-  const setPack = (n: number | null) => {
-    if (n !== null && found.packCount === null) found.packCount = n;
+  const setPack = (n: number | null, multiplier: boolean) => {
+    if (n === null || found.packCount !== null) return;
+    found.packCount = n;
+    found.packFromMultiplier = multiplier;
   };
   const multipack = (amount: string, unit: string, count: string) => {
     if (found.size === null) {
       setSize(toSize(Number(amount), unit));
-      setPack(positiveInt(count));
+      setPack(positiveInt(count), true);
     }
     return " ";
   };
   const pack = (_m: string, count: string) => {
-    setPack(positiveInt(count));
+    setPack(positiveInt(count), false);
+    return " ";
+  };
+  const multiplierPack = (_m: string, count: string) => {
+    setPack(positiveInt(count), true);
     return " ";
   };
   return input
@@ -371,11 +392,11 @@ function extractNumericSizes(input: string, found: SizeExtraction): string {
     })
     .replace(PACK_SUFFIX, pack)
     .replace(PLURAL_S_COUNT, pack)
-    .replace(X_COUNT, pack)
-    .replace(COUNT_X, pack)
+    .replace(X_COUNT, multiplierPack)
+    .replace(COUNT_X, multiplierPack)
     .replace(SHEETS_OR_PLY, " ")
     .replace(COUNT_NOUN, (_m, count: string, noun: string) => {
-      setPack(positiveInt(count));
+      setPack(positiveInt(count), false);
       return ` ${noun} `;
     })
     .replace(LENGTH, " ");
@@ -387,7 +408,7 @@ function extractNumericSizes(input: string, found: SizeExtraction): string {
  * rarely have any, which keeps index building fast).
  */
 function extractSizes(input: string): SizeExtraction {
-  const found: SizeExtraction = { text: input, size: null, packCount: null, perKg: false };
+  const found: SizeExtraction = { text: input, size: null, packCount: null, packFromMultiplier: false, perKg: false };
   const numeric = /\d/.test(input) ? extractNumericSizes(input, found) : input;
   if (!SIZE_WORD_HINT.test(numeric)) {
     found.text = numeric;
@@ -839,6 +860,8 @@ const ABBREVIATIONS: Record<string, string> = {
   brocoli: "broccoli",
   caps: "capsicum",
   capsic: "capsicum",
+  // UK/US/NZ "peppers" are capsicums; ground pepper is never sold as "peppers".
+  peppers: "capsicum",
   avo: "avocado",
   avos: "avocados",
   avoc: "avocado",
@@ -1207,6 +1230,7 @@ function dropNoise(tokens: Token[]): Token[] {
  *
  * "W/M FULL CREAM 2L" → { cleaned: "full cream", size: { 2, "l" } }
  * "COKE 24X375ML"     → { cleaned: "coke", size: { 375, "ml" }, packCount: 24 }
+ * "SAUSAGES 8PK 500G" → { cleaned: "sausages", size: { 500, "g" }, packCount: 8, sizeIsTotal: true }
  * "BANANAS KG"        → { cleaned: "bananas", perKg: true }
  */
 export function cleanReceiptText(raw: string, options: CleanOptions = {}): CleanedReceiptText {
@@ -1225,11 +1249,13 @@ export function cleanReceiptText(raw: string, options: CleanOptions = {}): Clean
   tokens = dropNoise(expandAbbreviations(tokens));
 
   const words = tokens.map((t) => t.text);
+  const { size, packCount } = extracted;
   return {
     cleaned: words.join(" "),
     tokens: words,
-    size: extracted.size,
-    packCount: extracted.packCount,
+    size,
+    packCount,
+    sizeIsTotal: size !== null && packCount !== null && !extracted.packFromMultiplier && MASS_SIZE_UNITS.has(size.unit),
     perKg: priced.perKg || extracted.perKg,
     removedBrandTokens,
   };

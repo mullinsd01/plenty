@@ -136,7 +136,10 @@ export interface PlannedMeal {
   date: string;
   mealId: string;
   score: number;
-  /** The meal's primary reason, for the plan card. */
+  /**
+   * The meal's primary reason, for the plan card. Saved with the plan, so it
+   * names the day ("on Tuesday") rather than saying "tomorrow".
+   */
   reason: string;
 }
 
@@ -213,6 +216,19 @@ export function whenPhrase(date: string, today: string): string {
   if (diff === 1) return "tomorrow";
   if (diff > 1 && diff < 7) return `on ${WEEKDAY_NAMES[weekdayOf(date)]}`;
   return `on ${formatShortDate(date)}`;
+}
+
+/**
+ * How a reason names the meal's day. Live reasons (scoring, "What can I
+ * make?") are read straight away; plan reasons are saved with the plan and
+ * read on later days, when "tomorrow" would be wrong.
+ */
+type DayPhrasing = "live" | "saved";
+
+/** `whenPhrase`, except a saved reason names the day ("on Tuesday") rather than saying "tomorrow". */
+function dayPhrase(date: string, today: string, phrasing: DayPhrasing): string {
+  if (phrasing === "saved" && daysBetweenDates(today, date) === 1) return `on ${WEEKDAY_NAMES[weekdayOf(date)]}`;
+  return whenPhrase(date, today);
 }
 
 /** The context with inventory balances from earlier planned meals applied. */
@@ -310,10 +326,10 @@ function jitterPoints(seed: number, mealId: string): number {
 
 // ─── Reasons ────────────────────────────────────────────────────────────────
 
-function expiringFoodReason(items: readonly UseSoonItem[], date: string, today: string): string {
+function expiringFoodReason(items: readonly UseSoonItem[], when: string): string {
   const names = items.map((item) => item.name.toLowerCase());
   const plural = names.length > 1 || isPluralName(names[0] ?? "");
-  return `Your ${joinWithAnd(names)} ${plural ? "are" : "is"} likely to go off soon, so we've used ${plural ? "them" : "it"} ${whenPhrase(date, today)}.`;
+  return `Your ${joinWithAnd(names)} ${plural ? "are" : "is"} likely to go off soon, so we've used ${plural ? "them" : "it"} ${when}.`;
 }
 
 function missingReason(missingNames: readonly string[]): string {
@@ -333,15 +349,15 @@ interface ReasonInputs {
   haveCount: number;
   missingNames: readonly string[];
   omitted: readonly OmittedIngredient[];
-  date: string;
-  today: string;
+  /** The meal's day as the reason says it: "tonight", "on Tuesday". */
+  when: string;
 }
 
 /** Reasons, most important first; always at least one. */
 function buildReasons(input: ReasonInputs): string[] {
   const { meal, history, prefs, useSoon, haveCount, missingNames } = input;
   const reasons: string[] = [];
-  if (useSoon.length > 0) reasons.push(expiringFoodReason(useSoon, input.date, input.today));
+  if (useSoon.length > 0) reasons.push(expiringFoodReason(useSoon, input.when));
   if (missingNames.length === 0) reasons.push("You already have everything");
   else if (haveCount >= USES_HAVE_REASON_MIN) reasons.push(`Uses ${haveCount} ingredients you already have`);
   if (history?.rating === 1) reasons.push("A household favourite");
@@ -359,9 +375,17 @@ function buildReasons(input: ReasonInputs): string[] {
 /**
  * Score one meal with its breakdown. Null when it's off the table: not
  * allowed for the household, rated −1, or far too long for a weeknight —
- * unless `force` (kept plan items are honoured regardless).
+ * unless `force` (kept plan items are honoured regardless). `phrasing` says
+ * whether the reasons are read now or saved with a plan.
  */
-function evaluateMeal(meal: PlannableMeal, ctx: PlannerContext, opts: ScoreMealOptions, aversions: Aversions, force = false): MealEvaluation | null {
+function evaluateMeal(
+  meal: PlannableMeal,
+  ctx: PlannerContext,
+  opts: ScoreMealOptions,
+  aversions: Aversions,
+  force = false,
+  phrasing: DayPhrasing = "live",
+): MealEvaluation | null {
   const history = ctx.history.get(meal.id);
   if (!force) {
     if (!isMealAllowed(meal, ctx.prefs, ctx.products).allowed) return null;
@@ -395,8 +419,7 @@ function evaluateMeal(meal: PlannableMeal, ctx: PlannerContext, opts: ScoreMealO
     haveCount: summary.haveCount,
     missingNames: summary.missingNames,
     omitted,
-    date: opts.date,
-    today: ctx.today,
+    when: dayPhrase(opts.date, ctx.today, phrasing),
   });
 
   return {
@@ -629,7 +652,7 @@ export function generatePlan(ctx: PlannerContext, opts: GeneratePlanOptions): Pl
   };
 
   for (const { date, meal } of firstKeepPerDate(opts.keep, new Set(dates), mealsById)) {
-    const evaluation = evaluateMeal(meal, withBalances(ctx, balances), optionsFor(date), aversions, true);
+    const evaluation = evaluateMeal(meal, withBalances(ctx, balances), optionsFor(date), aversions, true, "saved");
     if (evaluation) claim(evaluation, date);
   }
 
@@ -638,7 +661,7 @@ export function generatePlan(ctx: PlannerContext, opts: GeneratePlanOptions): Pl
     if (assigned.has(date)) continue;
     const working = withBalances(ctx, balances);
     const unavailable = new Set([...used, ...excluded]);
-    const candidates = candidatesForDate(ctx.meals, date, assigned, unavailable, (meal) => evaluateMeal(meal, working, optionsFor(date), aversions));
+    const candidates = candidatesForDate(ctx.meals, date, assigned, unavailable, (meal) => evaluateMeal(meal, working, optionsFor(date), aversions, false, "saved"));
     const pick = pickCandidate(candidates, opts.seed);
     if (pick) claim(pick, date);
   }

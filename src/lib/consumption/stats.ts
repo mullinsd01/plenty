@@ -48,9 +48,14 @@ const DAYS_PER_YEAR = 365;
 
 /** Share of the history rate taken from the long-run median (the rest is the recent rate). */
 export const HISTORY_MEDIAN_WEIGHT = 0.5;
-/** The prior is worth this many observations when blending (w = n / (n + k)). */
+/**
+ * The prior is worth this many observations when blending (w = e / (e + k)).
+ * Here and in the thresholds below, observations are counted as evidence: a
+ * finished lifecycle counts 1, a partly used wasted/expired one counts
+ * `PARTIAL_OBSERVATION_WEIGHT`.
+ */
 export const PRIOR_PSEUDO_OBSERVATIONS = 2;
-/** Observations needed before the rate counts as learned from history. */
+/** Observations (evidence) needed before the rate counts as learned from history. */
 export const MIN_HISTORY_OBSERVATIONS = 2;
 
 export const HIGH_CONFIDENCE_MIN_OBSERVATIONS = 5;
@@ -78,7 +83,8 @@ interface WeightedValue {
 interface CleanObservation {
   used: number;
   wasted: number;
-  durationDays: number;
+  /** Null when the lifecycle's length can't be known (it then can't inform the rate). */
+  durationDays: number | null;
   endedAt: Date;
   /** Midpoint of the lifecycle; what seasonality is keyed on. */
   midpoint: Date;
@@ -186,10 +192,23 @@ function circularDayDistance(a: number, b: number): number {
 
 // ─── Observations → rate samples ────────────────────────────────────────────
 
+/**
+ * Length of a lifecycle in days: the recorded duration, else the time from
+ * start to end. Null when neither is usable (missing, or ending before it
+ * started) — such a lifecycle says nothing about the rate, and must not be
+ * read as an instant one.
+ */
+function lifecycleDays(o: ConsumptionObservation, endedAt: Date): number | null {
+  if (isFiniteNumber(o.durationDays) && o.durationDays >= 0) return o.durationDays;
+  if (!isValidDate(o.startedAt)) return null;
+  const fromDates = daysBetween(o.startedAt, endedAt);
+  return fromDates >= 0 ? fromDates : null;
+}
+
 function cleanObservation(o: ConsumptionObservation, currentHouseholdSize: number): CleanObservation | null {
   if (!isValidDate(o.endedAt) || !isFiniteNumber(o.amountUsedBase)) return null;
-  const durationDays = isFiniteNumber(o.durationDays) ? Math.max(0, o.durationDays) : 0;
-  const startedAt = isValidDate(o.startedAt) ? o.startedAt : new Date(o.endedAt.getTime() - durationDays * DAY_MS);
+  const durationDays = lifecycleDays(o, o.endedAt);
+  const startedAt = isValidDate(o.startedAt) ? o.startedAt : new Date(o.endedAt.getTime() - (durationDays ?? 0) * DAY_MS);
   return {
     used: Math.max(0, o.amountUsedBase),
     wasted: isFiniteNumber(o.amountWastedBase) ? Math.max(0, o.amountWastedBase) : 0,
@@ -213,7 +232,7 @@ function observationWeight(o: CleanObservation): number {
 }
 
 function toRateSample(o: CleanObservation, currentHouseholdSize: number): RateSample | null {
-  if (o.used <= 0) return null;
+  if (o.used <= 0 || o.durationDays === null) return null;
   const weight = observationWeight(o);
   if (weight === 0) return null;
   const perAdultEquivalent = o.used / Math.max(o.durationDays, MIN_OBSERVATION_DAYS) / o.householdSize;
@@ -270,7 +289,8 @@ function seasonalFactorFor(samples: readonly RateSample[], now: Date, overallMea
 // ─── Blending & confidence ──────────────────────────────────────────────────
 
 interface BlendInput {
-  n: number;
+  /** Observations' worth of history (sum of sample weights). */
+  evidence: number;
   medianRate: number | null;
   recentRate: number | null;
   priorRate: number | null;
@@ -287,20 +307,25 @@ interface BlendInput {
  * half-life reaches well outside the ±45-day window), so scaling the whole
  * blend tracks seasonal usage better than scaling the median alone.
  */
-function blendDailyRate({ n, medianRate, recentRate, priorRate, seasonalFactor }: BlendInput): number | null {
-  if (n === 0 || medianRate === null || recentRate === null) return priorRate;
-  if (priorRate === null && n < MIN_HISTORY_OBSERVATIONS) return null;
+function blendDailyRate({ evidence, medianRate, recentRate, priorRate, seasonalFactor }: BlendInput): number | null {
+  if (evidence <= 0 || medianRate === null || recentRate === null) return priorRate;
+  if (priorRate === null && !atLeast(evidence, MIN_HISTORY_OBSERVATIONS)) return null;
   const historyRate = HISTORY_MEDIAN_WEIGHT * medianRate + (1 - HISTORY_MEDIAN_WEIGHT) * recentRate;
-  const w = n / (n + PRIOR_PSEUDO_OBSERVATIONS);
+  const w = evidence / (evidence + PRIOR_PSEUDO_OBSERVATIONS);
   const blended = priorRate === null ? historyRate : w * historyRate + (1 - w) * priorRate;
   return blended * seasonalFactor;
 }
 
-function historyConfidence(n: number, cv: number | null): Confidence {
+/** `evidence` reaches `threshold`, ignoring float noise from summing weights. */
+function atLeast(evidence: number, threshold: number): boolean {
+  return evidence >= threshold - EPSILON;
+}
+
+function historyConfidence(evidence: number, cv: number | null): Confidence {
   const spread = cv ?? Number.POSITIVE_INFINITY;
-  if (n >= HIGH_CONFIDENCE_MIN_OBSERVATIONS && spread <= HIGH_CONFIDENCE_MAX_CV) return "high";
-  if (n >= MEDIUM_CONFIDENCE_MIN_OBSERVATIONS && spread <= MEDIUM_CONFIDENCE_MAX_CV) return "medium";
-  if (n >= MIN_HISTORY_OBSERVATIONS && spread <= MEDIUM_CONFIDENCE_CONSISTENT_CV) return "medium";
+  if (atLeast(evidence, HIGH_CONFIDENCE_MIN_OBSERVATIONS) && spread <= HIGH_CONFIDENCE_MAX_CV) return "high";
+  if (atLeast(evidence, MEDIUM_CONFIDENCE_MIN_OBSERVATIONS) && spread <= MEDIUM_CONFIDENCE_MAX_CV) return "medium";
+  if (atLeast(evidence, MIN_HISTORY_OBSERVATIONS) && spread <= MEDIUM_CONFIDENCE_CONSISTENT_CV) return "medium";
   return "low";
 }
 
@@ -370,7 +395,10 @@ function isStapleProduct(purchases: PurchaseSummary, now: Date): boolean {
  * seasonal factor once there is most of a year of history.
  *
  * `observations` reports the lifecycles that informed the rate (after
- * censoring and outlier removal); `basis` is "history" from two of them.
+ * censoring and outlier removal). Basis, confidence and the pull against the
+ * prior weigh them as evidence: a partly used, binned lifecycle is worth half
+ * a finished one, so `basis` is "history" from two finished lifecycles (or
+ * four half-used ones).
  */
 export function computeConsumptionStats(input: ConsumptionStatsInput): ConsumptionStats {
   const householdSize = positiveOr(input.householdSize, 1);
@@ -382,6 +410,7 @@ export function computeConsumptionStats(input: ConsumptionStatsInput): Consumpti
   const { kept, excluded } = excludeOutliers(samples);
   const n = kept.length;
   const weighted = asWeighted(kept);
+  const evidence = weighted.reduce((sum, w) => sum + w.weight, 0);
 
   const historyMedianRate = weightedMedian(weighted);
   const historyMeanRate = weightedMean(weighted);
@@ -391,10 +420,11 @@ export function computeConsumptionStats(input: ConsumptionStatsInput): Consumpti
 
   const priorPerPerson = input.priorDailyPerPerson;
   const priorRate = isFiniteNumber(priorPerPerson) && priorPerPerson > 0 ? priorPerPerson * householdSize : null;
-  const dailyRate = blendDailyRate({ n, medianRate: historyMedianRate, recentRate, priorRate, seasonalFactor });
+  const dailyRate = blendDailyRate({ evidence, medianRate: historyMedianRate, recentRate, priorRate, seasonalFactor });
 
-  const basis: PredictionBasis = n >= MIN_HISTORY_OBSERVATIONS && dailyRate !== null ? "history" : "estimate";
-  const confidence: Confidence = basis === "history" ? historyConfidence(n, variability) : "low";
+  const learned = atLeast(evidence, MIN_HISTORY_OBSERVATIONS) && dailyRate !== null;
+  const basis: PredictionBasis = learned ? "history" : "estimate";
+  const confidence: Confidence = basis === "history" ? historyConfidence(evidence, variability) : "low";
   const purchases = summarisePurchases(input.purchases);
 
   return {

@@ -17,6 +17,11 @@ export const RHYTHM_MAX_SHOPS = 12;
 export const WEEKDAY_MIN_SHOPS = 3;
 /** …and must account for at least this share of them. */
 export const WEEKDAY_MIN_SHARE = 0.4;
+/**
+ * A learned interval needs at least this many shops (two gaps): one gap —
+ * say a big shop and a top-up three days later — isn't a rhythm yet.
+ */
+export const INTERVAL_MIN_SHOPS = 3;
 export const MIN_HISTORY_INTERVAL_DAYS = 2;
 export const MAX_HISTORY_INTERVAL_DAYS = 21;
 export const MIN_PREFERENCE_INTERVAL_DAYS = 1;
@@ -106,7 +111,7 @@ function coefficientOfVariation(values: readonly number[]): number | null {
 
 function analyseHistory(shops: string[]): HistoryRhythm {
   const gaps = shops.slice(1).map((shop, i) => daysBetweenDates(shops[i], shop));
-  const medianGap = median(gaps);
+  const medianGap = shops.length >= INTERVAL_MIN_SHOPS ? median(gaps) : null;
   const { weekday, share } = dominantWeekday(shops);
   return {
     shops,
@@ -191,7 +196,8 @@ function historyConfidence(history: HistoryRhythm): Confidence {
 /**
  * Learn the household's shopping rhythm from its last 12 distinct shop
  * dates. The typical weekday is the unique most common one when it covers
- * ≥ 40% of at least 3 shops; the interval is the median gap (2–21 days).
+ * ≥ 40% of at least 3 shops; the interval is the median gap (2–21 days),
+ * also from at least 3 shops.
  * Preferences override history; with neither, shops are assumed weekly and
  * the next one three days out.
  */

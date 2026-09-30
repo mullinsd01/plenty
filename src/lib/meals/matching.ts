@@ -20,6 +20,7 @@
 
 import type { ProductInfo } from "@/lib/catalog/types";
 import { daysBetweenDates } from "@/lib/dates";
+import type { ContainsFlag } from "@/lib/domain";
 import type { IngredientAvailability, IngredientStatus, InventoryLot, MealIngredientInput, PlannableMeal } from "@/lib/meals/types";
 import { normalizeText, singularize } from "@/lib/normalize";
 import { convert, type ProductUnitInfo, type Unit } from "@/lib/units";
@@ -109,7 +110,8 @@ export function lotRemaining(lot: InventoryLot, targetUnit: Unit, product?: Prod
 const SYNONYM_REWRITES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bfull cream\b/g, "full"],
   [/\bwhole milk\b/g, "full milk"],
-  [/\bbell pepper\b/g, "capsicum"],
+  // "bell capsicum" is "bell peppers" after the plural rewrite.
+  [/\bbell (?:pepper|capsicum)\b/g, "capsicum"],
   [/\baubergine\b/g, "eggplant"],
   [/\bcourgette\b/g, "zucchini"],
   [/\bcilantro\b/g, "coriander"],
@@ -126,6 +128,17 @@ const SYNONYM_REWRITES: ReadonlyArray<readonly [RegExp, string]> = [
   [/\ball purpose flour\b/g, "plain flour"],
   [/\bmangetout\b/g, "snow pea"],
 ];
+
+/**
+ * Plurals that name something other than their singular: "peppers" are
+ * capsicums (UK, US, NZ), while "pepper" alone is the seasoning.
+ */
+const PLURAL_SYNONYMS: Readonly<Record<string, string>> = { peppers: "capsicum" };
+
+/** Singular form of one lower-case ingredient word, reading plurals like "peppers" (capsicum) by what they name. */
+export function singularIngredientWord(word: string): string {
+  return PLURAL_SYNONYMS[word] ?? singularize(word);
+}
 
 /** Filler words that carry no identity. */
 const STOP_WORDS = new Set(["a", "an", "and", "of", "or", "the", "for", "to", "with", "in", "on", "taste", "serve", "serving", "optional", "some", "plus"]);
@@ -301,7 +314,7 @@ function computeNameShape(name: string): NameShape | null {
   let text = normalizeText(name)
     .split(" ")
     .filter((word) => word && !/\d/.test(word))
-    .map(singularize)
+    .map(singularIngredientWord)
     .join(" ");
   for (const [pattern, replacement] of SYNONYM_REWRITES) text = text.replace(pattern, replacement);
   const words = text.split(" ").filter((word) => word && !STOP_WORDS.has(word));
@@ -330,11 +343,23 @@ function nameShape(name: string): NameShape | null {
   return shape;
 }
 
+/** Colour descriptors (see DESCRIPTOR_WORDS). */
+const COLOUR_WORDS: ReadonlySet<string> = new Set(["red", "green", "yellow", "brown", "white", "purple", "black"]);
+
+/**
+ * Head nouns whose colour says what the thing is: green beans are a
+ * vegetable, black beans a legume; black pepper is a spice, red pepper a
+ * capsicum; green and black tea differ. Two names with different colours on
+ * these never match.
+ */
+const COLOUR_IS_IDENTITY_HEADS: ReadonlySet<string> = new Set(["bean", "pepper", "peppercorn", "tea"]);
+
 function compareShapes(a: NameShape, b: NameShape): NameMatch | null {
   if (a.head !== b.head) return null;
   const onlyA = [...a.modifiers].filter((m) => !b.modifiers.has(m));
   const onlyB = [...b.modifiers].filter((m) => !a.modifiers.has(m));
   if ([...onlyA, ...onlyB].some((m) => !DESCRIPTOR_WORDS.has(m))) return null;
+  if (COLOUR_IS_IDENTITY_HEADS.has(a.head) && onlyA.some((m) => COLOUR_WORDS.has(m)) && onlyB.some((m) => COLOUR_WORDS.has(m))) return null;
   // One name is a plainer form of the other ("spinach" / "baby spinach"): same thing.
   if (onlyA.length === 0 || onlyB.length === 0) return "exact";
   // Both carry their own descriptors ("red onion" / "brown onion"): interchangeable.
@@ -345,7 +370,8 @@ function compareShapes(a: NameShape, b: NameShape): NameMatch | null {
  * Compare two free-text names. "exact" when one is the same thing or a
  * plainer form of the other ("spinach" ↔ "baby spinach"); "similar" when they
  * are sibling varieties ("red onion" ↔ "brown onion"); null otherwise
- * ("chicken stock" ↔ "chicken breast", "tomato paste" ↔ "tomatoes").
+ * ("chicken stock" ↔ "chicken breast", "tomato paste" ↔ "tomatoes", and
+ * colours that change the food: "green beans" ↔ "black beans").
  */
 export function matchNames(a: string, b: string): NameMatch | null {
   const shapeA = nameShape(a);
@@ -548,21 +574,46 @@ function expiresSoon(lot: InventoryLot, date: string): boolean {
   return lot.expiresOn !== null && daysBetweenDates(date, lot.expiresOn) <= USE_SOON_DAYS;
 }
 
+/**
+ * What a meal's required ingredients contain, from their catalog products.
+ * A stand-in may only bring in these flags: chicken stock can't quietly
+ * replace vegetable stock in a vegetarian risotto, or wheat wraps the corn
+ * tortillas in a gluten-free taco night. Free-text ingredients add nothing,
+ * which only makes stand-ins rarer.
+ */
+function requiredFlags(meal: PlannableMeal, products: ReadonlyMap<string, ProductInfo>): ReadonlySet<ContainsFlag> {
+  const flags = new Set<ContainsFlag>();
+  for (const ingredient of meal.ingredients) {
+    if (ingredient.optional) continue;
+    for (const flag of lookupProduct(products, ingredient.productId)?.contains ?? []) flags.add(flag);
+  }
+  return flags;
+}
+
+/** Whether a lot can stand in without adding a flag the meal doesn't already carry. Its own product always can. */
+function addsNoNewFlags(ingredient: MealIngredientInput, lot: InventoryLot, lotProduct: ProductInfo | null, allowed: ReadonlySet<ContainsFlag>): boolean {
+  if (lot.productId !== null && lot.productId === ingredient.productId) return true;
+  return (lotProduct?.contains ?? []).every((flag) => allowed.has(flag));
+}
+
 function candidateLots(
   ingredient: MealIngredientInput,
   lots: readonly InventoryLot[],
   products: ReadonlyMap<string, ProductInfo>,
   date: string,
   balances: LotBalances,
+  allowedFlags: ReadonlySet<ContainsFlag>,
 ): CandidateLot[] {
   const usable = lots.filter((lot) => lot.expiresOn === null || lot.expiresOn >= date).map((lot) => withBalance(lot, balances));
   const { exact, substitutes } = findMatchingLots(ingredient, usable, products);
-  const toCandidate = (substitute: boolean) => (lot: InventoryLot) => ({
-    lot,
-    product: lookupProduct(products, lot.productId),
-    substitute,
-  });
-  return [...exact.map(toCandidate(false)), ...substitutes.map(toCandidate(true))];
+  const candidates: CandidateLot[] = [];
+  const add = (substitute: boolean) => (lot: InventoryLot) => {
+    const product = lookupProduct(products, lot.productId);
+    if (addsNoNewFlags(ingredient, lot, product, allowedFlags)) candidates.push({ lot, product, substitute });
+  };
+  exact.forEach(add(false));
+  substitutes.forEach(add(true));
+  return candidates;
 }
 
 function scaleFor(meal: PlannableMeal, servings: number): number {
@@ -680,6 +731,7 @@ function allocateIngredient(
   products: ReadonlyMap<string, ProductInfo>,
   date: string,
   balances: LotBalances,
+  allowedFlags: ReadonlySet<ContainsFlag>,
 ): IngredientAllocation {
   const product = lookupProduct(products, ingredient.productId);
   const unit: Unit | null = ingredient.unit ?? (ingredient.quantity !== null ? "each" : null);
@@ -688,7 +740,7 @@ function allocateIngredient(
   if (isAssumedAvailable(ingredient, product)) {
     return { ingredient, product, availability: { ...availability, status: "assumed" }, needsPurchase: false, shortfallQuantity: null };
   }
-  const candidates = candidateLots(ingredient, lots, products, date, balances);
+  const candidates = candidateLots(ingredient, lots, products, date, balances, allowedFlags);
   if (needed === null || unit === null) return allocateUnquantified(ingredient, product, availability, candidates, date);
   return allocateQuantified(ingredient, product, availability, candidates, needed, unit, date, balances);
 }
@@ -696,9 +748,13 @@ function allocateIngredient(
 /**
  * Allocate a meal's ingredients against inventory, mutating `balances` so
  * that later calls (later meals) can't claim the same stock. Within the meal,
- * ingredients claim lots in recipe order: exact lots before substitutes,
- * soonest-expiring first, skipping lots that expire before the meal date.
- * Lower-level than `assessMealAvailability`; used by the plan requirements.
+ * required ingredients claim lots before optional ones (so a garnish never
+ * leaves the dish itself short), each group in recipe order: exact lots
+ * before substitutes, soonest-expiring first, skipping lots that expire
+ * before the meal date. A substitute never brings in a `contains` flag the
+ * meal's required ingredients don't already carry. Results are in recipe
+ * order. Lower-level than `assessMealAvailability`; used by the plan
+ * requirements.
  */
 export function allocateMealIngredients(
   meal: PlannableMeal,
@@ -707,8 +763,49 @@ export function allocateMealIngredients(
   opts: AllocationOptions,
   balances: LotBalances,
 ): IngredientAllocation[] {
+  const required = allocateIngredientGroup(meal, "required", lots, products, opts, balances);
+  const optional = allocateIngredientGroup(meal, "optional", lots, products, opts, balances);
+  return mergeIngredientGroups(meal, required, optional);
+}
+
+/** Which of a meal's ingredients `allocateIngredientGroup` allocates. */
+export type IngredientGroup = "required" | "optional";
+
+/**
+ * Allocate just one group of a meal's ingredients, in recipe order, keyed by
+ * position in `meal.ingredients` (see `allocateMealIngredients` for the
+ * rules). For callers that let every meal's required ingredients claim stock
+ * before any meal's optional extras; recombine with `mergeIngredientGroups`.
+ */
+export function allocateIngredientGroup(
+  meal: PlannableMeal,
+  group: IngredientGroup,
+  lots: readonly InventoryLot[],
+  products: ReadonlyMap<string, ProductInfo>,
+  opts: AllocationOptions,
+  balances: LotBalances,
+): Map<number, IngredientAllocation> {
   const scale = scaleFor(meal, opts.servings);
-  return meal.ingredients.map((ingredient) => allocateIngredient(ingredient, scale, lots, products, opts.date, balances));
+  const allowedFlags = requiredFlags(meal, products);
+  const wantOptional = group === "optional";
+  const allocations = new Map<number, IngredientAllocation>();
+  meal.ingredients.forEach((ingredient, index) => {
+    if (ingredient.optional !== wantOptional) return;
+    allocations.set(index, allocateIngredient(ingredient, scale, lots, products, opts.date, balances, allowedFlags));
+  });
+  return allocations;
+}
+
+/** Required and optional allocations back in recipe order. */
+export function mergeIngredientGroups(
+  meal: PlannableMeal,
+  required: ReadonlyMap<number, IngredientAllocation>,
+  optional: ReadonlyMap<number, IngredientAllocation>,
+): IngredientAllocation[] {
+  return meal.ingredients.flatMap((_, index) => {
+    const allocation = required.get(index) ?? optional.get(index);
+    return allocation ? [allocation] : [];
+  });
 }
 
 /**
@@ -717,8 +814,10 @@ export function allocateMealIngredients(
  * ingredient: "assumed" (pantry basics), "have" (≥ 75% covered, or an
  * unquantified / unmeasurable need with a matching lot), "partial", "missing",
  * or "optional_missing". Optional ingredients are "have" as soon as any is
- * there. Lots expiring before the meal date are ignored; `usesSoonExpiring`
- * flags lots that expire within 3 days of it.
+ * there, from whatever the required ones leave. Lots expiring before the meal
+ * date are ignored, as are substitutes carrying a flag (meat, gluten, …) the
+ * dish doesn't already contain; `usesSoonExpiring` flags lots that expire
+ * within 3 days of it.
  */
 export function assessMealAvailability(
   meal: PlannableMeal,

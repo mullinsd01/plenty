@@ -619,11 +619,23 @@ const SUMMARY_SAVINGS =
 const TENDER =
   /^\W*(?:EFTPOS|EFT|VISA|MASTER\s?CARD|AMEX|AMERICAN\s+EXPRESS|DINERS|DISCOVER|MAESTRO|DEBIT|CREDIT|US\s+DEBIT|CARD|CONTACTLESS|APPLE\s*PAY|GOOGLE\s*PAY|SAMSUNG\s*PAY|PAY\s?WAVE|PAY\s?PASS)\b/;
 
+/**
+ * Card-terminal fields on EFTPOS slips ("AID A0000000031010", "PAN ****1234",
+ * "MID: 123456"). Their values are codes, never words, so a code followed by
+ * a word is a product ("PAN DULCE", "MID STRENGTH LAGER").
+ */
+const TERMINAL_FIELD = /^\W*(?:AID|TVR|ATC|ARQC|RRN|STAN|TID|MID|PAN|TSI|IAD)\b(?!\s+[A-Z]{2,}\b)/;
+/** US food-benefit lines ("SNAP BAL 12.34", "SNAP 4.54") — but not "SNAP PEAS". */
+const SNAP_BENEFIT =
+  /^\W*SNAP\b(?=\s*(?:$|[^A-Z\s]|(?:BAL(?:ANCE)?|TEND(?:ER|ERED)?|ELIGIBLE|BENEFITS?|FOOD|CASH|EBT|PAID|PAYMENT|AMT|AMOUNT|TOTAL|SUBTOTAL|DUE|PURCHASE|CARD|ACCT|ACCOUNT)\b))/;
+
 /** Lines that never describe a purchased item. Tested against the letter-normalised key. */
 const SKIP_PATTERNS: readonly RegExp[] = [
   // Payment and tender
   TENDER,
-  /^\W*(?:CASH|CHANGE|ROUNDING|TEND(?:ER|ERED)?|PAYPAL|EBT|SNAP|GIFT\s*CARD|ACCOUNT|ACCT|AUTH(?:ORI[SZ]ATION)?|APPROVED|ACCEPTED|DECLINED|PURCHASE|AID|TVR|ATC|ARQC|RRN|STAN|TID|MID|PAN|TSI|IAD)\b/,
+  /^\W*(?:CASH|CHANGE|ROUNDING|TEND(?:ER|ERED)?|PAYPAL|EBT|GIFT\s*CARD|ACCOUNT|ACCT|AUTH(?:ORI[SZ]ATION)?|APPROVED|ACCEPTED|DECLINED|PURCHASE)\b/,
+  TERMINAL_FIELD,
+  SNAP_BENEFIT,
   /\bTEND(?:ER|ERED)?\b|\bCHANGE\s+DUE\b|\bCASH\s*(?:OUT|BACK|RECEIVED|PAID)\b|\bCARD\s*(?:NO|NUMBER|#|TYPE|ENDING|PAYMENT|SALE)\b/,
   /\*{3,}\s*\d{2,4}\b|X{4,}\d{2,4}\b/,
   // Tax and business registration
@@ -637,6 +649,8 @@ const SKIP_PATTERNS: readonly RegExp[] = [
   /\bTHANK\s*(?:YOU|S)\b|\bPLEASE\b|\bCOME\s+AGAIN\b|\bSEE\s+YOU\b|\bHAVE\s+A\b|\bWELCOME\b|\bRETAIN\b|\bKEEP\s+(?:THIS|YOUR)\b|\bRETURNS?\b|\bREFUNDS?\b|\bEXCHANGE\b|\bPOLICY\b|\bSURVEY\b|\bFEEDBACK\b|\bCUSTOMER\s+(?:COPY|SERVICE|CARE)\b|\bMERCHANT\s+COPY\b|\bSIGNATURE\b|\bPIN\s+VERIFIED\b|\bOPENING\s+HOURS\b|\bTRADING\s+HOURS\b/,
   // Savings summaries
   SUMMARY_SAVINGS,
+  // Reference prices printed for information under a sale item ("Regular Price $3.49", "WAS $6.00 NOW $4.00")
+  /^\W*(?:REG(?:ULAR)?|ORIG(?:INAL)?|NORMAL|RETAIL|LIST)\.?\s+PRICE\b|^\W*WAS\s+[$£€]?\d/,
   // Item counts
   /^\W*\d+\s*(?:ITEMS?|ITEM\(S\)|ARTICLES?|PCS)\b|\b(?:NO\.?|NUMBER|#|COUNT)\s*(?:OF\s+)?ITEMS?\b|\bITEMS?\s+(?:SOLD|PURCHASED|COUNT)\b|\bTOTAL\s+ITEMS?\b|\bITEMS?\s*[:=]\s*\d+\s*$/,
 ];
