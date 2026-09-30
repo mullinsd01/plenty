@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import sharp from "sharp";
+import sharp, { type Metadata, type Sharp } from "sharp";
 
 /**
  * Receipt photo handling.
@@ -129,11 +129,11 @@ function acceptedFormat(sniffed: SniffedFormat | null): AcceptedFormat {
 // ─── Validation ─────────────────────────────────────────────────────────────
 
 /** Read and sanity-check the header: format, animation, pixel count and size. */
-async function validateInput(input: Buffer): Promise<sharp.Metadata> {
+async function validateInput(input: Buffer): Promise<Metadata> {
   if (!Buffer.isBuffer(input) || input.length === 0) throw new ReceiptImageError("corrupt", MESSAGES.corrupt);
   const format = acceptedFormat(sniffFormat(input));
 
-  let meta: sharp.Metadata;
+  let meta: Metadata;
   try {
     meta = await sharp(input, { failOn: "error", limitInputPixels: false }).metadata();
   } catch {
@@ -175,7 +175,7 @@ export function laplacianVariance(pixels: Uint8Array, width: number, height: num
   return sumSquares / count - mean * mean;
 }
 
-async function measureBlur(pipeline: sharp.Sharp): Promise<number> {
+async function measureBlur(pipeline: Sharp): Promise<number> {
   const { data, info } = await pipeline
     .greyscale()
     .resize({ width: BLUR_SAMPLE_EDGE_PX, height: BLUR_SAMPLE_EDGE_PX, fit: "inside", withoutEnlargement: true })
@@ -269,6 +269,7 @@ export async function ocrVariant(input: Buffer): Promise<Buffer> {
     return await sharp(divideByBackground(data, background), { raw: { width: info.width, height: info.height, channels: 1 } })
       .normalise()
       .linear(OCR_CONTRAST_MULTIPLIER, OCR_CONTRAST_OFFSET)
+      .toColourspace("b-w")
       .png({ compressionLevel: 1 })
       .toBuffer();
   } catch {

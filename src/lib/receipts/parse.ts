@@ -144,6 +144,16 @@ function repairToken(token: string): string {
   return token.includes("/") ? token.split("/").map(repairAmountToken).join("/") : repairAmountToken(token);
 }
 
+/**
+ * OCR sometimes reads a price's decimal point as a colon ("2:28"). Only
+ * repaired at the end of weight/quantity lines (which contain "@"), so times
+ * like "17:42" are never turned into prices.
+ */
+function repairColonPrice(text: string): string {
+  const m = /^(.*@.*\S)\s+(-?[$£€]?\d{1,4}):(\d{2})$/.exec(text);
+  return m ? `${m[1]} ${m[2]}.${m[3]}` : text;
+}
+
 /** Fix unicode variants, broken spacing, stray edge characters and OCR-damaged prices. */
 function normaliseText(raw: string): string {
   const cleaned = raw
@@ -157,7 +167,7 @@ function normaliseText(raw: string): string {
     .replace(/([$£€])\s+(?=[-\dOoSsIl|])/g, "$1") // "$ 4.20"
     .replace(/(\d)\s+([.,])(\d{2})(?!\d)/g, "$1$2$3") // "4 .20"
     .replace(/(\d[.,])\s+(\d{2})(?!\d)/g, "$1$2") // "4. 20"
-    .replace(/(^|\s)-\s+(?=[$£€]?\d)/g, "$1-") // "- 1.00"
+    .replace(/(^|\s)-\s+(?=[$£€]?[\dOoSsIl|])/g, "$1-") // "- 1.00"
     .replace(/(\d[.,]\d{2})\s+-(?=\s|$)/g, "$1-") // "1.00 -"
     .replace(/\s+\|\s+/g, " ")
     .replace(/\s+/g, " ")
@@ -165,7 +175,7 @@ function normaliseText(raw: string): string {
     .replace(/^[|_~'"\\«»!;:,]+/, "")
     .replace(/[|_~'"\\«»!;:,.]+$/, "")
     .trim();
-  return cleaned.split(" ").map(repairToken).join(" ");
+  return repairColonPrice(cleaned.split(" ").map(repairToken).join(" "));
 }
 
 /** Map look-alike digits back to letters inside words (letters must dominate the token). */
@@ -359,8 +369,8 @@ const MONTHS: Record<string, number> = {
   JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12,
 };
 const MONTH_NAME = String.raw`(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[A-Z]*\.?`;
-const ISO_DATE = /\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/g;
-const NUMERIC_DATE = /\b(\d{1,2})([/.-])(\d{1,2})\2(\d{4}|\d{2})\b/g;
+const ISO_DATE = /(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)/g;
+const NUMERIC_DATE = /(?<![\d.])(\d{1,2})([/.-])(\d{1,2})\2(\d{4}|\d{2})(?![\d.])/g;
 const DAY_MONTH_YEAR = new RegExp(String.raw`\b(\d{1,2})(?:ST|ND|RD|TH)?[\s./-]*${MONTH_NAME}[\s./,-]*'?(\d{4}|\d{2})\b`, "g");
 const MONTH_DAY_YEAR = new RegExp(String.raw`\b${MONTH_NAME}\s+(\d{1,2})(?:ST|ND|RD|TH)?,?\s+(\d{4})\b`, "g");
 const TIME_PATTERN = /\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?\b/;
