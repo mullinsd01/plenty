@@ -6,9 +6,9 @@ import { BasisLabel } from "@/components/food/confidence";
 import { MealArt } from "@/components/food/meal-art";
 import { Button } from "@/components/ui/button";
 import { Card, SectionTitle } from "@/components/ui/card";
-import { AddToListButton, CheckInCard, PlanTonightButton, TonightActions } from "@/features/home/home-client";
+import { AddToListButton, CheckInList, PastDateCard, PlanTonightButton, TonightActions } from "@/features/home/home-client";
 import { cn } from "@/lib/cn";
-import { formatMoney, pluralize } from "@/lib/format";
+import { formatMoney, pluralize, remainingPhrase } from "@/lib/format";
 import { requireHousehold } from "@/server/auth/context";
 import { getDashboard } from "@/server/services/dashboard";
 import { getMealPlan } from "@/server/services/meals";
@@ -24,7 +24,7 @@ export default async function HomePage() {
   const tonight = plan.days.find((day) => day.date === plan.today)?.item ?? null;
   const upcoming = plan.days.filter((day) => day.date !== plan.today && day.item?.status === "planned").slice(0, 3);
   const kitchenEmpty = d.kitchenCount === 0;
-  const allClear = d.runningLow.length === 0 && d.useSoon.length === 0 && d.checkIns.length === 0;
+  const allClear = d.runningLow.length === 0 && d.useSoon.length === 0 && d.checkIns.length === 0 && !d.pastDate;
 
   return (
     <div className="animate-fade-in">
@@ -60,11 +60,10 @@ export default async function HomePage() {
         </div>
       )}
 
-      {d.checkIns.length > 0 && (
+      {(d.checkIns.length > 0 || d.pastDate) && (
         <div className="mb-6 space-y-2">
-          {d.checkIns.map((c) => (
-            <CheckInCard key={c.productId} productId={c.productId} name={c.name} />
-          ))}
+          {d.checkIns.length > 0 && <CheckInList items={d.checkIns} />}
+          {d.pastDate && <PastDateCard itemIds={d.pastDate.itemIds} summary={d.pastDate.summary} />}
         </div>
       )}
 
@@ -93,7 +92,7 @@ export default async function HomePage() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[15px] font-semibold">{item.name}</p>
                         <p className="text-[13px] text-ink-3">
-                          Probably {item.label} left
+                          {remainingPhrase(item.label)}
                           <span className="mx-1.5 text-ink-4">·</span>
                           <BasisLabel basis={item.basis} confidence={item.confidence} className="align-middle text-[12px]" />
                         </p>
@@ -129,8 +128,11 @@ export default async function HomePage() {
                         {item.status === "expired" ? <TriangleAlert className="size-4" /> : <Clock className="size-4" />}
                       </span>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[15px] font-semibold">{item.name}</p>
-                        <p className="text-[13px] text-ink-3">{item.label}</p>
+                        <p className="truncate text-[15px] font-semibold">
+                          {item.name}
+                          {item.count > 1 && <span className="ml-1.5 text-[13px] font-medium text-ink-3">×{item.count}</span>}
+                        </p>
+                        <p className="text-[13px] text-ink-3">{item.count > 1 ? `Oldest: ${item.label.charAt(0).toLowerCase()}${item.label.slice(1)}` : item.label}</p>
                       </div>
                     </Link>
                   ))}

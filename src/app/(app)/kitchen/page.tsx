@@ -12,7 +12,10 @@ export const metadata: Metadata = { title: "Kitchen" };
 export default async function KitchenPage() {
   const ctx = await requireHousehold();
   const [inventory, finished] = await Promise.all([getInventory(ctx), recentlyFinished(ctx)]);
-  const lowCount = inventory.items.filter((i) => i.estimatedFraction <= 0.3).length;
+  // Count things, not purchases (three lots of bananas are one thing).
+  const thingKey = (i: (typeof inventory.items)[number]) => `${i.productId ?? i.name.toLowerCase()}|${i.location}`;
+  const things = new Set(inventory.items.map(thingKey)).size;
+  const lowCount = new Set(inventory.items.filter((i) => i.estimatedFraction <= 0.3).map(thingKey)).size;
   return (
     <div className="animate-fade-in">
       <PageHeader
@@ -20,7 +23,7 @@ export default async function KitchenPage() {
         subtitle={
           inventory.items.length === 0
             ? "Everything you have, kept up to date for you."
-            : `${inventory.items.length} things${lowCount ? ` · ${lowCount} running low` : ""} · levels are Plenty's estimate until you correct them`
+            : `${things} ${things === 1 ? "thing" : "things"}${lowCount ? ` · ${lowCount} running low` : ""} · levels are Plenty's estimate until you correct them`
         }
         actions={
           <Button asChild variant="secondary" size="sm" className="hidden sm:inline-flex">

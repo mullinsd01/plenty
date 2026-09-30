@@ -3,10 +3,10 @@ import { and, desc, eq, inArray, isNull, lt, ne, notInArray, or, sql } from "dri
 import type { ProductInfo } from "@/lib/catalog/types";
 import { formatShortDate, isDateString, toDateString, zonedDateTimeToInstant } from "@/lib/dates";
 import { levelPhrase, type Aisle, type StorageLocation } from "@/lib/domain";
-import { aliasKey as toAliasKey, normalizeReceiptLine } from "@/lib/normalize";
+import { aliasKey as toAliasKey, cleanReceiptText, normalizeReceiptLine } from "@/lib/normalize";
 import { receiptFingerprint } from "@/lib/receipts/fingerprint";
 import { assessReceiptQuality } from "@/lib/receipts/quality";
-import { formatQuantity, isUnit, type Unit } from "@/lib/units";
+import { formatQuantity, isContainerUnit, isUnit, unitDimension, type Unit } from "@/lib/units";
 import { AIUnavailableError, getLocalProvider, getProvider, type ReceiptExtraction } from "@/server/ai";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
 import { withUser, type Tx } from "@/server/db/client";
@@ -28,6 +28,8 @@ export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const PROCESSING_LEASE_SECONDS = 150;
 const MATCH_CONFIDENT = 0.8;
 const MATCH_PLAUSIBLE = 0.55;
+/** Receipt wording for things sold one at a time. */
+const LOOSE_ITEM = /\b(EA|EACH|LOOSE)\b/i;
 
 // ─── Upload ─────────────────────────────────────────────────────────────────
 
@@ -134,7 +136,22 @@ export function normalizeExtraction(extraction: ReceiptExtraction, index: Produc
     let quantity = best.quantity;
     let unit: Unit = best.unit;
     let packCount = best.packCount;
-    if (line.weightKg && line.weightKg > 0) {
+    const description = raw.split("\n")[0];
+    const cleaned = cleanReceiptText(description);
+    // Loose produce priced per item ("BANANAS CAVENDISH EA", "7 @ $0.62"): the count is
+    // the number of items, not a number of the product's usual bags or bunches.
+    const soldLoose =
+      product !== null &&
+      unitDimension(product.unit) === "count" &&
+      !isContainerUnit(product.unit) &&
+      cleaned.size === null &&
+      cleaned.packCount === null &&
+      LOOSE_ITEM.test(description);
+    if (soldLoose && !(line.weightKg && line.weightKg > 0)) {
+      quantity = line.quantity && line.quantity > 0 && Number.isInteger(line.quantity) ? line.quantity : 1;
+      unit = product.unit;
+      packCount = 1;
+    } else if (line.weightKg && line.weightKg > 0) {
       quantity = Math.round(line.weightKg * 1000) / 1000;
       unit = "kg";
       packCount = 1;
@@ -142,8 +159,9 @@ export function normalizeExtraction(extraction: ReceiptExtraction, index: Produc
       packCount = line.quantity * Math.max(1, packCount);
       quantity = best.quantity * line.quantity;
     }
-    const name =
-      product && (match?.score ?? 0) >= 0.75 ? product.name : line.name?.trim() || best.name || raw;
+    // A plausible match shows the product's proper name; the review lists it under
+    // "give these a quick look" with alternatives, and the receipt wording stays visible.
+    const name = product ? product.name : line.name?.trim() || best.name || raw;
     const nonGrocery = !line.isGrocery || (!best.isFood && !product);
     out.push({
       lineIndex: i,

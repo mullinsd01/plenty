@@ -33,3 +33,26 @@ export function timeAgo(iso: string, now = new Date()): string {
 export function capitalize(text: string): string {
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
+
+/**
+ * Turn a run-out label ("about 4 days", "probably out now") into a phrase
+ * that reads naturally on its own: "Probably about 4 days left",
+ * "Probably out now", "Probably runs out today".
+ */
+export function remainingPhrase(label: string): string {
+  if (label === "probably today") return "Probably runs out today";
+  if (label.startsWith("probably")) return `P${label.slice(1)}`;
+  return `Probably ${label} left`;
+}
+
+/**
+ * Plural of a product name for things counted one by one ("Apple" → "Apples",
+ * "Brown onion" → "Brown onions", "Mango" → "Mangoes"). Names already plural stay as they are.
+ */
+export function pluralNoun(name: string): string {
+  const trimmed = name.trim();
+  if (/s$/i.test(trimmed)) return trimmed;
+  if (/[^aeiou]y$/i.test(trimmed)) return `${trimmed.slice(0, -1)}ies`;
+  if (/(ch|sh|x|z)$/i.test(trimmed) || /(tomato|potato|mango)$/i.test(trimmed)) return `${trimmed}es`;
+  return `${trimmed}s`;
+}

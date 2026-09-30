@@ -8,7 +8,7 @@ import { Pill } from "@/components/ui/pill";
 import { ItemDetailActions } from "@/features/kitchen/item-detail-actions";
 import { formatLongDate, toDateString } from "@/lib/dates";
 import { STORAGE_LOCATION_LABELS } from "@/lib/domain";
-import { capitalize, formatMoney, timeAgo } from "@/lib/format";
+import { capitalize, formatMoney, timeAgo, remainingPhrase } from "@/lib/format";
 import { formatDuration } from "@/lib/prediction/labels";
 import { formatBase, type BaseUnit } from "@/lib/units";
 import { requireHousehold } from "@/server/auth/context";
@@ -73,7 +73,7 @@ export default async function KitchenItemPage({ params }: PageProps<"/kitchen/[i
           </div>
           {item.prediction && (
             <div className="mt-4 border-t border-line pt-4">
-              <p className="text-[15px] font-medium">Probably {item.prediction.label} left</p>
+              <p className="text-[15px] font-medium">{remainingPhrase(item.prediction.label)}</p>
               <p className="mt-1 text-[13px] leading-relaxed text-ink-3">{item.prediction.reason}</p>
               <BasisLabel basis={item.prediction.basis} confidence={item.prediction.confidence} className="mt-2" />
             </div>

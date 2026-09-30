@@ -288,7 +288,13 @@ export function formatQuantity(quantity: number | null | undefined, unit: Unit |
   if (u === "l" && quantity < 1) return `${trimNumber(quantity * 1000, 0)} ml`;
   const def = UNIT_DEFS[u];
   if (u === "each") return formatAmount(quantity);
-  const amount = def.dimension === "count" || u === "tbsp" || u === "tsp" || u === "cup" ? formatAmount(quantity) : trimNumber(quantity);
+  const amount =
+    def.dimension === "count" || u === "tbsp" || u === "tsp" || u === "cup"
+      ? formatAmount(quantity)
+      : u === "g" || u === "ml"
+        ? // Grams and millilitres converted from other units shouldn't read "679.61 ml".
+          String(quantity >= 100 ? Number(Math.round(quantity).toPrecision(3)) : Math.round(quantity * 10) / 10)
+        : trimNumber(quantity);
   const label = quantity > 1 && !["g", "kg", "ml", "l"].includes(u) ? def.plural : def.singular;
   return `${amount} ${label}`.trim();
 }

@@ -14,6 +14,7 @@ import { useAction } from "@/components/hooks/use-action";
 import { STORAGE_LOCATIONS, STORAGE_LOCATION_LABELS, type StorageLocation } from "@/lib/domain";
 import type { InventoryItemView } from "@/server/services/inventory";
 import { finishItemAction, removeItemAction, restoreItemAction, setLevelAction, updateItemAction } from "./actions";
+import { remainingPhrase } from "@/lib/format";
 
 export function useUndoableFinish() {
   const { pending, run } = useAction();
@@ -96,7 +97,7 @@ export function ItemSheet({
         <div className="space-y-6">
           {item.prediction && (
             <div className="rounded-xl bg-subtle px-3.5 py-3">
-              <p className="text-[14px] font-medium">Probably {item.prediction.label} left</p>
+              <p className="text-[14px] font-medium">{remainingPhrase(item.prediction.label)}</p>
               <p className="mt-0.5 text-[13px] text-ink-3">{item.prediction.reason}</p>
               <BasisLabel basis={item.prediction.basis} confidence={item.prediction.confidence} className="mt-1.5" />
             </div>

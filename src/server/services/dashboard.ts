@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, count, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { addDays, hourInTimeZone, relativeDayLabel, toDateString } from "@/lib/dates";
 import { PREDICTION_BASIS_LABELS, type Confidence, type PredictionBasis } from "@/lib/domain";
+import { pluralNoun } from "@/lib/format";
 import { spendSummary, wasteInsights } from "@/lib/insights";
 import type { HouseholdContext } from "@/server/auth/context";
 import { withUser } from "@/server/db/client";
@@ -28,6 +29,15 @@ export interface UseSoonView {
   label: string;
   status: string;
   daysUntilExpiry: number | null;
+  /** Batches of the same thing folded into this row. */
+  count: number;
+}
+
+/** Food so far past its date it's almost certainly gone — offered as one tidy-up. */
+export interface PastDateView {
+  itemIds: string[];
+  /** "Banana ×6 · Apple ×2" */
+  summary: string;
 }
 
 export interface CheckInView {
@@ -44,6 +54,7 @@ export interface DashboardView {
   checkIns: CheckInView[];
   runningLow: RunningLowView[];
   useSoon: UseSoonView[];
+  pastDate: PastDateView | null;
   tonightPlanId: string | null;
   upcomingPlanDates: Array<{ id: string; date: string; label: string; mealId: string }>;
   nextShop: { itemCount: number; checkedCount: number; dateLabel: string | null; basis: string };
@@ -52,6 +63,9 @@ export interface DashboardView {
   insights: string[];
   hasAnyReceipt: boolean;
 }
+
+/** Days past its date before Plenty assumes something is gone and offers to clear it out. */
+const PAST_DATE_AFTER_DAYS = 4;
 
 function greetingFor(hour: number): string {
   if (hour < 5) return "Good evening";
@@ -85,7 +99,8 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date()): Pro
       if (p.paused) continue;
       const snoozed = p.items.some((i) => i.checkInSnoozedUntil && i.checkInSnoozedUntil > now);
       if (p.prediction.needsCheckIn && !snoozed) {
-        checkIns.push({ productId: p.productId, name: p.product.name });
+        // Loose things counted one by one read better in the plural: "Did you finish the apples?"
+        checkIns.push({ productId: p.productId, name: p.product.unit === "each" ? pluralNoun(p.product.name) : p.product.name });
         continue;
       }
       if (p.prediction.daysRemaining <= 5) {
@@ -104,16 +119,41 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date()): Pro
     }
     runningLow.sort((a, b) => a.daysRemaining - b.daysRemaining);
 
-    const useSoon: UseSoonView[] = [];
+    // One row per product (the soonest batch), and anything long past its date set aside.
+    const useSoonByKey = new Map<string, UseSoonView>();
+    const pastDateIds: string[] = [];
+    const pastDateCounts = new Map<string, number>();
     for (const item of live.activeItems) {
       const view = toItemView(item, live, ctx.household);
-      if (view.estimatedFraction < 0.08) continue;
       const s = view.useSoon;
-      if (s.status === "expired" || s.status === "today" || s.status === "soon") {
-        useSoon.push({ itemId: item.id, name: view.name, label: s.label, status: s.status, daysUntilExpiry: s.daysUntilExpiry });
+      if (s.status === "expired" && (s.daysUntilExpiry ?? 0) <= -PAST_DATE_AFTER_DAYS) {
+        pastDateIds.push(item.id);
+        pastDateCounts.set(view.name, (pastDateCounts.get(view.name) ?? 0) + 1);
+        continue;
+      }
+      if (view.estimatedFraction < 0.08) continue;
+      if (s.status !== "expired" && s.status !== "today" && s.status !== "soon") continue;
+      const key = item.productId ?? view.name.toLowerCase();
+      const existing = useSoonByKey.get(key);
+      if (!existing) {
+        useSoonByKey.set(key, { itemId: item.id, name: view.name, label: s.label, status: s.status, daysUntilExpiry: s.daysUntilExpiry, count: 1 });
+      } else {
+        existing.count += 1;
+        if ((s.daysUntilExpiry ?? 99) < (existing.daysUntilExpiry ?? 99)) {
+          Object.assign(existing, { itemId: item.id, label: s.label, status: s.status, daysUntilExpiry: s.daysUntilExpiry });
+        }
       }
     }
-    useSoon.sort((a, b) => (a.daysUntilExpiry ?? 99) - (b.daysUntilExpiry ?? 99));
+    const useSoon = [...useSoonByKey.values()].sort((a, b) => (a.daysUntilExpiry ?? 99) - (b.daysUntilExpiry ?? 99));
+    const pastDate: PastDateView | null = pastDateIds.length
+      ? {
+          itemIds: pastDateIds,
+          summary: [...pastDateCounts.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, n]) => (n > 1 ? `${name} ×${n}` : name))
+            .join(" · "),
+        }
+      : null;
 
     const planRows = await tx
       .select({ id: mealPlanItems.id, date: mealPlanItems.date, mealId: mealPlanItems.mealId, status: mealPlanItems.status })
@@ -187,6 +227,7 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date()): Pro
       checkIns: checkIns.slice(0, 3),
       runningLow: runningLow.slice(0, 6),
       useSoon: useSoon.slice(0, 6),
+      pastDate,
       tonightPlanId: tonight?.id ?? null,
       upcomingPlanDates: planRows
         .filter((r) => r.date > today && r.status === "planned")

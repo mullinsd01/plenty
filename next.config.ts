@@ -9,6 +9,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // The floating dev badge covers the bottom navigation on phones.
+  devIndicators: false,
   poweredByHeader: false,
   // Native / WASM packages that must not be bundled into server chunks.
   serverExternalPackages: [

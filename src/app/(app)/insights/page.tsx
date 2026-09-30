@@ -69,15 +69,30 @@ export default async function InsightsPage() {
               {m.spend.averageWeekly !== null ? `About ${formatMoney(m.spend.averageWeekly, m.currency)} a week` : "Not enough receipts yet"}
             </p>
             {m.spend.label && <p className="mt-1 text-[14px] text-ink-3">{m.spend.label}</p>}
-            <div className="mt-5 flex h-28 items-end gap-2" role="img" aria-label="Weekly grocery spend for the last 8 weeks">
+            <div
+              className="relative mt-5 flex h-32 items-end gap-2"
+              role="img"
+              aria-label={`Weekly grocery spend for the last ${m.spend.weeks.length} weeks: ${m.spend.weeks
+                .map((w) => `${formatShortDate(w.weekStart)} ${formatMoney(w.total, m.currency)}`)
+                .join(", ")}`}
+            >
+              {m.preferences.weeklyBudget !== null && (
+                <div
+                  className="pointer-events-none absolute inset-x-0 border-t border-dashed border-ink-4/60"
+                  style={{ bottom: `${(m.preferences.weeklyBudget / maxWeek) * 100}%` }}
+                  aria-hidden
+                >
+                  <span className="absolute -top-4 right-0 text-[10px] font-medium text-ink-4">Budget</span>
+                </div>
+              )}
               {m.spend.weeks.map((w) => {
                 const over = m.preferences.weeklyBudget !== null && w.total > m.preferences.weeklyBudget;
                 return (
-                  <div key={w.weekStart} className="flex flex-1 flex-col items-center gap-1.5">
+                  <div key={w.weekStart} className="flex h-full flex-1 flex-col items-center justify-end">
                     <div
-                      className={cn("w-full rounded-t-md", over ? "bg-soon" : "bg-navy/70")}
-                      style={{ height: `${Math.max(3, (w.total / maxWeek) * 100)}%` }}
-                      title={`${formatShortDate(w.weekStart)}: ${formatMoney(w.total, m.currency)}`}
+                      className={cn("w-full max-w-10 rounded-t-md", w.total === 0 ? "bg-line" : over ? "bg-soon" : "bg-navy/75")}
+                      style={{ height: w.total === 0 ? "2px" : `${Math.max(4, (w.total / maxWeek) * 100)}%` }}
+                      title={`Week of ${formatShortDate(w.weekStart)}: ${formatMoney(w.total, m.currency)}`}
                     />
                   </div>
                 );

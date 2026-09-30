@@ -164,6 +164,8 @@ async function main() {
   const { toDateString, addDays, zonedDateTimeToInstant, weekdayOf } = await import("../src/lib/dates");
   const { toBaseUnit } = await import("../src/lib/units");
   const { productBase } = await import("../src/server/services/learning");
+  const { getCatalogProduct } = await import("../src/lib/catalog");
+  const isPerishable = (slug: string) => getCatalogProduct(slug)?.perishable ?? false;
 
   // ── Reset any previous demo ──────────────────────────────────────────────
   const existing = await systemDb.select().from(schema.users).where(eq(schema.users.email, DEMO_EMAIL));
@@ -343,7 +345,20 @@ async function main() {
       for (const b of batches) if (b.remaining > 0) bySlug.set(b.slug, [...(bySlug.get(b.slug) ?? []), b]);
       for (const [slug, list] of bySlug) {
         const behaviour = BEHAVIOUR[slug];
-        if (!behaviour) continue;
+        if (!behaviour) {
+          // Everything else perishable gets used up in meals around its date; nothing lingers for weeks.
+          for (const b of list) {
+            if (!b.expiresOn || day < addDays(b.expiresOn, 2)) continue;
+            b.remaining = 0;
+            const [row] = await tx.select().from(schema.inventoryItems).where(eq(schema.inventoryItems.id, b.itemId));
+            await finishItemTx(tx, household, userId, row, "consumed", {
+              endedAt: zonedDateTimeToInstant(addDays(b.expiresOn, 1), 19, TZ),
+              estimatedFraction: 0,
+              actor: "user",
+            });
+          }
+          continue;
+        }
         if (behaviour.rate) {
           let need = behaviour.rate * jitter(0.25);
           for (const b of list.sort((a, c) => a.purchasedAt.getTime() - c.purchasedAt.getTime())) {
@@ -369,6 +384,18 @@ async function main() {
             b.remaining = 0;
             const [row] = await tx.select().from(schema.inventoryItems).where(eq(schema.inventoryItems.id, b.itemId));
             await finishItemTx(tx, household, userId, row, "consumed", { endedAt: zonedDateTimeToInstant(day, 19, TZ), estimatedFraction: 0, actor: "meal" });
+            continue;
+          }
+          // Continuous-use food that outlasts its date (a few too many bananas) is thrown out.
+          if (behaviour.rate && b.expiresOn && day >= addDays(b.expiresOn, 2) && b.remaining > 0 && isPerishable(slug)) {
+            const wasted = b.remaining / b.baseTotal;
+            b.remaining = 0;
+            const [row] = await tx.select().from(schema.inventoryItems).where(eq(schema.inventoryItems.id, b.itemId));
+            await finishItemTx(tx, household, userId, row, wasted > 0.05 ? "wasted" : "consumed", {
+              endedAt: zonedDateTimeToInstant(addDays(b.expiresOn, 1), 20, TZ),
+              estimatedFraction: wasted,
+              actor: "user",
+            });
             continue;
           }
           // Waste-prone greens: some used, the rest goes off at expiry.

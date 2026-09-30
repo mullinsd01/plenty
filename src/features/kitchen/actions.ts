@@ -72,6 +72,14 @@ export async function restoreItemAction(itemId: string) {
   }, { message: "Restored" });
 }
 
+export async function clearOutItemsAction(itemIds: string[]) {
+  return householdAction(
+    "kitchen.clearOut",
+    async (ctx) => inventory.clearOutItems(ctx, parseInput(z.array(id).min(1).max(200), itemIds)),
+    { message: (n) => (n === 1 ? "Cleared out 1 thing" : `Cleared out ${n} things`) },
+  );
+}
+
 export async function answerCheckInAction(productId: string, finished: boolean) {
   return householdAction("kitchen.checkIn", async (ctx) => {
     await inventory.answerCheckIn(ctx, parseInput(id, productId), Boolean(finished));

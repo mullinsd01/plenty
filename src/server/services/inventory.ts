@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { ProductInfo } from "@/lib/catalog/types";
-import { DAY_MS, toDateString } from "@/lib/dates";
+import { addDays, DAY_MS, toDateString, zonedDateTimeToInstant } from "@/lib/dates";
 import {
   AISLE_ORDER,
   levelLabel,
@@ -90,7 +90,11 @@ export function toItemView(item: DbInventoryItem, live: LiveState, household: Pi
     quantity: item.quantity,
     unit: item.unit as Unit,
     packCount: item.packCount,
-    quantityLabel: item.packCount > 1 ? `${item.packCount} × ${formatQuantity(item.quantity / item.packCount, item.unit as Unit)}` : formatQuantity(item.quantity, item.unit as Unit),
+    // "2 × 2 L" for multipacks of measured things; counted things just show the count ("12", not "12 × 1").
+    quantityLabel:
+      item.packCount > 1 && unitDimension(item.unit as Unit) !== "count"
+        ? `${item.packCount} × ${formatQuantity(item.quantity / item.packCount, item.unit as Unit)}`
+        : formatQuantity(item.quantity, item.unit as Unit),
     knownFraction: item.remainingFraction,
     estimatedFraction: estimated,
     levelLabel: levelLabel(estimated),
@@ -647,6 +651,36 @@ export async function answerCheckIn(ctx: HouseholdContext, productId: string, fi
       }
     }
     await refreshLearning(tx, ctx.household, [productId], now);
+  });
+}
+
+/**
+ * Clear out things that are well past their date, in one go. Each is closed
+ * off as expired — dated to when it most likely went off — so Plenty learns
+ * about the waste without anyone updating items one by one.
+ */
+export async function clearOutItems(ctx: HouseholdContext, ids: string[]): Promise<number> {
+  const now = new Date();
+  return withUser(ctx.user.id, async (tx) => {
+    const live = await computeLiveState(tx, ctx.household, now);
+    const wanted = new Set(ids);
+    const touched: Array<string | null> = [];
+    let cleared = 0;
+    for (const item of live.activeItems) {
+      if (!wanted.has(item.id)) continue;
+      const expiry = item.actualExpiry ?? item.estimatedExpiry;
+      const wentOff = expiry ? zonedDateTimeToInstant(addDays(expiry, 1), 0, ctx.household.timezone) : null;
+      const done = await finishItemTx(tx, ctx.household, ctx.user.id, item, "expired", {
+        endedAt: inferEndTime(item, wentOff, now),
+        estimatedFraction: live.itemFractions.get(item.id) ?? item.remainingFraction,
+      });
+      if (done) {
+        cleared += 1;
+        touched.push(item.productId);
+      }
+    }
+    if (cleared > 0) await refreshLearning(tx, ctx.household, touched, now);
+    return cleared;
   });
 }
 

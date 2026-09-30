@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addDays, daysBetweenDates, relativeDayLabel, toDateString, weekdayOf, zonedDateTimeToInstant } from "@/lib/dates";
 import { adultEquivalents, levelLabel, levelPhrase } from "@/lib/domain";
-import { formatMoney, pluralize } from "@/lib/format";
+import { formatMoney, pluralize, pluralNoun, remainingPhrase } from "@/lib/format";
 import { parseQuickAdd } from "@/lib/quick-add";
 import { convert, formatQuantity, packagesNeeded, parseUnit, toBaseUnit } from "@/lib/units";
 
@@ -75,6 +75,9 @@ describe("units", () => {
     expect(formatQuantity(12, "each")).toBe("12");
     expect(formatQuantity(3, "can")).toBe("3 cans");
     expect(formatQuantity(0.5, "cup")).toBe("½ cup");
+    expect(formatQuantity(679.61, "ml")).toBe("680 ml");
+    expect(formatQuantity(907, "g")).toBe("907 g");
+    expect(formatQuantity(12.46, "g")).toBe("12.5 g");
   });
 
   it("rounds purchases up to whole packages", () => {
@@ -96,6 +99,17 @@ describe("domain helpers", () => {
     expect(levelLabel(0.5)).toBe("Half");
     expect(levelLabel(0.1)).toBe("Low");
     expect(levelPhrase(0.2)).toBe("running low");
+  });
+
+  it("phrases what's left and plural product names naturally", () => {
+    expect(remainingPhrase("about 4 days")).toBe("Probably about 4 days left");
+    expect(remainingPhrase("probably out now")).toBe("Probably out now");
+    expect(remainingPhrase("probably today")).toBe("Probably runs out today");
+    expect(pluralNoun("Apple")).toBe("Apples");
+    expect(pluralNoun("Brown onion")).toBe("Brown onions");
+    expect(pluralNoun("Mango")).toBe("Mangoes");
+    expect(pluralNoun("Cherry")).toBe("Cherries");
+    expect(pluralNoun("Carrots")).toBe("Carrots");
   });
 
   it("formats money and counts", () => {

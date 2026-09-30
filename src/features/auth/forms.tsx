@@ -59,13 +59,11 @@ export function SignInForm({ next, demo }: { next?: string; demo: boolean }) {
           <Input id="email" name="email" type="email" autoComplete="email" inputMode="email" required autoFocus />
         </Field>
         <Field
-          label={
-            <span className="flex w-full items-baseline justify-between">
-              Password
-              <Link href="/forgot-password" className="text-[13px] font-medium text-ink-3 hover:text-ink">
-                Forgot?
-              </Link>
-            </span>
+          label="Password"
+          action={
+            <Link href="/forgot-password" className="text-[13px] font-medium text-ink-3 hover:text-ink">
+              Forgot your password?
+            </Link>
           }
           htmlFor="password"
           error={fieldError(state, "password")}

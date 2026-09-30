@@ -50,6 +50,8 @@ export function Label({ className, ...props }: React.LabelHTMLAttributes<HTMLLab
 
 interface FieldProps {
   label?: React.ReactNode;
+  /** A small link or button shown opposite the label (kept outside the <label>). */
+  action?: React.ReactNode;
   htmlFor?: string;
   hint?: React.ReactNode;
   error?: string | null;
@@ -59,14 +61,15 @@ interface FieldProps {
 }
 
 /** Label + control + hint/error, with consistent spacing. */
-export function Field({ label, htmlFor, hint, error, className, children, optional }: FieldProps) {
+export function Field({ label, htmlFor, hint, error, className, children, optional, action }: FieldProps) {
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
       {label && (
-        <Label htmlFor={htmlFor} className="flex items-baseline justify-between">
-          <span>{label}</span>
+        <div className="flex items-baseline justify-between gap-3">
+          <Label htmlFor={htmlFor}>{label}</Label>
           {optional && <span className="text-xs font-normal text-ink-3">Optional</span>}
-        </Label>
+          {action}
+        </div>
       )}
       {children}
       {error ? (

@@ -258,9 +258,11 @@ function ItemRow({
         </div>
       )}
       {draft.include && item.existing && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl bg-subtle px-3 py-2 pl-3 sm:ml-9">
-          <Info className="size-3.5 shrink-0 text-ink-3" />
-          <span className="flex-1 text-[12px] text-ink-2">{item.existing.summary}</span>
+        <div className="mt-2.5 flex flex-col gap-2 rounded-xl bg-subtle px-3 py-2.5 sm:ml-9 sm:flex-row sm:items-center sm:gap-3">
+          <span className="flex min-w-0 flex-1 items-start gap-2 text-[13px] leading-snug text-ink-2">
+            <Info className="mt-0.5 size-3.5 shrink-0 text-ink-3" />
+            {item.existing.summary}
+          </span>
           {item.existing.suggestion === "merge" ? (
             <Segmented
               size="sm"

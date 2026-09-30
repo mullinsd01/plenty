@@ -5,35 +5,45 @@ import Link from "next/link";
 import { Check, ChefHat, Plus, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAction } from "@/components/hooks/use-action";
-import { answerCheckInAction } from "@/features/kitchen/actions";
+import { Card } from "@/components/ui/card";
+import { answerCheckInAction, clearOutItemsAction } from "@/features/kitchen/actions";
 import { addListItemAction } from "@/features/list/actions";
 import { cookPlanItemAction, generatePlanAction, replacePlanItemAction } from "@/features/meals/actions";
 import { cn } from "@/lib/cn";
 
-/** "Did you finish the milk?" — a one-tap confirmation instead of asking for quantities. */
-export function CheckInCard({ productId, name }: { productId: string; name: string }) {
+/**
+ * "Did you finish the milk?" — one-tap confirmations instead of asking for
+ * quantities. Several questions share one quiet card.
+ */
+export function CheckInList({ items }: { items: Array<{ productId: string; name: string }> }) {
+  return (
+    <Card className="divide-y divide-line">
+      {items.map((c) => (
+        <CheckInRow key={c.productId} productId={c.productId} name={c.name} />
+      ))}
+    </Card>
+  );
+}
+
+function CheckInRow({ productId, name }: { productId: string; name: string }) {
   const { pending, run } = useAction();
   const [answered, setAnswered] = useState<null | "yes" | "no">(null);
   if (answered) {
     return (
-      <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3.5 text-sm text-ink-2 shadow-card animate-fade-in">
-        <Check className="size-4 text-fresh" />
-        {answered === "yes" ? `Thanks — Plenty has learned a little more about your ${name.toLowerCase()}.` : `Got it. Plenty will check again in a couple of days.`}
+      <div className="flex items-center gap-3 px-4 py-3.5 text-[14px] text-ink-2 animate-fade-in">
+        <Check className="size-4 shrink-0 text-fresh" />
+        {answered === "yes" ? `Thanks — Plenty has learned a little more about your ${name.toLowerCase()}.` : "Got it. Plenty will check again in a couple of days."}
       </div>
     );
   }
   return (
-    <div className="rounded-2xl border border-line bg-surface p-4 shadow-card sm:flex sm:items-center sm:justify-between sm:gap-4">
-      <div>
+    <div className="px-4 py-3.5 sm:flex sm:items-center sm:justify-between sm:gap-4">
+      <div className="min-w-0">
         <p className="text-[15px] font-semibold">Did you finish the {name.toLowerCase()}?</p>
         <p className="mt-0.5 text-[13px] text-ink-3">By Plenty&apos;s estimate it should be about gone.</p>
       </div>
-      <div className="mt-3 flex gap-2 sm:mt-0">
-        <Button
-          size="sm"
-          loading={pending}
-          onClick={() => run(() => answerCheckInAction(productId, true), { onSuccess: () => setAnswered("yes") })}
-        >
+      <div className="mt-3 flex shrink-0 gap-2 sm:mt-0">
+        <Button size="sm" loading={pending} onClick={() => run(() => answerCheckInAction(productId, true), { onSuccess: () => setAnswered("yes") })}>
           Yes, it&apos;s finished
         </Button>
         <Button
@@ -43,6 +53,40 @@ export function CheckInCard({ productId, name }: { productId: string; name: stri
           onClick={() => run(() => answerCheckInAction(productId, false), { onSuccess: () => setAnswered("no") })}
         >
           Still some left
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Food well past its date: clear it all out in one tap rather than item by item. */
+export function PastDateCard({ itemIds, summary }: { itemIds: string[]; summary: string }) {
+  const { pending, run } = useAction();
+  const [cleared, setCleared] = useState(false);
+  if (cleared) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3.5 text-[14px] text-ink-2 shadow-card animate-fade-in">
+        <Check className="size-4 shrink-0 text-fresh" />
+        Cleared out. Plenty will factor it in when suggesting how much to buy.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-2xl border border-line bg-surface p-4 shadow-card sm:flex sm:items-center sm:justify-between sm:gap-4">
+      <div className="min-w-0">
+        <p className="text-[15px] font-semibold">
+          {itemIds.length === 1 ? "Something is well past its date" : `${itemIds.length} things are well past their date`}
+        </p>
+        <p className="mt-0.5 text-[13px] text-ink-3">
+          {summary} — probably eaten or thrown out by now.
+        </p>
+      </div>
+      <div className="mt-3 flex shrink-0 gap-2 sm:mt-0">
+        <Button size="sm" loading={pending} onClick={() => run(() => clearOutItemsAction(itemIds), { onSuccess: () => setCleared(true) })}>
+          Clear them out
+        </Button>
+        <Button size="sm" variant="secondary" asChild>
+          <Link href="/kitchen">Check first</Link>
         </Button>
       </div>
     </div>
