@@ -347,12 +347,17 @@ export async function addManualItem(
       .where(and(eq(shoppingListItems.listId, list.id), eq(shoppingListItems.itemKey, itemKey)))
       .limit(1);
     if (existing) {
+      // Two people each adding "lemons" means both amounts are needed: add them up rather
+      // than quietly replacing what someone else asked for.
+      const stillWanted = existing.source === "manual" && !existing.checkedAt && !existing.purchasedAt;
+      const combined =
+        quantity && stillWanted && existing.quantity && existing.unit === unit ? existing.quantity + quantity : quantity ?? existing.quantity;
       await tx
         .update(shoppingListItems)
         .set({
           source: "manual",
           userEdited: quantity ? true : existing.userEdited,
-          quantity: quantity ?? existing.quantity,
+          quantity: combined,
           unit: quantity ? unit : existing.unit,
           checkedAt: null,
           checkedBy: null,
