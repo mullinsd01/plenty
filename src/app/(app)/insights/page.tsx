@@ -29,12 +29,25 @@ export default async function InsightsPage() {
         subtitle="Everything Plenty has learned about your household — and why it suggests what it does. Change anything that's wrong."
       />
 
-      <div className="mb-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat value={m.summary.learnedProducts} label="things learned from your history" />
-        <Stat value={m.summary.estimatedProducts} label="still on Plenty's estimates" />
-        <Stat value={m.summary.observations} label="times you've finished something" />
-        <Stat value={m.summary.receipts} label="receipts scanned" />
-      </div>
+      {m.products.length === 0 && m.summary.receipts === 0 ? (
+        <Card className="mb-10 p-5">
+          <p className="text-[17px] font-semibold tracking-[-0.01em]">Nothing learned yet — that&apos;s normal</p>
+          <p className="mt-1 text-[14px] leading-relaxed text-ink-3">
+            Plenty starts with sensible estimates for a household your size, then learns your real pace from your receipts and
+            the things you finish. Everything it learns shows up here, and you can correct any of it.
+          </p>
+          <Link href="/receipts/new" className="mt-4 inline-flex items-center gap-1.5 text-[14px] font-semibold text-brand-ink hover:underline">
+            Scan your first receipt
+          </Link>
+        </Card>
+      ) : (
+        <div className="mb-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat value={m.summary.learnedProducts} label="things learned from your history" />
+          <Stat value={m.summary.estimatedProducts} label="still on Plenty's estimates" />
+          <Stat value={m.summary.observations} label="times you've finished something" />
+          <Stat value={m.summary.receipts} label="receipts scanned" />
+        </div>
+      )}
 
       <section className="mb-10">
         <SectionTitle>Your shopping rhythm</SectionTitle>

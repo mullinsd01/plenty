@@ -22,7 +22,7 @@ import { computePlanRequirements } from "@/lib/meals/requirements";
 import type { IngredientAvailability, MealHistory, PlannableMeal, PlannerPreferences } from "@/lib/meals/types";
 import { normalizeText } from "@/lib/normalize";
 import { RECIPES, recipeContains } from "@/lib/recipes";
-import { convert, formatQuantity, isUnit, type Unit } from "@/lib/units";
+import { convert, formatQuantity, formatRecipeQuantity, isUnit, type Unit } from "@/lib/units";
 import { AIUnavailableError, getProvider, type GeneratedRecipe } from "@/server/ai";
 import type { HouseholdContext } from "@/server/auth/context";
 import { enforceRateLimit } from "@/server/auth/rate-limit";
@@ -723,7 +723,7 @@ export async function getMealDetail(ctx: HouseholdContext, mealId: string, servi
       .from(mealIngredients)
       .where(eq(mealIngredients.mealId, mealId))
       .orderBy(asc(mealIngredients.position));
-    const omit = new Set(ingredientsToOmit(meal, loaded.planner.prefs).map((n: string) => normalizeText(n)));
+    const omit = new Set(ingredientsToOmit(meal, loaded.planner.prefs).map((o) => normalizeText(o.name)));
     const allowed = isMealAllowed(meal, loaded.planner.prefs);
     const history = loaded.planner.history.get(meal.id);
     const plannedRows = await tx
@@ -739,7 +739,7 @@ export async function getMealDetail(ctx: HouseholdContext, mealId: string, servi
         const qty = ing.quantity !== null ? ing.quantity * scale : null;
         return {
           name: ing.name,
-          amount: qty !== null && ing.unit ? formatQuantity(qty, ing.unit) : qty !== null ? formatQuantity(qty, "each") : "",
+          amount: qty !== null ? formatRecipeQuantity(qty, ing.unit ?? "each") : "",
           status: a?.status ?? "missing",
           substitute: a?.substitute ?? false,
           usesSoonExpiring: a?.usesSoonExpiring ?? false,

@@ -49,6 +49,9 @@ export async function createHousehold(
         timezone: input.timezone ?? "Australia/Sydney",
         currency: input.currency ?? currencyForTimezone(input.timezone),
         createdBy: user.id,
+        // Everything after naming the household is optional, so leaving setup
+        // part-way never traps anyone in onboarding.
+        onboardedAt: new Date(),
       })
       .returning({ id: households.id });
     await tx.insert(householdMembers).values({ householdId: household.id, userId: user.id, role: "owner" });

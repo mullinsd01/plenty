@@ -3,7 +3,7 @@ import { addDays, daysBetweenDates, relativeDayLabel, toDateString, weekdayOf, z
 import { adultEquivalents, levelLabel, levelPhrase } from "@/lib/domain";
 import { formatMoney, pluralize, pluralNoun, remainingPhrase } from "@/lib/format";
 import { parseQuickAdd } from "@/lib/quick-add";
-import { convert, formatQuantity, packagesNeeded, parseUnit, toBaseUnit } from "@/lib/units";
+import { convert, formatQuantity, formatRecipeQuantity, packagesNeeded, parseUnit, toBaseUnit } from "@/lib/units";
 
 describe("quick add parsing", () => {
   it("understands counts, measures, dozens and plain names", () => {
@@ -78,6 +78,15 @@ describe("units", () => {
     expect(formatQuantity(679.61, "ml")).toBe("680 ml");
     expect(formatQuantity(907, "g")).toBe("907 g");
     expect(formatQuantity(12.46, "g")).toBe("12.5 g");
+  });
+
+  it("rounds scaled recipe amounts the way a cook measures", () => {
+    expect(formatRecipeQuantity(337.5, "g")).toBe("340 g");
+    expect(formatRecipeQuantity(6.75, "g")).toBe("7 g");
+    expect(formatRecipeQuantity(0.375, "bunch")).toBe("⅓ bunch");
+    expect(formatRecipeQuantity(0.375, "each")).toBe("⅓");
+    expect(formatRecipeQuantity(2.25, "tbsp")).toBe("2¼ tbsp");
+    expect(formatRecipeQuantity(0.05, "tsp")).toBe("¼ tsp");
   });
 
   it("rounds purchases up to whole packages", () => {

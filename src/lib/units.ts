@@ -299,6 +299,28 @@ export function formatQuantity(quantity: number | null | undefined, unit: Unit |
   return `${amount} ${label}`.trim();
 }
 
+const KITCHEN_FRACTIONS = [0, 0.25, 1 / 3, 0.5, 2 / 3, 0.75, 1];
+
+/**
+ * A recipe amount rounded the way a cook would measure it: scaled recipes
+ * read "340 g" and "⅓ bunch", never "337.5 g" or "0.38 bunch".
+ */
+export function formatRecipeQuantity(quantity: number | null | undefined, unit: Unit | null | undefined): string {
+  if (quantity === null || quantity === undefined || !Number.isFinite(quantity) || quantity <= 0) return "";
+  const u: Unit = unit ?? "each";
+  let q = quantity;
+  if (u === "g" || u === "ml") {
+    const step = q >= 100 ? 10 : q >= 20 ? 5 : q >= 5 ? 1 : 0.5;
+    q = Math.max(step, Math.round(q / step) * step);
+  } else if (UNIT_DEFS[u].dimension === "count" || u === "tsp" || u === "tbsp" || u === "cup") {
+    const whole = Math.floor(q);
+    const frac = q - whole;
+    const nearest = KITCHEN_FRACTIONS.reduce((best, f) => (Math.abs(f - frac) < Math.abs(best - frac) ? f : best), 0);
+    q = Math.max(0.25, whole + nearest);
+  }
+  return formatQuantity(q, u);
+}
+
 /** Format a base-unit amount for display (e.g. 1500 ml → "1.5 L"). */
 export function formatBase(amount: number, unit: BaseUnit): string {
   return formatQuantity(amount, unit);
