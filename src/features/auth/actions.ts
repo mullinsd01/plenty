@@ -1,0 +1,121 @@
+"use server";
+
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { and, eq } from "drizzle-orm";
+import { fail, type ActionResult } from "@/lib/result";
+import { getCurrentSession, createSession, setSessionCookie, clearSessionCookie, invalidateSession } from "@/server/auth/session";
+import { enforceRateLimit } from "@/server/auth/rate-limit";
+import * as auth from "@/server/auth/service";
+import { systemDb } from "@/server/db/client";
+import { users } from "@/server/db/schema";
+import { env } from "@/server/env";
+import { AppError, parseInput, toUserError } from "@/server/errors";
+import { forgotPasswordSchema, resetPasswordSchema, signInSchema, signUpSchema } from "@/validation/auth";
+
+type FormState = ActionResult<undefined> | null;
+
+async function clientKey(): Promise<string> {
+  const h = await headers();
+  return (h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local").slice(0, 64);
+}
+
+/** Only allow same-site relative redirects. */
+function safeNext(next: FormDataEntryValue | null, fallback: string): string {
+  const value = typeof next === "string" ? next : "";
+  if (value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\")) return value;
+  return fallback;
+}
+
+async function startSession(userId: string) {
+  const h = await headers();
+  const { token, expiresAt } = await createSession(userId, h.get("user-agent"));
+  await setSessionCookie(token, expiresAt);
+}
+
+export async function signUpAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  let next: string;
+  try {
+    const input = parseInput(signUpSchema, {
+      name: formData.get("name"),
+      email: formData.get("email"),
+      password: formData.get("password"),
+    });
+    await enforceRateLimit(`signup:${await clientKey()}`, 10, 3600, "creating accounts");
+    const { userId } = await auth.signUp(input);
+    await startSession(userId);
+    next = safeNext(formData.get("next"), "/onboarding");
+  } catch (err) {
+    return toUserError(err, "signUp");
+  }
+  redirect(next);
+}
+
+export async function signInAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  let next: string;
+  try {
+    const input = parseInput(signInSchema, { email: formData.get("email"), password: formData.get("password") });
+    await enforceRateLimit(`signin:${input.email}`, 8, 900, "signing in");
+    await enforceRateLimit(`signin-ip:${await clientKey()}`, 40, 900, "signing in");
+    const { userId } = await auth.signIn(input);
+    await startSession(userId);
+    next = safeNext(formData.get("next"), "/home");
+  } catch (err) {
+    return toUserError(err, "signIn");
+  }
+  redirect(next);
+}
+
+export async function demoSignInAction(): Promise<FormState> {
+  try {
+    if (!env().DEMO_MODE) throw new AppError("forbidden", "The demo household isn't available here.");
+    const [demo] = await systemDb
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.email, "demo@plenty.app"), eq(users.isDemo, true)))
+      .limit(1);
+    if (!demo) {
+      throw new AppError("not_found", "The demo household hasn't been created yet. Run `npm run db:seed` and try again.");
+    }
+    await startSession(demo.id);
+  } catch (err) {
+    return toUserError(err, "demoSignIn");
+  }
+  redirect("/home");
+}
+
+export async function signOutAction(): Promise<void> {
+  const current = await getCurrentSession();
+  if (current) await invalidateSession(current.session.id);
+  await clearSessionCookie();
+  redirect("/login");
+}
+
+export async function forgotPasswordAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const { email } = parseInput(forgotPasswordSchema, { email: formData.get("email") });
+    await enforceRateLimit(`reset:${email}`, 3, 3600, "resetting your password");
+    await enforceRateLimit(`reset-ip:${await clientKey()}`, 10, 3600, "resetting passwords");
+    await auth.requestPasswordReset(email);
+    return { ok: true, data: undefined, message: "If an account exists for that email, a reset link is on its way." };
+  } catch (err) {
+    return toUserError(err, "forgotPassword");
+  }
+}
+
+export async function resetPasswordAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  try {
+    const input = parseInput(resetPasswordSchema, {
+      token: formData.get("token"),
+      password: formData.get("password"),
+      confirm: formData.get("confirm"),
+    });
+    await enforceRateLimit(`reset-complete:${await clientKey()}`, 10, 900, "that");
+    const { userId } = await auth.resetPassword(input.token, input.password);
+    await startSession(userId);
+  } catch (err) {
+    const res = toUserError(err, "resetPassword");
+    return res.code === "internal" ? fail("We couldn't reset your password. Please request a new link.") : res;
+  }
+  redirect("/home");
+}

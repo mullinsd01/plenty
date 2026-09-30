@@ -1,0 +1,222 @@
+@import "tailwindcss";
+
+/*
+ * Plenty design tokens.
+ * Warm neutrals, one brand coral used sparingly, calm semantic colours.
+ * Components only use these tokens, so dark mode is a palette swap.
+ */
+:root {
+  --canvas: #faf8f5;
+  --surface: #ffffff;
+  --subtle: #f4f1ec;
+  --sunken: #efebe5;
+  --line: #ebe6de;
+  --line-strong: #ddd6cb;
+  --ink: #1e2735;
+  --ink-2: #4a5465;
+  --ink-3: #7c8492;
+  --ink-4: #a7adb6;
+  --inverse: #ffffff;
+
+  --brand: #f46e4f;
+  --brand-strong: #dd5537;
+  --brand-soft: #fdeee9;
+  --brand-ink: #b8432a;
+  --navy: #33415c;
+
+  --fresh: #3f8458;
+  --fresh-soft: #eaf4ed;
+  --soon: #b8751a;
+  --soon-soft: #fbf1e1;
+  --alert: #c9432e;
+  --alert-soft: #fbece8;
+  --info: #3f6aa6;
+  --info-soft: #ebf1f9;
+
+  --primary: #1e2735;
+  --primary-hover: #2c3748;
+  --on-primary: #ffffff;
+
+  --shadow-color: 30 39 53;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #111214;
+    --surface: #1a1c1f;
+    --subtle: #222529;
+    --sunken: #16181a;
+    --line: #2b2e33;
+    --line-strong: #383c42;
+    --ink: #f3f0eb;
+    --ink-2: #c2bdb5;
+    --ink-3: #908b84;
+    --ink-4: #635f5a;
+    --inverse: #111214;
+
+    --brand: #f47a5f;
+    --brand-strong: #f68d75;
+    --brand-soft: #3a231d;
+    --brand-ink: #f8a28f;
+    --navy: #aab6cc;
+
+    --fresh: #74b88b;
+    --fresh-soft: #1c2b21;
+    --soon: #e0a24c;
+    --soon-soft: #2f2516;
+    --alert: #f07b66;
+    --alert-soft: #35201c;
+    --info: #86a9dd;
+    --info-soft: #1c2533;
+
+    --primary: #f3f0eb;
+    --primary-hover: #ffffff;
+    --on-primary: #111214;
+
+    --shadow-color: 0 0 0;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-inverse: var(--inverse);
+  --color-brand: var(--brand);
+  --color-brand-strong: var(--brand-strong);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-ink: var(--brand-ink);
+  --color-navy: var(--navy);
+  --color-fresh: var(--fresh);
+  --color-fresh-soft: var(--fresh-soft);
+  --color-soon: var(--soon);
+  --color-soon-soft: var(--soon-soft);
+  --color-alert: var(--alert);
+  --color-alert-soft: var(--alert-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-on-primary: var(--on-primary);
+
+  --font-sans: var(--font-figtree), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+
+  --shadow-card: 0 1px 2px rgb(var(--shadow-color) / 0.04), 0 0 0 1px rgb(var(--shadow-color) / 0.02);
+  --shadow-raised: 0 2px 8px -2px rgb(var(--shadow-color) / 0.08), 0 1px 2px rgb(var(--shadow-color) / 0.04);
+  --shadow-pop: 0 16px 40px -12px rgb(var(--shadow-color) / 0.22), 0 2px 6px rgb(var(--shadow-color) / 0.06);
+
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --animate-fade-in: fade-in 180ms var(--ease-out-soft);
+  --animate-rise: rise 260ms var(--ease-out-soft);
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.55;
+  }
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-feature-settings: "ss01", "cv11";
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--brand) 22%, transparent);
+  }
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--brand) 70%, transparent);
+    outline-offset: 2px;
+  }
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--ink-4);
+  }
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+  }
+}
