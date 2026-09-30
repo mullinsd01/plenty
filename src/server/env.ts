@@ -11,9 +11,14 @@ const schema = z.object({
   APP_URL: z.string().url().default("http://localhost:3000"),
   ANTHROPIC_API_KEY: z.string().optional().transform((v) => (v ? v : undefined)),
   AI_PROVIDER: z.enum(["auto", "local", "anthropic"]).default("auto"),
-  ANTHROPIC_MODEL: z.string().default("claude-sonnet-5-5"),
+  ANTHROPIC_MODEL: z.string().default("claude-opus-5-5"),
   SMTP_URL: z.string().optional().transform((v) => (v ? v : undefined)),
   EMAIL_FROM: z.string().default("Plenty <hello@plenty.local>"),
+  /** Keep an outbox of unsent emails even in production (end-to-end tests only). */
+  EMAIL_OUTBOX: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
   STORAGE_DIR: z.string().default(".data/uploads"),
   CRON_SECRET: z.string().optional().transform((v) => (v ? v : undefined)),
   DEMO_MODE: z

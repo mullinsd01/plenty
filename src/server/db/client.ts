@@ -32,7 +32,7 @@ function createPool(): Pool {
 }
 
 export const pool: Pool = globalThis.__plentyPool ?? createPool();
-if (process.env.NODE_ENV !== "production") globalThis.__plentyPool = pool;
+if (process.env.NODE_ENV === "development") globalThis.__plentyPool = pool;
 
 /**
  * Root database handle (table owner). Bypasses row-level security — use only

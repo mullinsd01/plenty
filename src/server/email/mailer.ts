@@ -31,7 +31,7 @@ async function getTransport(): Promise<Transport | null> {
 export async function sendEmail(message: EmailMessage): Promise<{ delivered: boolean }> {
   const t = await getTransport();
   if (!t) {
-    if (isProduction()) {
+    if (isProduction() && !env().EMAIL_OUTBOX) {
       console.warn(`[email] SMTP_URL not configured; dropping "${message.subject}" to ${message.to}`);
       return { delivered: false };
     }

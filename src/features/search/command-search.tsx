@@ -41,23 +41,31 @@ export function CommandSearch({ controller }: { controller: CommandSearchControl
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef(0);
 
-  useEffect(() => {
-    if (!controller.isOpen) {
+  const onOpenChange = (open: boolean) => {
+    if (!open) {
       setQuery("");
       setResults(EMPTY);
       setError(null);
+      setLoading(false);
     }
-  }, [controller.isOpen]);
+    controller.setOpen(open);
+  };
+
+  const onQueryChange = (value: string) => {
+    setQuery(value);
+    if (!value.trim()) {
+      requestId.current += 1;
+      setResults(EMPTY);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+  };
 
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 1) {
-      setResults(EMPTY);
-      setLoading(false);
-      return;
-    }
+    if (q.length < 1) return;
     const id = ++requestId.current;
-    setLoading(true);
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { headers: { accept: "application/json" } });
@@ -77,14 +85,14 @@ export function CommandSearch({ controller }: { controller: CommandSearchControl
   }, [query]);
 
   const go = (href: string) => {
-    controller.close();
+    onOpenChange(false);
     router.push(href);
   };
 
   const total = results.inventory.length + results.shopping.length + results.meals.length;
 
   return (
-    <Dialog.Root open={controller.isOpen} onOpenChange={controller.setOpen}>
+    <Dialog.Root open={controller.isOpen} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-[rgb(17_18_20/0.32)] backdrop-blur-[2px] data-[state=open]:animate-fade-in" />
         <Dialog.Content className="fixed inset-x-3 top-3 z-50 mx-auto max-w-xl overflow-hidden rounded-2xl border border-line bg-surface shadow-pop outline-none data-[state=open]:animate-rise sm:top-[12vh]">
@@ -97,7 +105,7 @@ export function CommandSearch({ controller }: { controller: CommandSearchControl
               {loading ? <Spinner className="size-[18px] text-ink-3" /> : <Search className="size-[18px] text-ink-3" />}
               <Command.Input
                 value={query}
-                onValueChange={setQuery}
+                onValueChange={onQueryChange}
                 placeholder="Search kitchen, list, meals…"
                 className="h-14 flex-1 bg-transparent text-[16px] text-ink outline-none placeholder:text-ink-4"
                 autoFocus

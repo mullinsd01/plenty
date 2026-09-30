@@ -356,3 +356,12 @@ export const SUPERMARKETS = [
 
 export const CURRENCIES = ["AUD", "NZD", "GBP", "USD", "EUR", "CAD"] as const;
 export type Currency = (typeof CURRENCIES)[number];
+
+/** Level as a phrase for sentences: "about half left", "running low". */
+export function levelPhrase(fraction: number): string {
+  if (fraction <= 0.02) return "finished";
+  if (fraction <= 0.3) return "running low";
+  if (fraction <= 0.6) return "about half left";
+  if (fraction <= 0.9) return "mostly full";
+  return "still full";
+}

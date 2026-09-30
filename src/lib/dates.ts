@@ -83,3 +83,31 @@ export function formatLongDate(date: string): string {
   const d = parseDateString(date);
   return d.toLocaleString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
+
+/** Wall-clock time in `timeZone` for an instant, as a UTC-based timestamp (for offset maths). */
+function wallClockMs(instant: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(instant);
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  return Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+}
+
+/** The instant at which it is `hour`:00 on calendar `date` in `timeZone`. */
+export function zonedDateTimeToInstant(date: string, hour: number, timeZone = "UTC"): Date {
+  const [y, m, d] = date.split("-").map(Number);
+  const target = Date.UTC(y, (m ?? 1) - 1, d ?? 1, hour);
+  let guess = target;
+  for (let i = 0; i < 2; i++) {
+    const offset = wallClockMs(new Date(guess), timeZone) - guess;
+    guess = target - offset;
+  }
+  return new Date(guess);
+}
