@@ -232,18 +232,28 @@ function urgencyFor(daysLeft: number): number {
   return USE_SOON_URGENCY[daysLeft] ?? 0;
 }
 
-/** Soon-expiring items the meal uses, most urgent first. */
+/**
+ * Soon-expiring items the meal uses, most urgent first. Named as the recipe
+ * names them, or as the kitchen lot when a substitute stands in.
+ */
 function expiringItemsUsed(ingredients: readonly IngredientAvailability[], lots: readonly InventoryLot[], date: string): UseSoonItem[] {
   const lotById = new Map(lots.map((lot) => [lot.id, lot]));
   const items: UseSoonItem[] = [];
   for (const ingredient of ingredients) {
     if (!ingredient.usesSoonExpiring) continue;
     let urgency = 0;
+    let urgentLot: InventoryLot | undefined;
     for (const id of ingredient.matchedLotIds) {
-      const expiresOn = lotById.get(id)?.expiresOn;
-      if (expiresOn) urgency = Math.max(urgency, urgencyFor(daysBetweenDates(date, expiresOn)));
+      const lot = lotById.get(id);
+      const lotUrgency = lot?.expiresOn ? urgencyFor(daysBetweenDates(date, lot.expiresOn)) : 0;
+      if (lotUrgency > urgency) {
+        urgency = lotUrgency;
+        urgentLot = lot;
+      }
     }
-    if (urgency > 0) items.push({ name: ingredient.name, urgency });
+    // A substitute is named as what's in the kitchen: "your white bread", not the recipe's "sourdough".
+    const name = ingredient.substitute && urgentLot ? urgentLot.name.toLowerCase() : ingredient.name;
+    if (urgency > 0) items.push({ name, urgency });
   }
   return items.sort((a, b) => b.urgency - a.urgency);
 }

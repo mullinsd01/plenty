@@ -180,6 +180,11 @@ const DESCRIPTORS = new Set([
   "bakery",
   "deli",
   "butcher",
+  // Recipes asking for what's left over ("day-old bread", "leftover rice").
+  "leftover",
+  "stale",
+  "day",
+  "old",
 ]);
 
 /**
@@ -189,13 +194,14 @@ const DESCRIPTORS = new Set([
  * "scallops" is not "scallions", "mussels" not "morsels", "turkey mince" not
  * beef mince. Flavour words (fruit, spirits, cheese varieties) are left out
  * on purpose: "APRICOT JAM" and "BRANDY CUSTARD" are still jam and custard.
- * A household's own product using one of these words takes precedence.
+ * Catalog words always win (a household's own "Duck breast" product, or
+ * "CHARD" as a receipt's truncated chardonnay), so words the catalog knows
+ * or abbreviates don't belong here.
  */
 const UNSTOCKED_FOODS = new Set([
   // Meat, poultry, game and cuts
   "duck",
   "turkey",
-  "veal",
   "venison",
   "kangaroo",
   "goat",
@@ -204,11 +210,11 @@ const UNSTOCKED_FOODS = new Set([
   "pheasant",
   "brisket",
   "shank",
+  "hock",
   "oxtail",
   "tripe",
   "liver",
   // Seafood
-  "squid",
   "calamari",
   "octopus",
   "scallop",
@@ -222,11 +228,6 @@ const UNSTOCKED_FOODS = new Set([
   "sardine",
   "mackerel",
   "trout",
-  "cod",
-  "haddock",
-  "snapper",
-  "barramundi",
-  "tilapia",
   "swordfish",
   // Proteins and ferments
   "paneer",
@@ -237,7 +238,6 @@ const UNSTOCKED_FOODS = new Set([
   "sauerkraut",
   // Grains, flours and starches
   "tapioca",
-  "arrowroot",
   "semolina",
   "polenta",
   "buckwheat",
@@ -257,7 +257,6 @@ const UNSTOCKED_FOODS = new Set([
   "okra",
   "watercress",
   "silverbeet",
-  "chard",
   "kohlrabi",
   "jackfruit",
   "cassava",
@@ -288,7 +287,6 @@ const UNSTOCKED_FOODS = new Set([
   "caraway",
   "wasabi",
   "nori",
-  "kombu",
   "dashi",
   "molasses",
   "horseradish",
@@ -632,8 +630,6 @@ function resolveToken(index: ProductIndex, surface: string, singular: string): Q
   const base = { surface, modifier: isModifier(singular), descriptor: isDescriptor(singular), unstocked: false };
   const known = index.surfaces.get(surface) ?? index.surfaces.get(singular);
   if (known) return { ...base, canon: [known], strength: 1, weight: index.weights.get(known) ?? UNKNOWN_TOKEN_WEIGHT };
-  // A real food Plenty doesn't stock is exactly what it says, never a truncation or typo.
-  if (UNSTOCKED_FOODS.has(singular)) return { ...base, canon: [], strength: 0, weight: UNSTOCKED_FOOD_WEIGHT, unstocked: true };
 
   const prefixed = surface.length >= PREFIX_MIN_LENGTH ? prefixCandidates(index, surface) : [];
   if (prefixed.length > 0) {
@@ -645,6 +641,9 @@ function resolveToken(index: ProductIndex, surface: string, singular: string): Q
           : PREFIX_STRENGTH_MANY;
     return { ...base, canon: prefixed, strength, weight: maxWeight(index, prefixed) };
   }
+
+  // A real food Plenty doesn't stock is exactly what it says, never a typo of something it does.
+  if (UNSTOCKED_FOODS.has(singular)) return { ...base, canon: [], strength: 0, weight: UNSTOCKED_FOOD_WEIGHT, unstocked: true };
 
   const typo = typoCandidates(index, singular);
   if (typo) return { ...base, canon: typo.canon, strength: typo.strength, weight: maxWeight(index, typo.canon) };
@@ -992,6 +991,13 @@ const PREPARATION_WORDS = new Set([
   "bones",
   "stem",
   "stems",
+  "stalk",
+  "stalks",
+  "leaf",
+  "leaves",
+  "sprig",
+  "sprigs",
+  "separately",
   "end",
   "ends",
   "taste",

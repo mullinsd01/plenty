@@ -16,11 +16,11 @@ import { adultEquivalents, CONFIDENCE_LEVELS, type Confidence } from "@/lib/doma
 import { computeShoppingRhythm, shoppingHorizonDays } from "@/lib/insights";
 import {
   computePlanRequirements,
+  convertForProduct,
   defaultServings,
   generatePlan,
   isMealAllowed,
   libraryPlannableMeals,
-  convertForProduct,
   lotRemaining,
   type ExistingListItem,
   type InventoryLot,
@@ -567,7 +567,9 @@ describe("Plenty's loop: learning and prediction", () => {
 
   it("predicts the 4 L of milk runs out in about four days, with an honest label and reason", () => {
     const milk = predictionFor(MILK.slug);
-    const expectedDays = (4000 - learnedStats(MILK.slug).dailyRate! * ((NOW.getTime() - RECEIPT_AT.getTime()) / DAY_MS)) / learnedStats(MILK.slug).dailyRate!;
+    // 4 L bought 1.3 days ago, drunk at the learned rate since.
+    const rate = learnedStats(MILK.slug).dailyRate ?? 0;
+    const expectedDays = (4000 - rate * ((NOW.getTime() - RECEIPT_AT.getTime()) / DAY_MS)) / rate;
     expect(milk.daysRemaining).toBeCloseTo(expectedDays, 6);
     expect(milk.daysRemaining).toBeGreaterThan(3.5);
     expect(milk.daysRemaining).toBeLessThan(4.5);

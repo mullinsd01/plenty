@@ -314,6 +314,16 @@ describe("scoreMeal", () => {
     expect(scoreOn(gnocchi, ctx, { date: MON })?.useSoonNames).toEqual(["baby spinach"]);
   });
 
+  it("names a substitute going off as what's actually in the kitchen", () => {
+    // The recipe asks for sourdough; the white bread in the pantry stands in and is the thing going off.
+    const chickpeas = meal("spanish-chickpeas-with-spinach");
+    const inventory = [...kitchenFor(chickpeas).filter((l) => l.productId !== "sourdough"), lot("white-bread", { expiresOn: TUE })];
+    const scored = scoreOn(chickpeas, context(inventory), { date: MON });
+    expect(scored?.ingredients.find((i) => i.productId === "sourdough")).toMatchObject({ status: "have", substitute: true });
+    expect(scored?.useSoonNames).toEqual(["white bread"]);
+    expect(scored?.primaryReason).toBe("Your white bread is likely to go off soon, so we've used it tonight.");
+  });
+
   it("weights use-soon points by urgency and caps them", () => {
     const gnocchi = meal("creamy-mushroom-and-spinach-gnocchi");
     const fresh = kitchenFor(gnocchi);

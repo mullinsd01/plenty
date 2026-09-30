@@ -49,7 +49,7 @@ const FRUIT = section({ aisle: "produce", location: "produce", perishable: true 
     perishable: false,
     dailyUsePerPerson: 0.4,
     commonStaple: true,
-    aliases: ["apples", "pink lady", "pink lady apples", "apples pink lady", "royal gala", "gala apples", "apples royal gala", "granny smith", "granny smith apples", "fuji apples", "jazz apples", "kanzi apples", "red delicious", "envy apples", "modi apples", "apples kg"],
+    aliases: ["apples", "pink lady", "pink lady apples", "apples pink lady", "royal gala", "gala apples", "apples royal gala", "granny smith", "granny smith apples", "fuji apples", "jazz apples", "kanzi apples", "red delicious", "envy apples", "modi apples", "apples kg", "green apples", "red apples"],
   },
   {
     slug: "orange",
@@ -321,7 +321,7 @@ const VEGETABLES = section({ aisle: "produce", location: "produce", perishable: 
     perishable: false,
     group: "potato",
     commonStaple: true,
-    aliases: ["potato", "washed potatoes", "brushed potatoes", "white potatoes", "potatoes washed", "potatoes brushed", "sebago potatoes", "desiree potatoes", "royal blue potatoes", "dutch cream potatoes", "red potatoes", "spuds", "potatoes 2kg", "maris piper", "russet potatoes"],
+    aliases: ["potato", "washed potatoes", "brushed potatoes", "white potatoes", "potatoes washed", "potatoes brushed", "sebago potatoes", "desiree potatoes", "royal blue potatoes", "dutch cream potatoes", "red potatoes", "spuds", "potatoes 2kg", "maris piper", "russet potatoes", "floury potatoes", "waxy potatoes"],
   },
   {
     slug: "baby-potatoes",
