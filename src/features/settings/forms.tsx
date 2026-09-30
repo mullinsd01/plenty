@@ -20,7 +20,7 @@ import {
   CURRENCIES,
   DIETS,
   DIET_LABELS,
-  SUPERMARKETS,
+  supermarketsFor,
   type Allergen,
   type CookingFrequency,
   type Cuisine,
@@ -529,7 +529,7 @@ export function ShoppingPreferencesForm({
   const [interval, setInterval] = useState(initial.shopIntervalDays ? String(initial.shopIntervalDays) : "auto");
   const [takeaway, setTakeaway] = useState(initial.takeawayPerWeek ?? 0);
   const { pending, run } = useAction();
-  const storeOptions = Array.from(new Set([...SUPERMARKETS, ...stores])).map((s) => ({ value: s, label: s }));
+  const storeOptions = Array.from(new Set([...supermarketsFor(currency), ...stores])).map((s) => ({ value: s, label: s }));
   return (
     <div className="space-y-6">
       <SettingsCard title="Where you shop">

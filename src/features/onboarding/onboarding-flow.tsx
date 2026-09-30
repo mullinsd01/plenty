@@ -17,7 +17,7 @@ import {
   CUISINE_LABELS,
   DIETS,
   DIET_LABELS,
-  SUPERMARKETS,
+  supermarketsFor,
   type Allergen,
   type CookingFrequency,
   type Cuisine,
@@ -51,12 +51,6 @@ type Step = (typeof STEPS)[number];
 
 const DISLIKE_SUGGESTIONS = ["mushrooms", "olives", "coriander", "seafood", "eggplant", "blue cheese", "capers", "chilli", "beetroot", "tofu"];
 
-const REGIONAL_STORES: Record<string, string[]> = {
-  AUD: ["Woolworths", "Coles", "Aldi", "IGA", "Harris Farm", "Costco"],
-  NZD: ["Countdown", "New World", "Pak'nSave"],
-  GBP: ["Tesco", "Sainsbury's", "Asda", "Aldi", "Lidl", "Waitrose"],
-  USD: ["Walmart", "Kroger", "Trader Joe's", "Whole Foods", "Costco", "Target"],
-};
 
 export function OnboardingFlow({ initial }: { initial: OnboardingInitial }) {
   const [step, setStep] = useState<Step>(initial.hasHousehold ? "avoid" : "welcome");
@@ -114,7 +108,7 @@ export function OnboardingFlow({ initial }: { initial: OnboardingInitial }) {
     });
   };
 
-  const storeOptions = Array.from(new Set([...(REGIONAL_STORES[initial.currency] ?? REGIONAL_STORES.AUD), ...stores])).map((s) => ({
+  const storeOptions = Array.from(new Set([...supermarketsFor(initial.currency), ...stores])).map((s) => ({
     value: s,
     label: s,
   }));
@@ -299,7 +293,7 @@ export function OnboardingFlow({ initial }: { initial: OnboardingInitial }) {
                 loading={pending}
                 onClick={() =>
                   savePrefs({
-                    preferredStores: stores.filter((s) => (SUPERMARKETS as readonly string[]).includes(s) || s.length > 0),
+                    preferredStores: stores.filter((s) => s.trim().length > 0),
                     weeklyBudget: budget ? Number(budget) : null,
                     takeawayPerWeek: takeaway,
                   })

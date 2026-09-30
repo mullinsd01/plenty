@@ -178,7 +178,14 @@ export async function getInventoryItem(
   ctx: HouseholdContext,
   id: string,
   now = new Date(),
-): Promise<{ item: InventoryItemView; status: string; events: ItemEventView[]; history: ConsumptionHistoryView[] } | null> {
+): Promise<{
+  item: InventoryItemView;
+  status: string;
+  events: ItemEventView[];
+  history: ConsumptionHistoryView[];
+  /** Other active batches of the same product — the run-out estimate covers all of them. */
+  otherBatches: number;
+} | null> {
   return withUser(ctx.user.id, async (tx) => {
     const [row] = await tx
       .select()
@@ -204,6 +211,7 @@ export async function getInventoryItem(
     return {
       item: toItemView(row, live, ctx.household),
       status: row.status,
+      otherBatches: row.productId ? live.activeItems.filter((i) => i.productId === row.productId && i.id !== row.id).length : 0,
       events: events.map((e) => ({
         id: e.id,
         type: e.type,

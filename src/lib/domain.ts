@@ -354,6 +354,20 @@ export const SUPERMARKETS = [
   "Target",
 ] as const;
 
+const REGIONAL_SUPERMARKETS: Record<string, readonly string[]> = {
+  AUD: ["Woolworths", "Coles", "Aldi", "IGA", "Harris Farm", "Costco"],
+  NZD: ["Countdown", "New World", "Pak'nSave"],
+  GBP: ["Tesco", "Sainsbury's", "Asda", "Aldi", "Lidl", "Waitrose"],
+  USD: ["Walmart", "Kroger", "Trader Joe's", "Whole Foods", "Costco", "Target"],
+  CAD: ["Loblaws", "Sobeys", "Metro", "Costco", "Walmart"],
+  EUR: ["Aldi", "Lidl", "Carrefour", "Tesco"],
+};
+
+/** Supermarkets that make sense for a household using this currency (Australian list by default). */
+export function supermarketsFor(currency: string): readonly string[] {
+  return REGIONAL_SUPERMARKETS[currency] ?? REGIONAL_SUPERMARKETS.AUD;
+}
+
 export const CURRENCIES = ["AUD", "NZD", "GBP", "USD", "EUR", "CAD"] as const;
 export type Currency = (typeof CURRENCIES)[number];
 

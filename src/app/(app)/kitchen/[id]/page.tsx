@@ -43,7 +43,8 @@ export default async function KitchenItemPage({ params }: PageProps<"/kitchen/[i
   const ctx = await requireHousehold();
   const data = await getInventoryItem(ctx, id);
   if (!data) notFound();
-  const { item, events, history, status } = data;
+  const { item, events, history, status, otherBatches } = data;
+  const probablyUsedUp = item.estimatedFraction <= 0.03;
   const active = status === "active";
 
   return (
@@ -71,9 +72,19 @@ export default async function KitchenItemPage({ params }: PageProps<"/kitchen/[i
             </div>
             <LevelMeter fraction={item.estimatedFraction} className="h-2 w-28" />
           </div>
+          {probablyUsedUp && (
+            <p className="mt-3 text-[13px] leading-relaxed text-ink-3">
+              By Plenty&apos;s estimate this one is used up. Tap <span className="font-medium text-ink-2">Finished</span> if that&apos;s right, or
+              update how much is left.
+            </p>
+          )}
           {item.prediction && (
             <div className="mt-4 border-t border-line pt-4">
-              <p className="text-[15px] font-medium">{remainingPhrase(item.prediction.label)}</p>
+              <p className="text-[15px] font-medium">
+                {otherBatches > 0
+                  ? `Counting the other ${otherBatches === 1 ? "one" : otherBatches} you have: ${remainingPhrase(item.prediction.label).charAt(0).toLowerCase()}${remainingPhrase(item.prediction.label).slice(1)}`
+                  : remainingPhrase(item.prediction.label)}
+              </p>
               <p className="mt-1 text-[13px] leading-relaxed text-ink-3">{item.prediction.reason}</p>
               <BasisLabel basis={item.prediction.basis} confidence={item.prediction.confidence} className="mt-2" />
             </div>
