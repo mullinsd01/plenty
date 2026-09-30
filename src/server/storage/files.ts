@@ -13,12 +13,13 @@ import { AppError } from "@/server/errors";
 const KEY_PATTERN = /^[a-f0-9-]{36}\/[a-f0-9-]{36}\.jpg$/;
 
 function root(): string {
-  return path.resolve(process.cwd(), env().STORAGE_DIR);
+  // Runtime data directory, not source: keep the bundler from tracing the whole project.
+  return path.resolve(/*turbopackIgnore: true*/ process.cwd(), env().STORAGE_DIR);
 }
 
 function resolveKey(key: string): string {
   if (!KEY_PATTERN.test(key)) throw new AppError("storage", "That file reference isn't valid.");
-  const full = path.resolve(root(), key);
+  const full = path.resolve(/*turbopackIgnore: true*/ root(), key);
   if (!full.startsWith(root() + path.sep)) throw new AppError("storage", "That file reference isn't valid.");
   return full;
 }
