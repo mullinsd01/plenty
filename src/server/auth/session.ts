@@ -1,7 +1,7 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { cache } from "react";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, ne } from "drizzle-orm";
 import { systemDb } from "@/server/db/client";
 import { sessions, users } from "@/server/db/schema";
 import { generateToken, sha256 } from "./crypto";
@@ -72,6 +72,11 @@ export async function invalidateSession(sessionId: string): Promise<void> {
 
 export async function invalidateAllSessions(userId: string): Promise<void> {
   await systemDb.delete(sessions).where(eq(sessions.userId, userId));
+}
+
+/** Sign out every other device, keeping the one making the request. */
+export async function invalidateOtherSessions(userId: string, keepSessionId: string): Promise<void> {
+  await systemDb.delete(sessions).where(and(eq(sessions.userId, userId), ne(sessions.id, keepSessionId)));
 }
 
 /** Set the session cookie. Only callable from Server Actions / Route Handlers. */

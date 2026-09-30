@@ -60,9 +60,13 @@ export async function cookPlanItemAction(itemId: string) {
 }
 
 export async function cookMealNowAction(mealId: string, servings?: number) {
-  return householdAction("meals.cookNow", async (ctx) => meals.cookMealNow(ctx, parseInput(id, mealId), servings), {
-    message: (r) => (r.usedItems > 0 ? "Enjoy! Plenty took the ingredients out of your kitchen." : "Enjoy!"),
-  });
+  return householdAction(
+    "meals.cookNow",
+    async (ctx) => meals.cookMealNow(ctx, parseInput(id, mealId), parseInput(z.number().int().min(1).max(24).optional(), servings)),
+    {
+      message: (r) => (r.usedItems > 0 ? "Enjoy! Plenty took the ingredients out of your kitchen." : "Enjoy!"),
+    },
+  );
 }
 
 export async function rateMealAction(mealId: string, rating: -1 | 0 | 1) {

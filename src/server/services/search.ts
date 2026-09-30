@@ -52,6 +52,7 @@ export async function search(ctx: HouseholdContext, rawQuery: string): Promise<S
           eq(shoppingListItems.householdId, ctx.household.id),
           eq(shoppingLists.status, "active"),
           isNull(shoppingListItems.purchasedAt),
+          sql`(${shoppingListItems.dismissedUntil} is null or ${shoppingListItems.dismissedUntil} <= now())`,
           sql`${listScore} > 0.35`,
         ),
       )

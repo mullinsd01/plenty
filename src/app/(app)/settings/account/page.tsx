@@ -20,9 +20,11 @@ export default async function AccountSettingsPage() {
       <SettingsCard title="Password">
         <PasswordForm isDemo={user.isDemo} />
       </SettingsCard>
-      <SettingsCard title="Sessions" description="Signed in somewhere you shouldn't be? This signs you out everywhere, including here.">
-        <SignOutEverywhere />
-      </SettingsCard>
+      {!user.isDemo && (
+        <SettingsCard title="Sessions" description="Signed in somewhere you shouldn't be? This signs you out everywhere, including here.">
+          <SignOutEverywhere />
+        </SettingsCard>
+      )}
       <SettingsCard title="Delete account" description="Permanently delete your account and any household you're the only member of.">
         <DeleteAccount isDemo={user.isDemo} />
       </SettingsCard>

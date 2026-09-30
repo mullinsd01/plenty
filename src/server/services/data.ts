@@ -1,21 +1,30 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { HouseholdContext } from "@/server/auth/context";
 import { withUser } from "@/server/db/client";
 import {
   consumptionEvents,
   consumptionStats,
+  householdInvitations,
   households,
   inventoryEvents,
   inventoryItems,
   mealIngredients,
   mealPlanItems,
+  mealPlans,
   mealPreferences,
   meals,
+  notifications,
+  notificationSettings,
+  predictions,
   preferences,
+  productAliases,
+  products,
   receiptItems,
   receipts,
+  shoppingListItemSources,
   shoppingListItems,
+  shoppingLists,
 } from "@/server/db/schema";
 import { listMembers } from "./household";
 
@@ -43,10 +52,38 @@ export async function exportHouseholdData(ctx: HouseholdContext) {
       learnedStats: await tx.select().from(consumptionStats).where(eq(consumptionStats.householdId, hid)),
       receipts: await tx.select().from(receipts).where(eq(receipts.householdId, hid)),
       receiptItems: await tx.select().from(receiptItems).where(eq(receiptItems.householdId, hid)),
+      receiptPhotosNote: "Receipt photos aren't included in this file. Open a receipt in Plenty to see or save its photo.",
+      customProducts: await tx.select().from(products).where(eq(products.householdId, hid)),
+      learnedReceiptWording: await tx.select().from(productAliases).where(eq(productAliases.householdId, hid)),
+      predictions: await tx.select().from(predictions).where(eq(predictions.householdId, hid)),
+      mealPlans: await tx.select().from(mealPlans).where(eq(mealPlans.householdId, hid)),
       mealPlan: await tx.select().from(mealPlanItems).where(eq(mealPlanItems.householdId, hid)),
       mealPreferences: await tx.select().from(mealPreferences).where(eq(mealPreferences.householdId, hid)),
       recipes: householdMeals.map((m) => ({ ...m, ingredients: householdIngredients.filter((i) => i.mealId === m.id) })),
+      shoppingLists: await tx.select().from(shoppingLists).where(eq(shoppingLists.householdId, hid)),
       shoppingList: await tx.select().from(shoppingListItems).where(eq(shoppingListItems.householdId, hid)),
+      shoppingListSources: await tx.select().from(shoppingListItemSources).where(eq(shoppingListItemSources.householdId, hid)),
+      // Invite codes are credentials, so only their history is exported.
+      invitations: await tx
+        .select({
+          id: householdInvitations.id,
+          email: householdInvitations.email,
+          role: householdInvitations.role,
+          createdAt: householdInvitations.createdAt,
+          expiresAt: householdInvitations.expiresAt,
+          acceptedAt: householdInvitations.acceptedAt,
+          revokedAt: householdInvitations.revokedAt,
+        })
+        .from(householdInvitations)
+        .where(eq(householdInvitations.householdId, hid)),
+      yourNotifications: await tx
+        .select()
+        .from(notifications)
+        .where(and(eq(notifications.householdId, hid), eq(notifications.userId, ctx.user.id))),
+      yourNotificationSettings: await tx
+        .select()
+        .from(notificationSettings)
+        .where(and(eq(notificationSettings.householdId, hid), eq(notificationSettings.userId, ctx.user.id))),
     };
   });
 }

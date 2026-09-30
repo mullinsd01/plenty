@@ -52,6 +52,7 @@ export function ItemSheet({
   const level = useAction();
   const save = useAction();
   const remove = useAction();
+  const undo = useAction();
   const { finish, pending: finishing } = useUndoableFinish();
 
   if (!item) return null;
@@ -66,7 +67,7 @@ export function ItemSheet({
       onSuccess: (r) => {
         if (r.finished) {
           toast.success(`${item.name} marked finished`, {
-            action: { label: "Undo", onClick: () => void restoreItemAction(item.id) },
+            action: { label: "Undo", onClick: () => undo.run(() => restoreItemAction(item.id)) },
           });
           close();
         }
@@ -147,7 +148,7 @@ export function ItemSheet({
               onClick={() =>
                 remove.run(() => removeItemAction(item.id), {
                   onSuccess: () => {
-                    toast.success(`${item.name} removed`, { action: { label: "Undo", onClick: () => void restoreItemAction(item.id) } });
+                    toast.success(`${item.name} removed`, { action: { label: "Undo", onClick: () => undo.run(() => restoreItemAction(item.id)) } });
                     close();
                   },
                 })

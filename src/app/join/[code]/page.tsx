@@ -4,14 +4,18 @@ import { PlentyLogo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { JoinButton } from "@/features/household/join-button";
 import { getAuthUser } from "@/server/auth/context";
+import { checkRateLimit } from "@/server/auth/rate-limit";
+import { clientIp } from "@/server/http";
 import { getInvitationPreview } from "@/server/services/household";
 
 export const metadata: Metadata = { title: "Join a household" };
 
 export default async function JoinPage({ params }: PageProps<"/join/[code]">) {
   const { code } = await params;
-  const clean = code.replace(/[^A-Za-z0-9]/g, "").slice(0, 16);
-  const [preview, user] = await Promise.all([getInvitationPreview(clean), getAuthUser()]);
+  const clean = code.replace(/[^A-Za-z0-9]/g, "").slice(0, 24);
+  // Throttle lookups so invite codes can't be found by guessing.
+  const allowed = (await checkRateLimit(`join-preview:${await clientIp()}`, 30, 900)).ok;
+  const [preview, user] = await Promise.all([allowed ? getInvitationPreview(clean) : null, getAuthUser()]);
   const next = encodeURIComponent(`/join/${clean}`);
   return (
     <div className="flex min-h-dvh flex-col items-center px-6 py-10">

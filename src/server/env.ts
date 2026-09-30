@@ -21,6 +21,12 @@ const schema = z.object({
     .transform((v) => v === "true" || v === "1"),
   STORAGE_DIR: z.string().default(".data/uploads"),
   CRON_SECRET: z.string().optional().transform((v) => (v ? v : undefined)),
+  /**
+   * How many reverse proxies you run in front of Plenty that append to
+   * X-Forwarded-For. The client IP used for rate limiting is read that many
+   * entries from the right, so a client can't pick its own address.
+   */
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(1),
   DEMO_MODE: z
     .string()
     .optional()

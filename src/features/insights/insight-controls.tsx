@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { MoreHorizontal, Pause, Play, RotateCcw, Star, StarOff, X } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/confirm";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { useAction } from "@/components/hooks/use-action";
 import { forgetMealAction, resetLearningAction, setPredictionsPausedAction, setStapleOverrideAction } from "./actions";
@@ -20,47 +22,60 @@ export function ProductControls({
   paused: boolean;
 }) {
   const { pending, run } = useAction();
+  const [confirmForget, setConfirmForget] = useState(false);
   return (
-    <Menu>
-      <MenuTrigger asChild>
-        <button
-          type="button"
-          disabled={pending}
-          aria-label={`Options for ${name}`}
-          className="flex size-8 items-center justify-center rounded-full text-ink-4 hover:bg-subtle hover:text-ink disabled:opacity-50"
-        >
-          <MoreHorizontal className="size-4" />
-        </button>
-      </MenuTrigger>
-      <MenuContent>
-        {isStaple ? (
-          <MenuItem onSelect={() => run(() => setStapleOverrideAction(productId, false))}>
-            <StarOff /> Not a staple
+    <>
+      <Menu>
+        <MenuTrigger asChild>
+          <button
+            type="button"
+            disabled={pending}
+            aria-label={`Options for ${name}`}
+            className="flex size-8 items-center justify-center rounded-full text-ink-4 hover:bg-subtle hover:text-ink disabled:opacity-50"
+          >
+            <MoreHorizontal className="size-4" />
+          </button>
+        </MenuTrigger>
+        <MenuContent>
+          {isStaple ? (
+            <MenuItem onSelect={() => run(() => setStapleOverrideAction(productId, false))}>
+              <StarOff /> Not a staple
+            </MenuItem>
+          ) : (
+            <MenuItem onSelect={() => run(() => setStapleOverrideAction(productId, true))}>
+              <Star /> Always keep this stocked
+            </MenuItem>
+          )}
+          {stapleOverride !== null && (
+            <MenuItem onSelect={() => run(() => setStapleOverrideAction(productId, null))}>
+              <RotateCcw /> Let Plenty decide if it&apos;s a staple
+            </MenuItem>
+          )}
+          {paused ? (
+            <MenuItem onSelect={() => run(() => setPredictionsPausedAction(productId, false))}>
+              <Play /> Predict when it runs out
+            </MenuItem>
+          ) : (
+            <MenuItem onSelect={() => run(() => setPredictionsPausedAction(productId, true))}>
+              <Pause /> Stop predicting this
+            </MenuItem>
+          )}
+          <MenuItem destructive onSelect={() => setConfirmForget(true)}>
+            <RotateCcw /> Forget what Plenty learned
           </MenuItem>
-        ) : (
-          <MenuItem onSelect={() => run(() => setStapleOverrideAction(productId, true))}>
-            <Star /> Always keep this stocked
-          </MenuItem>
-        )}
-        {stapleOverride !== null && (
-          <MenuItem onSelect={() => run(() => setStapleOverrideAction(productId, null))}>
-            <RotateCcw /> Let Plenty decide if it&apos;s a staple
-          </MenuItem>
-        )}
-        {paused ? (
-          <MenuItem onSelect={() => run(() => setPredictionsPausedAction(productId, false))}>
-            <Play /> Predict when it runs out
-          </MenuItem>
-        ) : (
-          <MenuItem onSelect={() => run(() => setPredictionsPausedAction(productId, true))}>
-            <Pause /> Stop predicting this
-          </MenuItem>
-        )}
-        <MenuItem destructive onSelect={() => run(() => resetLearningAction(productId))}>
-          <RotateCcw /> Forget what Plenty learned
-        </MenuItem>
-      </MenuContent>
-    </Menu>
+        </MenuContent>
+      </Menu>
+      <ConfirmDialog
+        open={confirmForget}
+        onOpenChange={setConfirmForget}
+        title={`Forget what Plenty learned about ${name.toLowerCase()}?`}
+        description="Plenty will go back to its starting estimate and learn your household's pace again from scratch. This can't be undone."
+        confirmLabel="Forget it"
+        destructive
+        loading={pending}
+        onConfirm={() => run(() => resetLearningAction(productId), { onSuccess: () => setConfirmForget(false) })}
+      />
+    </>
   );
 }
 

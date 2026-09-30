@@ -15,7 +15,7 @@ export function ProcessingView({ receiptId }: { receiptId: string }) {
   const router = useRouter();
   const [elapsed, setElapsed] = useState(0);
   const [offline, setOffline] = useState(false);
-  const kicked = useRef(false);
+  const kicked = useRef(0);
 
   useEffect(() => {
     const started = Date.now();
@@ -48,10 +48,12 @@ export function ProcessingView({ receiptId }: { receiptId: string }) {
     };
   }, [receiptId, router]);
 
-  // If processing seems stuck (e.g. the server restarted), nudge it once.
+  // If processing seems stuck (e.g. the server restarted), nudge it now and then.
+  // The server only restarts work once the previous attempt has lapsed.
   useEffect(() => {
-    if (elapsed > 45 && !kicked.current) {
-      kicked.current = true;
+    const due = elapsed > 45 ? Math.floor((elapsed - 45) / 60) + 1 : 0;
+    if (due > kicked.current) {
+      kicked.current = due;
       void fetch(`/api/receipts/${receiptId}/status`, { method: "POST" }).catch(() => undefined);
     }
   }, [elapsed, receiptId]);

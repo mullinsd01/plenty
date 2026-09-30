@@ -165,13 +165,17 @@ export async function getHouseholdMemory(ctx: HouseholdContext, now = new Date()
       .filter((p) => p.rating === -1 && mealMap.has(p.mealId))
       .map((p) => ({ id: p.mealId, name: mealMap.get(p.mealId)!.name }));
     const [obs] = await tx.select({ n: count() }).from(consumptionEvents).where(eq(consumptionEvents.householdId, ctx.household.id));
+    const [scanned] = await tx
+      .select({ n: count() })
+      .from(receipts)
+      .where(and(eq(receipts.householdId, ctx.household.id), eq(receipts.status, "confirmed")));
 
     return {
       summary: {
         learnedProducts: products.filter((p) => p.basis === "history").length,
         estimatedProducts: products.filter((p) => p.basis === "estimate").length,
         observations: Number(obs?.n ?? 0),
-        receipts: receiptRows.length,
+        receipts: Number(scanned?.n ?? 0),
       },
       products,
       staples: products.filter((p) => p.isStaple),

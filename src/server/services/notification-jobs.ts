@@ -6,7 +6,7 @@ import { wasteInsights } from "@/lib/insights";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
 import { systemDb, withSystem, type Queryable } from "@/server/db/client";
 import { householdMembers, households, notificationSettings, notifications, shoppingListItems, users } from "@/server/db/schema";
-import { emailButton, emailLayout, sendEmail } from "@/server/email/mailer";
+import { emailButton, emailLayout, escapeHtml, sendEmail } from "@/server/email/mailer";
 import { env } from "@/server/env";
 import { toItemView } from "./inventory";
 import { computeLiveState } from "./learning";
@@ -193,7 +193,7 @@ export async function generateNotificationsForHousehold(db: Queryable, household
             to: member.email,
             subject: c.title,
             text: `${c.title}\n\n${c.body}\n\n${env().APP_URL}${c.link}`,
-            html: emailLayout(c.title, `<p>${c.body}</p>${emailButton(`${env().APP_URL}${c.link}`, "Open Plenty")}`),
+            html: emailLayout(c.title, `<p>${escapeHtml(c.body)}</p>${emailButton(`${env().APP_URL}${c.link}`, "Open Plenty")}`),
           });
           await db.update(notifications).set({ emailedAt: new Date() }).where(eq(notifications.id, inserted[0].id));
         }

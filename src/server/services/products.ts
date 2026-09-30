@@ -207,11 +207,13 @@ export function productCandidates(index: ProductIndex, text: string, limit = 5):
     .filter((m): m is ResolvedProduct => m !== null);
 }
 
+/** URL-safe-ish slug that keeps letters in any script ("豆腐" stays "豆腐", not an empty string). */
 function slugify(text: string): string {
   return text
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/\p{M}+/gu, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
 }

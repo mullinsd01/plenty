@@ -48,6 +48,7 @@ Sign up to start your own household, or click **Explore the demo household** on 
 | `SMTP_URL` / `EMAIL_FROM` | no | Real email delivery. Without SMTP, emails go to the dev outbox at `/dev/outbox` (disabled in production). |
 | `STORAGE_DIR` | no | Where receipt photos are stored (private; served only to household members). |
 | `CRON_SECRET` | no | Protects the scheduled notifications endpoint. |
+| `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of Plenty that append to `X-Forwarded-For` (default `1`). Used to find the real client IP for rate limiting. |
 | `DEMO_MODE` | no | Shows the demo-household button on the sign-in page. |
 
 ### Scripts

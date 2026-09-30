@@ -11,20 +11,16 @@ import { systemDb } from "@/server/db/client";
 import { users } from "@/server/db/schema";
 import { env } from "@/server/env";
 import { AppError, parseInput, toUserError } from "@/server/errors";
+import { clientIp, safeRedirectPath } from "@/server/http";
 import { forgotPasswordSchema, resetPasswordSchema, signInSchema, signUpSchema } from "@/validation/auth";
 
 type FormState = ActionResult<undefined> | null;
 
-async function clientKey(): Promise<string> {
-  const h = await headers();
-  return (h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "local").slice(0, 64);
-}
+const clientKey = clientIp;
 
 /** Only allow same-site relative redirects. */
 function safeNext(next: FormDataEntryValue | null, fallback: string): string {
-  const value = typeof next === "string" ? next : "";
-  if (value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\")) return value;
-  return fallback;
+  return safeRedirectPath(next, fallback);
 }
 
 async function startSession(userId: string) {

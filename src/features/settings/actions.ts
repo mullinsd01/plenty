@@ -4,9 +4,9 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { ok, type ActionResult } from "@/lib/result";
 import { householdAction } from "@/server/action";
-import { getAuthUser, getHouseholdContext, householdForAction, userForAction } from "@/server/auth/context";
+import { getAuthUser, householdForAction, userForAction } from "@/server/auth/context";
 import { changePassword, deleteAccount, updateEmail } from "@/server/auth/service";
-import { clearSessionCookie, getCurrentSession, invalidateAllSessions } from "@/server/auth/session";
+import { clearSessionCookie, getCurrentSession, invalidateAllSessions, invalidateOtherSessions } from "@/server/auth/session";
 import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { AppError, parseInput, toUserError } from "@/server/errors";
 import * as households from "@/server/services/household";
@@ -14,9 +14,17 @@ import { deleteHouseholdFiles } from "@/server/storage/files";
 import { changePasswordSchema, emailSchema, nameSchema } from "@/validation/auth";
 import { householdBasicsSchema, notificationSettingsSchema, preferencesSchema, type PreferencesInput } from "@/validation/household";
 
+/** After a credential change, anyone else holding a session is signed out. */
+async function signOutOtherDevices(userId: string): Promise<void> {
+  const current = await getCurrentSession();
+  if (current) await invalidateOtherSessions(userId, current.session.id);
+  else await invalidateAllSessions(userId);
+}
+
 export async function updateProfileAction(displayName: string): Promise<ActionResult<undefined>> {
   try {
     const user = await userForAction();
+    if (user.isDemo) throw new AppError("forbidden", "The demo account's name can't be changed.");
     await households.updateDisplayName(user, parseInput(nameSchema, displayName));
     return ok(undefined, "Name updated");
   } catch (err) {
@@ -30,7 +38,8 @@ export async function changePasswordAction(input: { current: string; password: s
     const data = parseInput(changePasswordSchema, input);
     await enforceRateLimit(`change-password:${user.id}`, 6, 900, "changing your password");
     await changePassword(user.id, data.current, data.password);
-    return ok(undefined, "Password changed");
+    await signOutOtherDevices(user.id);
+    return ok(undefined, "Password changed. Other devices have been signed out.");
   } catch (err) {
     return toUserError(err, "settings.password");
   }
@@ -42,6 +51,7 @@ export async function changeEmailAction(input: { email: string; password: string
     const email = parseInput(emailSchema, input.email);
     await enforceRateLimit(`change-email:${user.id}`, 6, 900, "changing your email");
     await updateEmail(user.id, email, String(input.password ?? ""));
+    await signOutOtherDevices(user.id);
     return ok(undefined, "Email updated");
   } catch (err) {
     return toUserError(err, "settings.email");
@@ -114,9 +124,9 @@ export async function deleteAccountAction(password: string): Promise<ActionResul
     const user = await userForAction();
     if (user.isDemo) throw new AppError("forbidden", "The demo account can't be deleted.");
     await enforceRateLimit(`delete-account:${user.id}`, 5, 900, "deleting your account");
-    const ctx = await getHouseholdContext();
-    await deleteAccount(user.id, String(password ?? ""));
-    if (ctx) await deleteHouseholdFiles(ctx.household.id).catch(() => undefined);
+    const { deletedHouseholdIds } = await deleteAccount(user.id, String(password ?? ""));
+    // Only households that went with the account lose their photos; shared ones carry on.
+    await Promise.all(deletedHouseholdIds.map((id) => deleteHouseholdFiles(id).catch(() => undefined)));
     await clearSessionCookie();
   } catch (err) {
     return toUserError(err, "settings.deleteAccount");
@@ -129,6 +139,7 @@ export async function signOutEverywhereAction(): Promise<ActionResult<undefined>
     const current = await getCurrentSession();
     const user = await getAuthUser();
     if (!current || !user) throw new AppError("unauthenticated", "Your session has expired. Please sign in again.");
+    if (user.isDemo) throw new AppError("forbidden", "The demo account is shared, so it can't sign out other visitors.");
     await invalidateAllSessions(user.id);
     await clearSessionCookie();
   } catch (err) {

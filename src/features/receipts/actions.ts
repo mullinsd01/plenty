@@ -5,6 +5,7 @@ import { z } from "zod";
 import { STORAGE_LOCATIONS } from "@/lib/domain";
 import { isDateString } from "@/lib/dates";
 import { UNITS } from "@/lib/units";
+import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { householdAction } from "@/server/action";
 import { parseInput } from "@/server/errors";
 import * as receipts from "@/server/services/receipts";
@@ -51,6 +52,7 @@ export async function discardReceiptAction(receiptId: string) {
 export async function retryReceiptAction(receiptId: string) {
   return householdAction("receipts.retry", async (ctx) => {
     const rid = parseInput(id, receiptId);
+    await enforceRateLimit(`receipt-retry:${ctx.household.id}`, 20, 3600, "retrying receipts");
     await receipts.retryReceipt(ctx, rid);
     after(() => receipts.processReceipt(ctx.user.id, ctx.household, rid));
   });

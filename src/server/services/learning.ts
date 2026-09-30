@@ -12,6 +12,7 @@ import type { Queryable } from "@/server/db/client";
 import {
   consumptionEvents,
   consumptionStats,
+  inventoryEvents,
   inventoryItems,
   predictions,
   type DbConsumptionStats,
@@ -69,6 +70,18 @@ export async function recordLifecycleEnd(
   const base = itemBaseAmount(item, product);
   if (!base || base.amount <= 0) return;
 
+  // Something added part-used only had that much left to use.
+  const [added] = await db
+    .select({ fraction: inventoryEvents.fractionAfter })
+    .from(inventoryEvents)
+    .where(and(eq(inventoryEvents.inventoryItemId, item.id), eq(inventoryEvents.type, "added")))
+    .limit(1);
+  const startFraction = Math.min(1, Math.max(0, added?.fraction ?? 1));
+  const amount = base.amount * startFraction;
+  if (amount <= 0) return;
+
+  // The window starts at purchase (or when it was opened, if someone told us) — the
+  // amount above is what was there at that point, so the two stay consistent.
   let startedAt = item.openedAt ?? item.purchasedAt;
   if (item.productId) {
     const [previous] = await db
@@ -88,15 +101,18 @@ export async function recordLifecycleEnd(
     if (previous) startedAt = previous.endedAt;
   }
 
-  const durationDays = Math.max(0.5, (args.endedAt.getTime() - startedAt.getTime()) / DAY_MS);
+  const elapsedDays = (args.endedAt.getTime() - startedAt.getTime()) / DAY_MS;
+  // An end before the start is a bad inference, not a real observation — don't learn from it.
+  if (!(elapsedDays > 0)) return;
+  const durationDays = Math.max(0.5, elapsedDays);
   const wasted = Math.min(1, Math.max(0, args.wastedFraction));
   await db.insert(consumptionEvents).values({
     householdId: household.id,
     productId: item.productId,
     inventoryItemId: item.id,
     outcome: args.outcome,
-    amountUsedBase: base.amount * (1 - wasted),
-    amountWastedBase: base.amount * wasted,
+    amountUsedBase: amount * (1 - wasted),
+    amountWastedBase: amount * wasted,
     baseUnit: base.unit,
     startedAt,
     endedAt: args.endedAt,

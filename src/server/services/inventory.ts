@@ -23,6 +23,8 @@ import { ensureCustomProduct, loadProductIndex, resolveProduct, type ProductInde
 
 const EMPTY_THRESHOLD = 0.02;
 const CHECK_IN_SNOOZE_DAYS = 2;
+/** "No, there's still some left" puts a nearly-empty batch back to about a quarter. */
+const STILL_SOME_LEFT = 0.25;
 
 // ─── Views ──────────────────────────────────────────────────────────────────
 
@@ -285,15 +287,21 @@ export async function addItemsTx(
   for (const input of inputs) {
     let product = resolveForAdd(index, input);
     const location: StorageLocation = input.location ?? product?.location ?? "pantry";
-    const packs = Math.max(1, Math.round(input.packCount ?? 1));
+    let packs = Math.max(1, Math.round(input.packCount ?? 1));
     const unit: Unit = input.unit && isUnit(input.unit) ? input.unit : product?.unit ?? "each";
-    // No explicit amount: assume whole packs of the product's usual size ("2 milk" = two 2 L bottles).
-    const quantity =
-      input.quantity && input.quantity > 0
-        ? input.quantity
-        : product && (!input.unit || input.unit === product.unit)
-          ? product.packageQuantity * packs
-          : packs;
+    let quantity: number;
+    if (input.quantity && input.quantity > 0) {
+      quantity = input.quantity;
+    } else if (product && product.unit === "each" && packs > 1 && (!input.unit || input.unit === "each")) {
+      // Things counted one by one: "3 bananas" means three bananas, not three bunches.
+      quantity = packs;
+      packs = 1;
+    } else if (product && (!input.unit || input.unit === product.unit)) {
+      // Otherwise a bare number means whole packs of the usual size ("2 milk" = two 2 L bottles).
+      quantity = product.packageQuantity * packs;
+    } else {
+      quantity = packs;
+    }
     if (!product) {
       product = await ensureCustomProduct(tx, household.id, {
         name: input.name,
@@ -402,9 +410,10 @@ export async function updateItem(ctx: HouseholdContext, id: string, patch: Updat
         const index = await loadProductIndex(tx, ctx.household.id);
         const product = index.byId.get(item.productId);
         if (product) {
-          // Moving to the freezer (or out of it) changes how long it keeps, counted from now.
+          // Moving into or out of the freezer changes how long it keeps, counted from now.
+          const freezerMove = patch.location === "freezer" || item.location === "freezer";
           changes.estimatedExpiry = estimateExpiry({
-            purchasedAt: patch.location === "freezer" ? now : item.purchasedAt,
+            purchasedAt: freezerMove ? now : item.purchasedAt,
             shelfLifeDays: product.shelfLifeDays,
             freezerShelfLifeDays: product.freezerShelfLifeDays,
             location: patch.location,
@@ -450,7 +459,6 @@ export async function setLevel(ctx: HouseholdContext, id: string, fraction: numb
       .set({
         remainingFraction: fraction,
         levelUpdatedAt: now,
-        openedAt: item.openedAt ?? (fraction < 1 ? now : null),
         checkInSnoozedUntil: new Date(now.getTime() + CHECK_IN_SNOOZE_DAYS * DAY_MS),
       })
       .where(eq(inventoryItems.id, id));
@@ -469,12 +477,15 @@ export async function setLevel(ctx: HouseholdContext, id: string, fraction: numb
   return { finished: false };
 }
 
-/** Pick a plausible end time between the last confirmed level and now, guided by the prediction. */
+/**
+ * Pick a plausible end time between the last confirmed level and the upper
+ * bound, guided by the prediction. Never earlier than the last time someone
+ * said how much was left — it clearly hadn't run out then.
+ */
 function inferEndTime(item: DbInventoryItem, predictedRunOutAt: Date | null, upperBound: Date): Date {
-  const lower = item.levelUpdatedAt;
-  if (!predictedRunOutAt) return upperBound;
-  const t = Math.min(upperBound.getTime(), Math.max(lower.getTime(), predictedRunOutAt.getTime()));
-  return new Date(t);
+  const lower = Math.max(item.levelUpdatedAt.getTime(), item.purchasedAt.getTime(), item.openedAt?.getTime() ?? 0);
+  const guess = predictedRunOutAt ? Math.min(upperBound.getTime(), predictedRunOutAt.getTime()) : upperBound.getTime();
+  return new Date(Math.max(lower, guess));
 }
 
 export async function finishItemTx(
@@ -484,17 +495,20 @@ export async function finishItemTx(
   item: DbInventoryItem,
   outcome: ConsumptionOutcome,
   opts: { endedAt: Date; estimatedFraction: number; actor?: "user" | "receipt" | "meal" | "inference"; mealPlanItemId?: string | null },
-): Promise<void> {
-  if (item.status !== "active") return;
+): Promise<boolean> {
+  if (item.status !== "active") return false;
+  const status = outcome === "consumed" ? "finished" : outcome;
+  // Guard on the stored status, not the snapshot we were handed, so a batch is only ever finished once.
+  const [claimed] = await tx
+    .update(inventoryItems)
+    .set({ status, statusChangedAt: opts.endedAt, remainingFraction: 0, levelUpdatedAt: opts.endedAt })
+    .where(and(eq(inventoryItems.id, item.id), eq(inventoryItems.status, "active")))
+    .returning({ id: inventoryItems.id });
+  if (!claimed) return false;
   const index = await loadProductIndex(tx, household.id);
   const product = item.productId ? index.byId.get(item.productId) ?? null : null;
   const wastedFraction =
     outcome === "consumed" ? 0 : Math.max(opts.estimatedFraction, item.remainingFraction * 0.25, 0.05);
-  const status = outcome === "consumed" ? "finished" : outcome;
-  await tx
-    .update(inventoryItems)
-    .set({ status, statusChangedAt: opts.endedAt, remainingFraction: 0, levelUpdatedAt: opts.endedAt })
-    .where(eq(inventoryItems.id, item.id));
   await tx.insert(inventoryEvents).values({
     householdId: household.id,
     inventoryItemId: item.id,
@@ -508,6 +522,7 @@ export async function finishItemTx(
     occurredAt: opts.endedAt,
   });
   await recordLifecycleEnd(tx, { household, item, product, outcome, endedAt: opts.endedAt, wastedFraction });
+  return true;
 }
 
 /** Mark an item finished, wasted or expired. Records a consumption observation. */
@@ -605,12 +620,17 @@ export async function answerCheckIn(ctx: HouseholdContext, productId: string, fi
         });
       }
     } else {
+      const snoozeUntil = new Date(now.getTime() + CHECK_IN_SNOOZE_DAYS * DAY_MS);
       for (const item of items) {
         const estimated = live.itemFractions.get(item.id) ?? item.remainingFraction;
-        if (estimated > 0.1) continue;
+        if (estimated >= STILL_SOME_LEFT) {
+          // Not the batch in question, but stop asking about the product for a while.
+          await tx.update(inventoryItems).set({ checkInSnoozedUntil: snoozeUntil }).where(eq(inventoryItems.id, item.id));
+          continue;
+        }
         await tx
           .update(inventoryItems)
-          .set({ remainingFraction: 0.25, levelUpdatedAt: now, checkInSnoozedUntil: new Date(now.getTime() + CHECK_IN_SNOOZE_DAYS * DAY_MS) })
+          .set({ remainingFraction: STILL_SOME_LEFT, levelUpdatedAt: now, checkInSnoozedUntil: snoozeUntil })
           .where(eq(inventoryItems.id, item.id));
         await tx.insert(inventoryEvents).values({
           householdId: ctx.household.id,
@@ -620,7 +640,7 @@ export async function answerCheckIn(ctx: HouseholdContext, productId: string, fi
           actor: "user",
           actorUserId: ctx.user.id,
           fractionBefore: estimated,
-          fractionAfter: 0.25,
+          fractionAfter: STILL_SOME_LEFT,
           note: "Still some left",
           occurredAt: now,
         });
@@ -644,10 +664,16 @@ export async function consumeForMealTx(
 ): Promise<string[]> {
   const touched: string[] = [];
   if (usage.length === 0) return touched;
-  const live = await computeLiveState(tx, household, now);
+  // One recipe can draw on the same batch twice (garlic in the marinade and the sauce).
+  const totals = new Map<string, number>();
   for (const use of usage) {
+    if (use.amount > 0) totals.set(use.itemId, (totals.get(use.itemId) ?? 0) + use.amount);
+  }
+  const live = await computeLiveState(tx, household, now);
+  for (const [itemId, amount] of totals) {
+    const use = { itemId, amount };
     const item = live.activeItems.find((i) => i.id === use.itemId);
-    if (!item || use.amount <= 0) continue;
+    if (!item) continue;
     const current = live.itemFractions.get(item.id) ?? item.remainingFraction;
     const next = Math.max(0, current - use.amount / item.quantity);
     if (item.productId) touched.push(item.productId);
@@ -661,7 +687,7 @@ export async function consumeForMealTx(
     } else {
       await tx
         .update(inventoryItems)
-        .set({ remainingFraction: next, levelUpdatedAt: now, openedAt: item.openedAt ?? now })
+        .set({ remainingFraction: next, levelUpdatedAt: now })
         .where(eq(inventoryItems.id, item.id));
       await tx.insert(inventoryEvents).values({
         householdId: household.id,

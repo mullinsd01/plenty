@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, isNull, ne, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import type { ProductInfo } from "@/lib/catalog/types";
 import { formatShortDate, isDateString, toDateString, zonedDateTimeToInstant } from "@/lib/dates";
 import { levelPhrase, type Aisle, type StorageLocation } from "@/lib/domain";
@@ -9,7 +9,6 @@ import { assessReceiptQuality } from "@/lib/receipts/quality";
 import { formatQuantity, isUnit, type Unit } from "@/lib/units";
 import { AIUnavailableError, getLocalProvider, getProvider, type ReceiptExtraction } from "@/server/ai";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
-import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { withUser, type Tx } from "@/server/db/client";
 import { notifications, preferences, receiptItems, receipts, inventoryItems, type DbReceipt } from "@/server/db/schema";
 import { AppError, notFound } from "@/server/errors";
@@ -20,7 +19,13 @@ import { computeLiveState, refreshLearning } from "./learning";
 import { loadProductIndex, matchOptions, productCandidates, rememberAlias, type ProductIndex } from "./products";
 import { markPurchasedFromReceipt, syncShoppingList } from "./shopping";
 
-const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+/**
+ * A processing attempt "owns" a receipt for this long. Another attempt (a
+ * retry, or a nudge after a server restart) can only take over once it lapses,
+ * so two readers never race to write the same receipt.
+ */
+const PROCESSING_LEASE_SECONDS = 150;
 const MATCH_CONFIDENT = 0.8;
 const MATCH_PLAUSIBLE = 0.55;
 
@@ -40,7 +45,6 @@ export async function createReceiptFromUpload(
   file: { bytes: Buffer; size: number },
   opts: { allowDuplicate?: boolean } = {},
 ): Promise<UploadResult> {
-  await enforceRateLimit(`receipt-upload:${ctx.household.id}`, 30, 3600, "uploading receipts");
   if (file.size === 0) throw new AppError("receipt_invalid", "That file is empty. Try taking the photo again.");
   if (file.size > MAX_UPLOAD_BYTES) throw new AppError("receipt_invalid", "That photo is too large (15 MB max). Try a smaller one.");
 
@@ -81,7 +85,7 @@ export async function createReceiptFromUpload(
     await saveFile(key, prepared.buffer);
     await tx
       .update(receipts)
-      .set({ imagePath: key, processingStartedAt: new Date(), qualityWarnings: prepared.blurScore < 60 ? ["blurry"] : [] })
+      .set({ imagePath: key, processingStartedAt: null, qualityWarnings: prepared.blurScore < 60 ? ["blurry"] : [] })
       .where(eq(receipts.id, row.id));
     return { receiptId: row.id, duplicateOf: null };
   });
@@ -182,12 +186,41 @@ async function extractWithFallback(
  */
 export async function processReceipt(userId: string, household: HouseholdInfo, receiptId: string): Promise<void> {
   const now = new Date();
+  // Claim the receipt: only one attempt at a time, and a stalled attempt can be taken over.
+  const claimedAt = await withUser(userId, async (tx) => {
+    const [claimed] = await tx
+      .update(receipts)
+      // Millisecond precision so the claim round-trips exactly through a JS Date.
+      .set({ processingStartedAt: sql`date_trunc('milliseconds', now())` })
+      .where(
+        and(
+          eq(receipts.id, receiptId),
+          eq(receipts.householdId, household.id),
+          eq(receipts.status, "processing"),
+          or(
+            isNull(receipts.processingStartedAt),
+            lt(receipts.processingStartedAt, sql`now() - make_interval(secs => ${PROCESSING_LEASE_SECONDS})`),
+          ),
+        ),
+      )
+      .returning({ at: receipts.processingStartedAt });
+    return claimed?.at ?? null;
+  });
+  if (!claimedAt) return;
+  /** Still ours: processing, and nobody else has claimed it since. */
+  const stillOurs = and(
+    eq(receipts.id, receiptId),
+    eq(receipts.householdId, household.id),
+    eq(receipts.status, "processing"),
+    eq(receipts.processingStartedAt, claimedAt),
+  );
+
   const fail = async (code: keyof typeof FAILURE_MESSAGES, raw?: string) => {
     await withUser(userId, async (tx) => {
       await tx
         .update(receipts)
         .set({ status: "failed", errorCode: code, errorMessage: FAILURE_MESSAGES[code], rawText: raw ?? null, processedAt: new Date() })
-        .where(and(eq(receipts.id, receiptId), eq(receipts.householdId, household.id)));
+        .where(stillOurs);
     });
   };
 
@@ -254,6 +287,9 @@ export async function processReceipt(userId: string, household: HouseholdInfo, r
     if (extraction.lines.length === 0) return fail("empty", extraction.rawText);
 
     await withUser(userId, async (tx) => {
+      // Re-check ownership under a row lock before replacing anything.
+      const [owned] = await tx.select({ id: receipts.id }).from(receipts).where(stillOurs).for("update");
+      if (!owned) return;
       const index = await loadProductIndex(tx, household.id);
       const lines = normalizeExtraction(extraction, index);
       if (lines.length === 0) {
@@ -359,9 +395,10 @@ export async function retryReceipt(ctx: HouseholdContext, receiptId: string): Pr
       .limit(1);
     if (!r) throw notFound("That receipt");
     if (r.status === "confirmed") throw new AppError("conflict", "This receipt has already been added to your kitchen.");
+    if (r.status === "processing") return; // Already being read; the claim in processReceipt decides who runs.
     await tx
       .update(receipts)
-      .set({ status: "processing", errorCode: null, errorMessage: null, processingStartedAt: new Date() })
+      .set({ status: "processing", errorCode: null, errorMessage: null, processingStartedAt: null })
       .where(eq(receipts.id, receiptId));
   });
 }

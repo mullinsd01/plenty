@@ -48,17 +48,30 @@ export async function sendEmail(message: EmailMessage): Promise<{ delivered: boo
   }
 }
 
-/** Minimal, clean HTML wrapper for transactional email. */
+/** Escape text for safe interpolation into email HTML (text and attribute values). */
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Minimal, clean HTML wrapper for transactional email. `title` is plain text
+ * and is escaped; `bodyHtml` must already be safe HTML (escape any user text).
+ */
 export function emailLayout(title: string, bodyHtml: string): string {
   return `<!doctype html><html><body style="margin:0;background:#faf8f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1f2a3a">
   <div style="max-width:480px;margin:0 auto;padding:40px 24px">
     <div style="font-size:22px;font-weight:700;color:#f26b4f;letter-spacing:-0.02em;margin-bottom:28px">plenty</div>
-    <h1 style="font-size:20px;margin:0 0 16px">${title}</h1>
+    <h1 style="font-size:20px;margin:0 0 16px">${escapeHtml(title)}</h1>
     <div style="font-size:15px;line-height:1.6;color:#3d4757">${bodyHtml}</div>
     <p style="font-size:12px;color:#8a919c;margin-top:40px">Plenty · Your household, figured out.</p>
   </div></body></html>`;
 }
 
 export function emailButton(href: string, label: string): string {
-  return `<p style="margin:28px 0"><a href="${href}" style="background:#1f2a3a;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;display:inline-block">${label}</a></p>`;
+  return `<p style="margin:28px 0"><a href="${escapeHtml(href)}" style="background:#1f2a3a;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;display:inline-block">${escapeHtml(label)}</a></p>`;
 }

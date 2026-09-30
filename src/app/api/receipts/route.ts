@@ -1,7 +1,8 @@
 import { NextResponse, after } from "next/server";
 import { jsonError, routeContext } from "@/server/http";
 import { AppError } from "@/server/errors";
-import { createReceiptFromUpload, processReceipt } from "@/server/services/receipts";
+import { enforceRateLimit } from "@/server/auth/rate-limit";
+import { MAX_UPLOAD_BYTES, createReceiptFromUpload, processReceipt } from "@/server/services/receipts";
 
 export const maxDuration = 120;
 
@@ -10,6 +11,13 @@ export async function POST(request: Request) {
   const ctx = await routeContext();
   if (ctx instanceof NextResponse) return ctx;
   try {
+    // Refuse oversized or unbounded bodies before reading anything into memory.
+    const length = Number(request.headers.get("content-length") ?? NaN);
+    if (!Number.isFinite(length)) throw new AppError("receipt_invalid", "We couldn't read that upload. Please try again.");
+    if (length > MAX_UPLOAD_BYTES + 64 * 1024) {
+      return NextResponse.json({ error: "That photo is too large (15 MB max). Try a smaller one.", code: "receipt_invalid" }, { status: 413 });
+    }
+    await enforceRateLimit(`receipt-upload:${ctx.household.id}`, 30, 3600, "uploading receipts");
     const form = await request.formData().catch(() => {
       throw new AppError("receipt_invalid", "We couldn't read that upload. Please try again.");
     });
