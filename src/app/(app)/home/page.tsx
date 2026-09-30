@@ -12,7 +12,7 @@ import { formatMoney, pluralize } from "@/lib/format";
 import { requireHousehold } from "@/server/auth/context";
 import { getDashboard } from "@/server/services/dashboard";
 import { getMealPlan } from "@/server/services/meals";
-import { refreshNotifications } from "@/server/services/notifications";
+import { refreshNotifications } from "@/server/services/notification-jobs";
 
 export const metadata: Metadata = { title: "Home" };
 

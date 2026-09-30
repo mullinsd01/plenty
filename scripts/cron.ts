@@ -7,7 +7,7 @@ import { loadEnvConfig } from "@next/env";
 loadEnvConfig(process.cwd());
 
 async function main() {
-  const { generateAllNotifications } = await import("../src/server/services/notifications");
+  const { generateAllNotifications } = await import("../src/server/services/notification-jobs");
   const result = await generateAllNotifications();
   console.log(`✓ ${result.created} notifications across ${result.households} households`);
   const { pool } = await import("../src/server/db/client");

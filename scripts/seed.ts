@@ -464,7 +464,7 @@ async function main() {
   // ── This week's plan and list, computed live ─────────────────────────────
   const { generateMealPlan } = await import("../src/server/services/meals");
   const { addManualItem, syncShoppingList } = await import("../src/server/services/shopping");
-  const { generateNotificationsForHousehold } = await import("../src/server/services/notifications");
+  const { generateNotificationsForHousehold } = await import("../src/server/services/notification-jobs");
   const { withUser } = await import("../src/server/db/client");
   try {
     const r = await generateMealPlan(ctx, "week");
@@ -494,8 +494,8 @@ async function main() {
   const soon = [...live.predictions.values()].sort((a, b) => a.prediction.daysRemaining - b.prediction.daysRemaining).slice(0, 5);
   console.log("  Running low:", soon.map((p) => `${p.product.name} (${p.prediction.label}, ${p.prediction.basis})`).join(" · "));
   console.log(`\n✓ Demo ready in ${Math.round((Date.now() - started) / 1000)}s — sign in as ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
-  const { shutdownOcr } = await import("../src/server/receipts/ocr").catch(() => ({ shutdownOcr: undefined }));
-  if (typeof shutdownOcr === "function") await shutdownOcr();
+  const { terminateOcrWorker } = await import("../src/server/receipts/ocr");
+  await terminateOcrWorker();
   await pool.end();
 }
 

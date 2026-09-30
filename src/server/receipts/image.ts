@@ -28,6 +28,17 @@ export const STORED_JPEG_QUALITY = 82;
 export const BLUR_SAMPLE_EDGE_PX = 1000;
 /** OCR copies are upscaled to at least this width; Tesseract wants ~30 px tall glyphs. */
 export const OCR_MIN_WIDTH_PX = 1600;
+/**
+ * Flat-field correction: the paper's brightness is estimated with a blur this
+ * wide (σ as a fraction of image width — much wider than any glyph) and divided
+ * out, which removes shadows and uneven phone-camera lighting.
+ */
+const FLAT_FIELD_SIGMA_FRACTION = 0.025;
+/** The background is estimated at 1/8 scale: same result, a fraction of the cost. */
+const FLAT_FIELD_DOWNSCALE = 8;
+/** Contrast stretch after flattening (out = in × a + b): darkens faint strokes, whitens paper. */
+const OCR_CONTRAST_MULTIPLIER = 1.4;
+const OCR_CONTRAST_OFFSET = -60;
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
@@ -208,10 +219,41 @@ export async function prepareReceiptImage(input: Buffer): Promise<PreparedReceip
   }
 }
 
+// ─── OCR preparation ────────────────────────────────────────────────────────
+
 /**
- * An OCR-friendly copy of a (prepared) receipt photo: greyscale, contrast
- * normalised, upscaled to at least `OCR_MIN_WIDTH_PX` wide, lightly sharpened,
- * as PNG. Throws `ReceiptImageError("corrupt")` if the image can't be decoded.
+ * Divide each pixel by the local paper brightness so the page becomes evenly
+ * white: `out = min(255, pixel × 255 / background)`. Both arrays are
+ * single-channel and the same size.
+ */
+export function divideByBackground(pixels: Uint8Array, background: Uint8Array): Buffer {
+  const out = Buffer.alloc(pixels.length);
+  for (let i = 0; i < pixels.length; i += 1) {
+    out[i] = Math.min(255, Math.round((pixels[i] * 255) / Math.max(background[i], 1)));
+  }
+  return out;
+}
+
+/** Heavily blurred copy of a greyscale image: the paper without the ink. */
+async function estimateBackground(pixels: Buffer, width: number, height: number): Promise<Buffer> {
+  const raw = (w: number, h: number) => ({ raw: { width: w, height: h, channels: 1 as const } });
+  const smallWidth = Math.max(8, Math.round(width / FLAT_FIELD_DOWNSCALE));
+  const smallHeight = Math.max(8, Math.round(height / FLAT_FIELD_DOWNSCALE));
+  const small = await sharp(pixels, raw(width, height)).resize(smallWidth, smallHeight, { fit: "fill" }).raw().toBuffer();
+  const sigma = Math.max(0.5, (width * FLAT_FIELD_SIGMA_FRACTION) / FLAT_FIELD_DOWNSCALE);
+  const blurred = await sharp(small, raw(smallWidth, smallHeight)).blur(sigma).raw().toBuffer();
+  return sharp(blurred, raw(smallWidth, smallHeight)).resize(width, height, { fit: "fill", kernel: "linear" }).raw().toBuffer();
+}
+
+/**
+ * An OCR-friendly copy of a (prepared) receipt photo, as PNG: greyscale,
+ * upscaled to at least `OCR_MIN_WIDTH_PX` wide, illumination flattened,
+ * contrast normalised and stretched.
+ *
+ * No sharpening: measured on the sample receipts with simulated shadows and
+ * soft focus, sharpening amplified noise and cost more words than it saved,
+ * while flat-field correction recovered shadowed prices.
+ * Throws `ReceiptImageError("corrupt")` if the image can't be decoded.
  */
 export async function ocrVariant(input: Buffer): Promise<Buffer> {
   try {
@@ -222,7 +264,13 @@ export async function ocrVariant(input: Buffer): Promise<Buffer> {
       .flatten({ background: "#ffffff" })
       .greyscale();
     if (width < OCR_MIN_WIDTH_PX) pipeline = pipeline.resize({ width: OCR_MIN_WIDTH_PX, kernel: "lanczos3" });
-    return await pipeline.normalise().sharpen({ sigma: 1 }).png({ compressionLevel: 1 }).toBuffer();
+    const { data, info } = await pipeline.extractChannel(0).raw().toBuffer({ resolveWithObject: true });
+    const background = await estimateBackground(data, info.width, info.height);
+    return await sharp(divideByBackground(data, background), { raw: { width: info.width, height: info.height, channels: 1 } })
+      .normalise()
+      .linear(OCR_CONTRAST_MULTIPLIER, OCR_CONTRAST_OFFSET)
+      .png({ compressionLevel: 1 })
+      .toBuffer();
   } catch {
     throw new ReceiptImageError("corrupt", MESSAGES.corrupt);
   }

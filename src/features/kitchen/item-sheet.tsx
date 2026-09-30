@@ -61,8 +61,8 @@ export function ItemSheet({
   };
 
   const setFraction = (fraction: number) => {
-    onLevelChange?.(item.id, fraction);
     level.run(() => setLevelAction(item.id, fraction), {
+      optimistic: () => onLevelChange?.(item.id, fraction),
       onSuccess: (r) => {
         if (r.finished) {
           toast.success(`${item.name} marked finished`, {

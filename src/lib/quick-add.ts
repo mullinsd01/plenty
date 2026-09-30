@@ -13,11 +13,12 @@ const WORD_NUMBERS: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, thre
 
 /**
  * Parse free text like "2 milk, bread, 500g mince, a dozen eggs" into items.
- * Commas and new lines separate items.
+ * Commas, semicolons and new lines separate items.
  */
 export function parseQuickAdd(text: string): QuickAddItem[] {
   return text
-    .split(/[,\n;]+/)
+    // Commas separate items, except a decimal comma between digits ("1,5 l").
+    .split(/[\n;]+|(?<!\d),|,(?!\d)/)
     .map((part) => part.trim())
     .filter(Boolean)
     .map(parseOne)

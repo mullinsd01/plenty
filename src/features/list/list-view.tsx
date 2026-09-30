@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useMemo, useOptimistic, useState } from "react";
+import { useMemo, useOptimistic, useState } from "react";
 import { ArrowDown, ArrowUp, MoreHorizontal, Pencil, Plus, ShoppingBasket, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -57,10 +57,7 @@ export function ListView({ items }: { items: ShoppingItemView[] }) {
     if (parsed.length === 0) return;
     setDraft("");
     for (const p of parsed) {
-      startTransition(() =>
-        apply({
-          type: "add",
-          item: {
+      const optimisticItem: ShoppingItemView = {
             id: `tmp-${p.name}-${Math.random()}`,
             name: p.name,
             aisle: "other",
@@ -74,21 +71,20 @@ export function ListView({ items }: { items: ShoppingItemView[] }) {
             checked: false,
             position: 9999,
             sources: [],
-          },
-        }),
-      );
-      add.run(() => addListItemAction({ name: p.name, quantity: p.quantity ?? (p.packCount > 1 ? p.packCount : null), unit: p.unit }));
+      };
+      add.run(() => addListItemAction({ name: p.name, quantity: p.quantity ?? (p.packCount > 1 ? p.packCount : null), unit: p.unit }), {
+        optimistic: () => apply({ type: "add", item: optimisticItem }),
+      });
     }
   };
 
   const toggle = (item: ShoppingItemView, checked: boolean) => {
-    startTransition(() => apply({ type: "check", id: item.id, checked }));
-    check.run(() => setListItemCheckedAction(item.id, checked));
+    check.run(() => setListItemCheckedAction(item.id, checked), { optimistic: () => apply({ type: "check", id: item.id, checked }) });
   };
 
   const del = (item: ShoppingItemView) => {
-    startTransition(() => apply({ type: "remove", id: item.id }));
     remove.run(() => removeListItemAction(item.id), {
+      optimistic: () => apply({ type: "remove", id: item.id }),
       onSuccess: () =>
         toast.success(item.source === "manual" ? `Removed ${item.name}` : `Removed ${item.name}`, {
           description: item.source === "manual" ? undefined : "Plenty won't add it again before your next shop.",

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { safeEqual } from "@/server/auth/crypto";
 import { pruneRateLimits } from "@/server/auth/rate-limit";
 import { env } from "@/server/env";
-import { generateAllNotifications } from "@/server/services/notifications";
+import { generateAllNotifications } from "@/server/services/notification-jobs";
 
 export const maxDuration = 300;
 

@@ -1,0 +1,396 @@
+{
+  "woolworths-weekly": {
+    "file": "woolworths-weekly.png",
+    "text": "woolworths-weekly.txt",
+    "kind": "receipt",
+    "demo": true,
+    "width": 1280,
+    "height": 2676,
+    "expected": {
+      "store": "Woolworths",
+      "purchasedOn": "2026-09-26",
+      "currency": "AUD",
+      "subtotal": 68.61,
+      "total": 68.61,
+      "items": [
+        {
+          "description": "W/M FULL CREAM 2L",
+          "price": 3.1,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "BANANAS",
+          "price": 3.28,
+          "quantity": null,
+          "weightKg": 0.842,
+          "discount": null
+        },
+        {
+          "description": "WW WHITE BREAD 700G",
+          "price": 2.7,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "WW FREE RANGE EGGS 12PK",
+          "price": 6.2,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "WW CHICKEN BREAST FILLET 1KG",
+          "price": 12,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "WW BABY SPINACH 120G",
+          "price": 3,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "SAN REMO SPAGHETTI 500G",
+          "price": 4,
+          "quantity": 2,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "MUTTI PASSATA 700G",
+          "price": 2.5,
+          "quantity": null,
+          "weightKg": null,
+          "discount": 1
+        },
+        {
+          "description": "CAPSICUM RED EACH",
+          "price": 1.9,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "ZUCCHINI GREEN",
+          "price": 2.28,
+          "quantity": null,
+          "weightKg": 0.386,
+          "discount": null
+        },
+        {
+          "description": "WW BEEF MINCE 500G",
+          "price": 6.5,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "CORIANDER BUNCH",
+          "price": 3,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "SPRING ONION BUNCH",
+          "price": 2,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "DAIRY FARMERS YOGHURT 1KG",
+          "price": 7,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "BEGA TASTY CHEESE 500G",
+          "price": 9,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "CARRY BAG",
+          "price": 0.15,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        }
+      ]
+    }
+  },
+  "coles-topup": {
+    "file": "coles-topup.png",
+    "text": "coles-topup.txt",
+    "kind": "receipt",
+    "demo": true,
+    "width": 1280,
+    "height": 1836,
+    "expected": {
+      "store": "Coles",
+      "purchasedOn": "2026-09-29",
+      "currency": "AUD",
+      "subtotal": 33.85,
+      "total": 33.85,
+      "items": [
+        {
+          "description": "Coles Full Cream Milk 3L",
+          "price": 4.65,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Coles Bakery White Loaf 650g",
+          "price": 3,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Hass Avocado Each",
+          "price": 5.7,
+          "quantity": 3,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Coles Chicken Thigh Fillets 500g",
+          "price": 7.5,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Lebanese Cucumber Each",
+          "price": 1.2,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Coles Greek Yoghurt 1kg",
+          "price": 4.8,
+          "quantity": null,
+          "weightKg": null,
+          "discount": 1
+        },
+        {
+          "description": "Coles Wild Rocket 120g",
+          "price": 3,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Arnott's Tim Tam Original 200g",
+          "price": 4,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        }
+      ]
+    }
+  },
+  "aldi-shop": {
+    "file": "aldi-shop.png",
+    "text": "aldi-shop.txt",
+    "kind": "receipt",
+    "demo": true,
+    "width": 1308,
+    "height": 2034,
+    "expected": {
+      "store": "Aldi",
+      "purchasedOn": "2026-09-19",
+      "currency": "AUD",
+      "subtotal": 52.26,
+      "total": 52.26,
+      "items": [
+        {
+          "description": "FARMDALE FULL CREAM MILK 2L",
+          "price": 3.19,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "BAKERS LIFE WHOLEMEAL BREAD",
+          "price": 2.79,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "LODGE FARMS FREE RANGE EGGS",
+          "price": 5.49,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "REMANO PENNE PASTA 500G",
+          "price": 2.38,
+          "quantity": 2,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "BROCCOLI",
+          "price": 2.28,
+          "quantity": null,
+          "weightKg": 0.456,
+          "discount": null
+        },
+        {
+          "description": "CARROTS 1KG BAG",
+          "price": 1.79,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "BROWN ONIONS 2KG",
+          "price": 3.49,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "BEEF MINCE 500G",
+          "price": 6.99,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "COOKED PRAWNS 500G",
+          "price": 12.99,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "EMPORIUM TASTY CHEESE 500G",
+          "price": 5.99,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "ZUCCHINI GREEN EACH",
+          "price": 0.89,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "FARMDALE NATURAL YOGHURT 1KG",
+          "price": 3.99,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        }
+      ]
+    }
+  },
+  "tesco-uk": {
+    "file": "tesco-uk.png",
+    "text": "tesco-uk.txt",
+    "kind": "receipt",
+    "demo": false,
+    "width": 1280,
+    "height": 1836,
+    "expected": {
+      "store": "Tesco",
+      "purchasedOn": "2026-09-22",
+      "currency": "GBP",
+      "subtotal": 15.59,
+      "total": 15.59,
+      "items": [
+        {
+          "description": "TESCO SEMI SKIMMED MILK 4PT",
+          "price": 1.45,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "TESCO WHOLEMEAL BREAD 800G",
+          "price": 0.75,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "BANANAS LOOSE",
+          "price": 0.85,
+          "quantity": null,
+          "weightKg": 0.905,
+          "discount": null
+        },
+        {
+          "description": "TESCO FREE RANGE EGGS 6PK",
+          "price": 1.89,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "TESCO CHICKEN BREAST 650G",
+          "price": 4,
+          "quantity": null,
+          "weightKg": null,
+          "discount": 0.75
+        },
+        {
+          "description": "HEINZ BAKED BEANS 415G",
+          "price": 2.8,
+          "quantity": 2,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "CATHEDRAL CITY CHEDDAR 350G",
+          "price": 3.75,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "CARRIER BAG",
+          "price": 0.1,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        }
+      ]
+    }
+  },
+  "blurry": {
+    "file": "blurry.png",
+    "text": "woolworths-weekly.txt",
+    "kind": "blurry",
+    "demo": false,
+    "width": 1280,
+    "height": 2676,
+    "expected": null
+  },
+  "not-a-receipt": {
+    "file": "not-a-receipt.png",
+    "text": null,
+    "kind": "not_a_receipt",
+    "demo": false,
+    "width": 1200,
+    "height": 900,
+    "expected": null
+  }
+}

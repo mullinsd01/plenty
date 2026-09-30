@@ -153,7 +153,14 @@ async function loadContext(tx: Tx, ctx: HouseholdContext, now: Date, live?: Live
     live: state,
     today,
     servings: defaultServings(ctx.household),
-    nightsPerWeek: COOKING_FREQUENCY_NIGHTS[(prefs?.cookingFrequency as CookingFrequency | null) ?? "most_nights"],
+    // Home-cooked dinners a week: how often they cook, minus their usual takeaway nights.
+    nightsPerWeek: Math.max(
+      1,
+      Math.min(
+        COOKING_FREQUENCY_NIGHTS[(prefs?.cookingFrequency as CookingFrequency | null) ?? "most_nights"],
+        7 - (prefs?.takeawayPerWeek ?? 0),
+      ),
+    ),
     allowAi: prefs?.allowAiProcessing ?? true,
   };
 }

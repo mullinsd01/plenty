@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useOptimistic, useState, startTransition } from "react";
+import { useMemo, useOptimistic, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Plus, RotateCcw, ScanLine, Search, X } from "lucide-react";
@@ -209,7 +209,7 @@ export function KitchenView({ items, finished }: { items: InventoryItemView[]; f
         item={selected}
         open={selected !== null}
         onOpenChange={(open) => !open && setSelectedId(null)}
-        onLevelChange={(id, fraction) => startTransition(() => setOptimistic({ id, fraction }))}
+        onLevelChange={(id, fraction) => setOptimistic({ id, fraction })}
       />
       <AddItemsSheet open={adding} onOpenChange={openAdd} />
     </div>

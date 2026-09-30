@@ -3,7 +3,8 @@ import Link from "next/link";
 import { PageHeader } from "@/components/ui/page-header";
 import { NotificationList } from "@/features/notifications/notification-list";
 import { requireHousehold } from "@/server/auth/context";
-import { listNotifications, refreshNotifications } from "@/server/services/notifications";
+import { refreshNotifications } from "@/server/services/notification-jobs";
+import { listNotifications } from "@/server/services/notifications";
 
 export const metadata: Metadata = { title: "Notifications" };
 

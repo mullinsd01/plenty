@@ -17,9 +17,16 @@ export function useAction() {
   const run = useCallback(
     <T,>(
       action: () => Promise<ActionResult<T>>,
-      opts: { success?: string | ((data: T) => string | undefined); onSuccess?: (data: T) => void; onError?: (error: string) => void } = {},
+      opts: {
+        success?: string | ((data: T) => string | undefined);
+        onSuccess?: (data: T) => void;
+        onError?: (error: string) => void;
+        /** Optimistic UI update — runs inside the action's transition so it holds until the server responds. */
+        optimistic?: () => void;
+      } = {},
     ) => {
       startTransition(async () => {
+        opts.optimistic?.();
         let res: ActionResult<T>;
         try {
           res = await action();

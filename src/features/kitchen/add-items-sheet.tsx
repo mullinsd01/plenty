@@ -75,7 +75,7 @@ export function AddItemsSheet({ open, onOpenChange }: { open: boolean; onOpenCha
                   aria-label={`Remove ${item.name}`}
                   className="flex size-5 items-center justify-center rounded-full text-ink-4 hover:bg-sunken hover:text-ink"
                   onClick={() => {
-                    const parts = text.split(/[,\n;]+/).map((p) => p.trim()).filter(Boolean);
+                    const parts = text.split(/[\n;]+|(?<!\d),|,(?!\d)/).map((p) => p.trim()).filter(Boolean);
                     parts.splice(i, 1);
                     setText(parts.join(", "));
                   }}

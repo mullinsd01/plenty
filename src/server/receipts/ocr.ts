@@ -23,11 +23,12 @@ export const OCR_IDLE_TIMEOUT_MS = 60_000;
 /** A single recognition taking longer than this is abandoned (and the worker recycled). */
 export const OCR_JOB_TIMEOUT_MS = 90_000;
 /**
- * Page segmentation: a receipt is one column of variable-width lines.
- * PSM 4 ("single column of text of variable sizes") keeps each description
- * on the same line as its right-aligned price; PSM 6 splits wide gaps more often.
+ * Page segmentation: PSM 6 ("single uniform block of text"). With PSM 4
+ * ("single column") Tesseract split right-aligned prices into a separate
+ * column on receipts with long descriptions, detaching every price from its
+ * item; PSM 6 keeps each printed line together.
  */
-export const OCR_PAGE_SEG_MODE = Tesseract.PSM.SINGLE_COLUMN;
+export const OCR_PAGE_SEG_MODE = Tesseract.PSM.SINGLE_BLOCK;
 /** The integer-quantised "best" LSTM model: accurate and small (2.9 MB). */
 const TRAINED_DATA_DIR = "4.0.0_best_int";
 const LANGUAGE = "eng";
