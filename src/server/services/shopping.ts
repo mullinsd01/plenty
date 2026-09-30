@@ -378,7 +378,8 @@ export async function addManualItem(
         householdId: ctx.household.id,
         productId,
         itemKey,
-        name: resolved && resolved.score >= 0.9 ? resolved.product.name : name.charAt(0).toUpperCase() + name.slice(1),
+        // Keep the household's own words: "Milk" means any milk, not specifically full cream.
+        name: name.charAt(0).toUpperCase() + name.slice(1),
         aisle: resolved?.product.aisle ?? "other",
         quantity,
         unit,
@@ -534,12 +535,15 @@ export async function markPurchasedFromReceipt(
     .where(and(eq(shoppingListItems.listId, list.id), isNull(shoppingListItems.purchasedAt)));
   const productIds = new Set(bought.map((b) => b.productId).filter(Boolean) as string[]);
   const names = new Set(bought.map((b) => singularizePhrase(normalizeText(b.name))));
-  const matched = open.filter(
-    (row) =>
-      keys.has(row.itemKey) ||
-      (row.productId && productIds.has(row.productId)) ||
-      names.has(singularizePhrase(normalizeText(row.name))),
+  // A general "Milk" on the list is satisfied by any milk; a specific "Full cream milk" isn't by lite.
+  const index = await loadProductIndex(tx, householdId);
+  const groups = new Set(
+    [...productIds].map((id) => index.byId.get(id)?.group).filter((g): g is string => Boolean(g)).map((g) => singularizePhrase(normalizeText(g))),
   );
+  const matched = open.filter((row) => {
+    const rowName = singularizePhrase(normalizeText(row.name));
+    return keys.has(row.itemKey) || (row.productId && productIds.has(row.productId)) || names.has(rowName) || groups.has(rowName);
+  });
   if (matched.length > 0) {
     await tx.delete(shoppingListItems).where(inArray(shoppingListItems.id, matched.map((m) => m.id)));
   }

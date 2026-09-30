@@ -613,7 +613,7 @@ export async function answerCheckIn(ctx: HouseholdContext, productId: string, fi
     const items = live.activeItems.filter((i) => i.productId === productId);
     if (items.length === 0) return;
     if (finished) {
-      const runOut = p ? p.prediction.runOutAt : null;
+      const runOut = p ? p.emptyAt : null;
       const candidates = items.filter((i) => (live.itemFractions.get(i.id) ?? i.remainingFraction) <= 0.1);
       const toFinish = candidates.length > 0 ? candidates : [items[0]];
       for (const item of toFinish) {

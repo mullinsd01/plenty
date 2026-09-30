@@ -5,7 +5,7 @@ import { computeConsumptionStats } from "@/lib/consumption/stats";
 import type { BatchState, ConsumptionObservation, ConsumptionStats, RunOutPrediction } from "@/lib/consumption/types";
 import { toDateString, DAY_MS } from "@/lib/dates";
 import { adultEquivalents, type Confidence, type ConsumptionOutcome, type PredictionBasis } from "@/lib/domain";
-import { estimateBatchFractions, predictRunOut, type PredictionStats } from "@/lib/prediction/engine";
+import { estimateBatchFractions, predictRunOut, simulateBatches, type PredictionStats } from "@/lib/prediction/engine";
 import { baseUnitFor, toBase, toBaseUnit, unitDimension, type BaseUnit, type Unit } from "@/lib/units";
 import type { HouseholdInfo } from "@/server/auth/context";
 import type { Queryable } from "@/server/db/client";
@@ -252,6 +252,11 @@ export interface ProductPrediction {
   productId: string;
   product: ProductInfo;
   prediction: RunOutPrediction;
+  /**
+   * When the stock most likely ran out (or will): in the past when Plenty
+   * thinks it's already gone. Used to date a confirmed finish realistically.
+   */
+  emptyAt: Date;
   items: DbInventoryItem[];
   stats: PredictionStats;
   paused: boolean;
@@ -331,7 +336,15 @@ export async function computeLiveState(
     const paused = row?.predictionsPaused ?? false;
     if (!rate || batches.length === 0) continue;
     const prediction = predictRunOut({ batches, stats, productName: product.name, householdSize: size, now });
-    if (prediction) predictionsOut.set(productId, { productId, product, prediction, items, stats, paused });
+    if (prediction) {
+      // A run-out that has already happened is dated from the last thing we knew for sure.
+      const sim = simulateBatches(batches, rate, now);
+      const emptyAt =
+        prediction.remainingBase <= 0 && sim.lastSnapshotAt
+          ? new Date(Math.min(now.getTime(), sim.lastSnapshotAt.getTime() + (sim.remainingAtLastSnapshot / rate) * DAY_MS))
+          : prediction.runOutAt;
+      predictionsOut.set(productId, { productId, product, prediction, emptyAt, items, stats, paused });
+    }
   }
 
   return { now, index, activeItems, itemFractions, predictions: predictionsOut, dailyRates, statsRows };

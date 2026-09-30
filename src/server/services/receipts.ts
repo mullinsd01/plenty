@@ -669,13 +669,19 @@ export async function confirmReceipt(
         }
       }
 
-      // Bought it again: the previous batch was most likely finished.
-      if (item.existingDecision === "replace" && productId) {
-        const previous = live.activeItems.filter((i) => i.productId === productId && i.purchasedAt < effectivePurchase);
-        const prediction = live.predictions.get(productId)?.prediction ?? null;
+      // The household told us the previous one is finished. `live` was taken before this
+      // confirm started, so it only holds what was in the kitchen at review time.
+      // The batches in question are the ones the review showed: the line's original match,
+      // bought before this receipt — even if the household then corrected the product.
+      const shownProductId = row.productId ?? productId;
+      if (item.existingDecision === "replace" && shownProductId) {
+        const reviewTime = r.purchasedAt ?? r.createdAt;
+        const previous = live.activeItems.filter((i) => i.productId === shownProductId && i.purchasedAt < reviewTime);
+        const emptyAt = live.predictions.get(shownProductId)?.emptyAt ?? null;
         for (const old of previous) {
+          const upper = effectivePurchase > old.purchasedAt ? effectivePurchase : now;
           await finishItemTx(tx, ctx.household, ctx.user.id, old, "consumed", {
-            endedAt: inferEndTime(old, prediction?.runOutAt ?? null, effectivePurchase),
+            endedAt: inferEndTime(old, emptyAt, upper),
             estimatedFraction: live.itemFractions.get(old.id) ?? old.remainingFraction,
             actor: "receipt",
           });

@@ -96,6 +96,7 @@ describe("receipt → kitchen → meal plan → shopping list", () => {
     // "Milk" on the list was bought.
     const list = await getShoppingList(ctx);
     expect(list.items.some((i) => i.source === "manual" && /milk/i.test(i.name))).toBe(false);
+    expect(result.tickedOff).toBeGreaterThan(0);
 
     const [receipt] = await systemDb.select().from(receipts).where(eq(receipts.id, receiptId));
     expect(receipt.status).toBe("confirmed");

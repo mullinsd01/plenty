@@ -61,7 +61,13 @@ describe("household isolation (permissions + row-level security)", () => {
   });
 
   it("auth tables are completely inaccessible to the app role", async () => {
-    await expect(withUser(a.user.id, (tx) => tx.select().from(sessions))).rejects.toThrow(/permission denied/);
+    // Drizzle wraps the database error; the Postgres reason is on `cause`.
+    const err = await withUser(a.user.id, (tx) => tx.select().from(sessions)).then(
+      () => null,
+      (e: unknown) => e as Error & { cause?: Error },
+    );
+    expect(err).not.toBeNull();
+    expect(`${err?.message} ${err?.cause?.message ?? ""}`).toMatch(/permission denied/);
   });
 
   it("notifications are private to each member", async () => {
