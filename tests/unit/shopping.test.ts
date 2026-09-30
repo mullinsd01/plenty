@@ -12,6 +12,7 @@ import type {
   StapleInput,
 } from "@/lib/meals/types";
 import {
+  FRESHNESS_ADVICE,
   WASTE_ADVICE_SMALLER,
   WASTE_ADVICE_SMALLEST,
   computeShoppingNeeds,
@@ -277,6 +278,49 @@ describe("computeShoppingNeeds — meal plan", () => {
   });
 });
 
+// ─── Freshness ──────────────────────────────────────────────────────────────
+
+describe("computeShoppingNeeds — freshness", () => {
+  it("buys perishables for no longer than they keep, and says why", () => {
+    // Bread keeps 6 days: 0.3 loaves a day for 11 days would be 4 loaves, two of them stale.
+    const [bread] = needsFor({ predictions: [prediction("white-bread", 2, 0.3)], horizonDays: 13 });
+    expect(bread).toMatchObject({ quantity: 2, unit: "loaf", advice: FRESHNESS_ADVICE });
+    // Bananas keep 5 days: 6.5 bananas' worth, not 12.
+    const [bananas] = needsFor({ predictions: [prediction("banana", 4, 1.3)], horizonDays: 13 });
+    expect(bananas).toMatchObject({ quantity: 7, unit: "each", advice: FRESHNESS_ADVICE });
+  });
+
+  it("leaves long-life products and short horizons alone", () => {
+    // Rice isn't perishable: the full horizon's worth, no advice.
+    const [rice] = needsFor({ predictions: [prediction("white-rice", 2, 60)], horizonDays: 13 });
+    expect(rice.quantity).toBe(1000);
+    expect(rice.advice).toBeUndefined();
+    // Milk keeps 10 days; 5 days' cover is within that.
+    const [milk] = needsFor({ predictions: [prediction("full-cream-milk", 2, 700)], horizonDays: 7 });
+    expect(milk.quantity).toBe(4);
+    expect(milk.advice).toBeUndefined();
+  });
+
+  it("never limits what a planned meal needs", () => {
+    const planned: MissingIngredient = {
+      key: "white-bread",
+      productId: "white-bread",
+      name: "White bread",
+      aisle: "bakery",
+      shortfallQuantity: 3,
+      unit: "loaf",
+      purchaseQuantity: 3,
+      purchaseUnit: "loaf",
+      forPlanItemIds: ["sat"],
+      reason: "For Saturday's sandwiches",
+    };
+    const [bread] = needsFor({ planMissing: [planned], predictions: [prediction("white-bread", 2, 0.3)], horizonDays: 13 });
+    // 3 loaves for the meal plus 2 fresh loaves' worth of everyday use.
+    expect(bread.quantity).toBe(5);
+    expect(bread.primarySource).toBe("meal_plan");
+  });
+});
+
 // ─── Waste ──────────────────────────────────────────────────────────────────
 
 describe("computeShoppingNeeds — waste advice", () => {
@@ -288,8 +332,8 @@ describe("computeShoppingNeeds — waste advice", () => {
   ]);
 
   it("suggests a smaller amount of things the household often throws out", () => {
-    // 13 days × 20 g = 260 g → three bags usually; halved for waste → two bags.
-    const [spinach] = needsFor({ predictions: [prediction("baby-spinach", 1, 20)], waste, horizonDays: 14 });
+    // 5 days (all it keeps) × 50 g = 250 g → three bags usually; halved for waste → two bags.
+    const [spinach] = needsFor({ predictions: [prediction("baby-spinach", 1, 50)], waste, horizonDays: 6 });
     expect(spinach).toMatchObject({ quantity: 240, unit: "g", advice: WASTE_ADVICE_SMALLER });
   });
 

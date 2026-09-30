@@ -1242,6 +1242,7 @@ const NON_ITEM_VOCABULARY = new Set([
   "bag",
   "bags",
   "carry",
+  "carrier",
   "reusable",
   "paper",
   "plastic",

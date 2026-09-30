@@ -6,6 +6,7 @@
 export { NAME_KEY_PREFIX, PRODUCT_KEY_PREFIX, normalizeItemName, shoppingItemKey } from "@/lib/shopping/keys";
 
 export {
+  FRESHNESS_ADVICE,
   STAPLE_DUE_INTERVAL_SHARE,
   WASTE_ADVICE_MIN_EVENTS,
   WASTE_ADVICE_MIN_RATIO,

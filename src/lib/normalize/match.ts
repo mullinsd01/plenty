@@ -74,6 +74,14 @@ const PREFIX_STRENGTH_FEW = 0.85;
 const PREFIX_STRENGTH_MANY = 0.75;
 const FEW_PREFIX_CANDIDATES = 3;
 
+/**
+ * A known food the catalog doesn't stock ("duck", "scallops") is as telling
+ * as a rare catalog word: "duck breast" must not read as a brand of breast.
+ */
+const UNSTOCKED_FOOD_WEIGHT = 4;
+/** Penalty per unstocked food word the product can't explain ("turkey mince" is not beef mince). */
+const UNSTOCKED_FOOD_PENALTY = 0.12;
+
 const TYPO_MIN_LENGTH = 4;
 const TYPO_STRENGTH_ONE_EDIT = 0.9;
 const TYPO_STRENGTH_TWO_EDITS = 0.8;
@@ -168,6 +176,122 @@ const DESCRIPTORS = new Set([
   "grade",
   "class",
   "cut",
+  // Store departments printed before the product ("COLES BAKERY WHITE LOAF", "DELI HAM").
+  "bakery",
+  "deli",
+  "butcher",
+]);
+
+/**
+ * Real foods (singular) the catalog doesn't stock, whose word decides what the
+ * thing is. Recipes (especially AI-written ones) name them freely, so they
+ * must never be read as a brand, a truncation or a typo of a catalog word:
+ * "scallops" is not "scallions", "mussels" not "morsels", "turkey mince" not
+ * beef mince. Flavour words (fruit, spirits, cheese varieties) are left out
+ * on purpose: "APRICOT JAM" and "BRANDY CUSTARD" are still jam and custard.
+ * A household's own product using one of these words takes precedence.
+ */
+const UNSTOCKED_FOODS = new Set([
+  // Meat, poultry, game and cuts
+  "duck",
+  "turkey",
+  "veal",
+  "venison",
+  "kangaroo",
+  "goat",
+  "rabbit",
+  "quail",
+  "pheasant",
+  "brisket",
+  "shank",
+  "oxtail",
+  "tripe",
+  "liver",
+  // Seafood
+  "squid",
+  "calamari",
+  "octopus",
+  "scallop",
+  "mussel",
+  "clam",
+  "pipi",
+  "crab",
+  "lobster",
+  "crayfish",
+  "yabby",
+  "sardine",
+  "mackerel",
+  "trout",
+  "cod",
+  "haddock",
+  "snapper",
+  "barramundi",
+  "tilapia",
+  "swordfish",
+  // Proteins and ferments
+  "paneer",
+  "tempeh",
+  "seitan",
+  "edamame",
+  "kimchi",
+  "sauerkraut",
+  // Grains, flours and starches
+  "tapioca",
+  "arrowroot",
+  "semolina",
+  "polenta",
+  "buckwheat",
+  "spelt",
+  "barley",
+  "farro",
+  "bulgur",
+  "millet",
+  // Vegetables
+  "artichoke",
+  "fennel",
+  "parsnip",
+  "turnip",
+  "swede",
+  "celeriac",
+  "radish",
+  "okra",
+  "watercress",
+  "silverbeet",
+  "chard",
+  "kohlrabi",
+  "jackfruit",
+  "cassava",
+  "taro",
+  "plantain",
+  // Pantry, spices and condiments
+  "caper",
+  "tartar",
+  "nutritional",
+  "gelatine",
+  "gelatin",
+  "agar",
+  "lard",
+  "suet",
+  "ghee",
+  "marsala",
+  "mirin",
+  "harissa",
+  "gochujang",
+  "sambal",
+  "tamarind",
+  "sumac",
+  "saffron",
+  "cardamom",
+  "fenugreek",
+  "allspice",
+  "juniper",
+  "caraway",
+  "wasabi",
+  "nori",
+  "kombu",
+  "dashi",
+  "molasses",
+  "horseradish",
 ]);
 
 /** Variant words: full weight when the product mentions them, cheap to leave unmatched. */
@@ -393,6 +517,8 @@ interface QueryToken {
   weight: number;
   modifier: boolean;
   descriptor: boolean;
+  /** A real food the catalog doesn't stock (see UNSTOCKED_FOODS). */
+  unstocked: boolean;
 }
 
 /** Variant phrases that describe a recipe tweak, not a different product. */
@@ -486,6 +612,8 @@ function typoCandidates(index: ProductIndex, word: string): { canon: string[]; s
   let best: string[] = [];
   let bestDistance = maxEdits + 1;
   for (const [token, count] of shared) {
+    // Misspellings keep their first letter ("ZUCHINI", "BROCOLLI"); "brandy" is not "candy".
+    if (token[0] !== word[0]) continue;
     const similarity = (2 * count) / (grams.length + (typo.gramCount.get(token) ?? 0));
     if (similarity < TYPO_TRIGRAM_MIN_SIMILARITY) continue;
     const distance = editDistance(word, token, maxEdits);
@@ -501,9 +629,11 @@ function typoCandidates(index: ProductIndex, word: string): { canon: string[]; s
 }
 
 function resolveToken(index: ProductIndex, surface: string, singular: string): QueryToken {
-  const base = { surface, modifier: isModifier(singular), descriptor: isDescriptor(singular) };
+  const base = { surface, modifier: isModifier(singular), descriptor: isDescriptor(singular), unstocked: false };
   const known = index.surfaces.get(surface) ?? index.surfaces.get(singular);
   if (known) return { ...base, canon: [known], strength: 1, weight: index.weights.get(known) ?? UNKNOWN_TOKEN_WEIGHT };
+  // A real food Plenty doesn't stock is exactly what it says, never a truncation or typo.
+  if (UNSTOCKED_FOODS.has(singular)) return { ...base, canon: [], strength: 0, weight: UNSTOCKED_FOOD_WEIGHT, unstocked: true };
 
   const prefixed = surface.length >= PREFIX_MIN_LENGTH ? prefixCandidates(index, surface) : [];
   if (prefixed.length > 0) {
@@ -526,11 +656,15 @@ function maxWeight(index: ProductIndex, tokens: readonly string[]): number {
   return Math.max(...tokens.map((t) => index.weights.get(t) ?? UNKNOWN_TOKEN_WEIGHT));
 }
 
-/** The query's head noun: its last recognised word that isn't a descriptor or modifier. */
+/**
+ * The query's head noun: its last recognised word (a catalog word or an
+ * unstocked food) that isn't a descriptor or modifier. An unstocked head
+ * ("cream of tartar", "lamb shanks") is foreign to every product.
+ */
 function queryHead(tokens: readonly QueryToken[]): QueryToken | null {
   for (let i = tokens.length - 1; i >= 0; i--) {
     const t = tokens[i];
-    if (t.canon.length > 0 && !t.descriptor && !t.modifier) return t;
+    if ((t.canon.length > 0 || t.unstocked) && !t.descriptor && !t.modifier) return t;
   }
   return null;
 }
@@ -615,10 +749,18 @@ function scoreEntry(index: ProductIndex, context: ProductContext, entry: Entry):
   return Math.min(FUZZY_CAP, Math.max(0, score * FUZZY_SCALE));
 }
 
-/** Known, meaningful query words (not descriptors or variant words) the product never mentions. */
+/**
+ * Known, meaningful query words (not descriptors or variant words) the
+ * product never mentions, plus a heavier charge for unstocked foods, which
+ * no product explains.
+ */
 function unexplainedPenalty(query: readonly QueryToken[], vocab: ReadonlySet<string>): number {
   const unexplained = query.filter((t) => t.canon.length > 0 && !t.descriptor && !t.modifier && !tokenIn(t, vocab)).length;
-  return Math.min(unexplained, MAX_UNEXPLAINED_PENALTIES) * UNEXPLAINED_WORD_PENALTY;
+  const unstocked = query.filter((t) => t.unstocked).length;
+  return (
+    Math.min(unexplained, MAX_UNEXPLAINED_PENALTIES) * UNEXPLAINED_WORD_PENALTY +
+    Math.min(unstocked, MAX_UNEXPLAINED_PENALTIES) * UNSTOCKED_FOOD_PENALTY
+  );
 }
 
 function scoreProducts(index: ProductIndex, query: readonly QueryToken[]): Scored[] {
@@ -728,7 +870,9 @@ function rankCandidates(rawText: string, cleaned: CleanedReceiptText, opts: Matc
       const fuzzy = scoreProducts(index, query);
       found.push(...fuzzy);
       const bestFuzzy = fuzzy.reduce((max, s) => Math.max(max, s.score), 0);
-      if (!exact && bestFuzzy < TRIGRAM_FALLBACK_BELOW) found.push(...trigramFallback(index, words.tokens));
+      // Text naming a real food isn't mangled, so there's nothing for the character fallback to repair.
+      const mangled = !query.some((t) => t.unstocked);
+      if (!exact && mangled && bestFuzzy < TRIGRAM_FALLBACK_BELOW) found.push(...trigramFallback(index, words.tokens));
     }
   }
 
@@ -766,22 +910,141 @@ function toMatch(index: ProductIndex, s: Scored): ProductMatch {
   return { product: index.products[s.productIndex], score: Math.round(s.score * 1000) / 1000, method: s.method };
 }
 
+/** Words a recipe's preparation note is made of ("finely diced", "cut into 3 cm pieces", "to serve"). */
+const PREPARATION_WORDS = new Set([
+  "diced",
+  "chopped",
+  "sliced",
+  "grated",
+  "minced",
+  "crushed",
+  "shredded",
+  "peeled",
+  "deseeded",
+  "seeded",
+  "cored",
+  "halved",
+  "quartered",
+  "cubed",
+  "torn",
+  "trimmed",
+  "julienned",
+  "mashed",
+  "juiced",
+  "zested",
+  "squeezed",
+  "smashed",
+  "bruised",
+  "softened",
+  "melted",
+  "beaten",
+  "whisked",
+  "drained",
+  "rinsed",
+  "washed",
+  "picked",
+  "thawed",
+  "defrosted",
+  "removed",
+  "discarded",
+  "separated",
+  "divided",
+  "finely",
+  "roughly",
+  "coarsely",
+  "thinly",
+  "thickly",
+  "lightly",
+  "freshly",
+  "loosely",
+  "firmly",
+  "well",
+  "very",
+  "cut",
+  "into",
+  "piece",
+  "pieces",
+  "chunk",
+  "chunks",
+  "wedge",
+  "wedges",
+  "ring",
+  "rings",
+  "strip",
+  "strips",
+  "floret",
+  "florets",
+  "matchstick",
+  "matchsticks",
+  "bite",
+  "sized",
+  "size",
+  "thick",
+  "thin",
+  "cm",
+  "mm",
+  "inch",
+  "lengthways",
+  "crossways",
+  "diagonally",
+  "skin",
+  "bone",
+  "bones",
+  "stem",
+  "stems",
+  "end",
+  "ends",
+  "taste",
+  "serve",
+  "serving",
+  "garnish",
+  "dusting",
+  "greasing",
+  "frying",
+  "extra",
+  "plus",
+  "more",
+  "optional",
+  "room",
+  "temperature",
+  "about",
+]);
+
+/**
+ * Drop a trailing preparation note written after a comma, the way recipes
+ * name ingredients ("brown onion, finely diced" → "brown onion"; "salt, to
+ * taste" → "salt"). The note only goes when every word of it is preparation
+ * language, a small word or a number, so "salt, pepper" is left alone.
+ */
+function withoutPreparationNote(text: string): string {
+  const comma = text.indexOf(",");
+  if (comma <= 0) return text;
+  const head = text.slice(0, comma);
+  if (normalizeText(head).length === 0) return text;
+  const note = normalizeText(text.slice(comma + 1)).split(" ").filter(Boolean);
+  const isPreparation = (word: string) => PREPARATION_WORDS.has(word) || STOPWORDS.has(word) || /^\d/.test(word);
+  return note.length > 0 && note.every(isPreparation) ? head : text;
+}
+
 /**
  * Best catalog (or household) product for free text, or null when nothing
  * scores at least MIN_MATCH_SCORE. Scores: household alias 0.99, exact name
  * 0.97, exact alias 0.96, token/fuzzy matches up to 0.95. Treat ≥ 0.75
  * (ACCEPT_MATCH_SCORE) as confident. Non-product lines ("CARRY BAG") never
- * match unless the household mapped them.
+ * match unless the household mapped them. A recipe-style preparation note
+ * after a comma ("onions, finely diced") is ignored.
  */
 export function matchProduct(text: string, opts?: MatchOptions): ProductMatch | null {
-  const { index, ranked } = rankCandidates(text, cleanReceiptText(text), opts);
+  const query = withoutPreparationNote(text);
+  const { index, ranked } = rankCandidates(query, cleanReceiptText(query), opts);
   const best = ranked[0];
   return best && best.score >= MIN_MATCH_SCORE ? toMatch(index, best) : null;
 }
 
 /** Up to `limit` plausible products for free text, best first (for "Did you mean…?" pickers). */
 export function matchProductCandidates(text: string, opts?: MatchOptions, limit = 5): ProductMatch[] {
-  const { index, ranked } = rankCandidates(text, cleanReceiptText(text), opts);
+  const query = withoutPreparationNote(text);
+  const { index, ranked } = rankCandidates(query, cleanReceiptText(query), opts);
   return ranked
     .filter((s) => s.score >= MIN_CANDIDATE_SCORE)
     .slice(0, Math.max(0, limit))
@@ -848,12 +1111,27 @@ function amountFromSize(size: Amount, packCount: number | null, product: Catalog
   return converted === null ? total : { quantity: roundAmount(converted), unit: productUnit };
 }
 
+/** "AVOCADO HASS EA", "CARROTS EACH": priced per piece (a "3 @ $1.90 EACH" line multiplies it). */
+const SOLD_EACH = /\b(?:ea|each)\b/;
+
 /**
- * Quantity bought: the explicit size on the line (× pack count), then the
- * matched product's package, then one each. Converted into the product's
- * tracking unit when the conversion is unambiguous.
+ * One piece of a product in its tracking unit: one avocado, one bunch, or
+ * one carrot's weight for produce tracked by mass. Null when a piece can't
+ * be expressed in the tracking unit.
  */
-function resolveAmount(cleaned: CleanedReceiptText, product: CatalogProduct | null): Amount {
+function onePiece(product: CatalogProduct): Amount | null {
+  if (unitDimension(product.unit) === "count") return { quantity: 1, unit: product.unit };
+  const converted = convert(1, "each", product.unit, product);
+  return converted === null ? null : { quantity: roundAmount(converted), unit: product.unit };
+}
+
+/**
+ * Quantity bought: the explicit size on the line (× pack count), then one
+ * piece for lines sold each, then the matched product's package, then one
+ * each. Converted into the product's tracking unit when the conversion is
+ * unambiguous.
+ */
+function resolveAmount(cleaned: CleanedReceiptText, product: CatalogProduct | null, soldEach: boolean): Amount {
   const { size, packCount } = cleaned;
   if (!product) {
     if (size) return { quantity: roundAmount(size.quantity * (packCount ?? 1)), unit: size.unit };
@@ -861,7 +1139,8 @@ function resolveAmount(cleaned: CleanedReceiptText, product: CatalogProduct | nu
   }
   if (size) return amountFromSize(size, packCount, product);
   if (packCount !== null && unitDimension(product.unit) === "count") return { quantity: packCount, unit: product.unit };
-  return { quantity: product.packageQuantity, unit: product.unit };
+  const piece = soldEach && packCount === null ? onePiece(product) : null;
+  return piece ?? { quantity: product.packageQuantity, unit: product.unit };
 }
 
 /** Pantry basics nobody buys as such, and what a receipt line naming them actually sold. */
@@ -881,6 +1160,7 @@ function purchasable(index: ProductIndex, match: ProductMatch): ProductMatch {
  * it's food, and how sure Plenty is.
  *
  * "W/M FULL CREAM 2L" → Full cream milk, 2 l, confidence ≈ 0.96.
+ * "AVOCADO HASS EA"   → Avocado, 1 each (one piece, not the usual 2-pack).
  * "CARRY BAG"         → not food, no match.
  */
 export function normalizeReceiptLine(raw: string, opts?: MatchOptions): NormalizedReceiptLine {
@@ -896,7 +1176,7 @@ export function normalizeReceiptLine(raw: string, opts?: MatchOptions): Normaliz
   }
 
   const accepted = best && best.score >= ACCEPT_MATCH_SCORE ? best : null;
-  const amount = resolveAmount(cleaned, accepted?.product ?? null);
+  const amount = resolveAmount(cleaned, accepted?.product ?? null, SOLD_EACH.test(normalizeText(raw)));
   const hasText = cleaned.cleaned.length > 0;
   const confidence = best ? best.score : hasText ? UNMATCHED_CONFIDENCE : EMPTY_LINE_CONFIDENCE;
   return {

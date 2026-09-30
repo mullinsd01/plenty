@@ -204,7 +204,9 @@ const RECEIPT_LINES: LineCase[] = [
   { raw: "WW SELECT GRK YGHT 1KG", slug: "greek-yoghurt", quantity: 1000, unit: "g" },
   { raw: "COLES FREE RNG EGGS 12PK", slug: "eggs", quantity: 12, unit: "each" },
   { raw: "TOMS DICED 400G", slug: "diced-tomatoes", quantity: 1, unit: "can" },
-  { raw: "AVO HASS EA", slug: "avocado", quantity: 2, unit: "each" },
+  // Priced per piece: one avocado (a "3 @ $1.90 EACH" line multiplies it), not the usual 2-pack.
+  { raw: "AVO HASS EA", slug: "avocado", quantity: 1, unit: "each" },
+  { raw: "CARROTS EACH", slug: "carrot", quantity: 100, unit: "g" },
   { raw: "CAPS RED", slug: "red-capsicum" },
   { raw: "POTS WASHED 2KG", slug: "potato", quantity: 2000, unit: "g" },
   { raw: "MACRO ORG CARROTS 1KG", slug: "carrot", quantity: 1000, unit: "g" },

@@ -80,7 +80,7 @@ const FRUIT = section({ aisle: "produce", location: "produce", perishable: true 
     eachWeightG: 110,
     shelfLifeDays: 21,
     perishable: false,
-    aliases: ["lemons", "lemons loose", "meyer lemons"],
+    aliases: ["lemons", "lemons loose", "meyer lemons", "lemon juice"],
   },
   {
     slug: "lime",
@@ -90,7 +90,7 @@ const FRUIT = section({ aisle: "produce", location: "produce", perishable: true 
     eachWeightG: 70,
     shelfLifeDays: 21,
     perishable: false,
-    aliases: ["limes", "tahitian limes"],
+    aliases: ["limes", "tahitian limes", "lime juice"],
   },
   {
     slug: "avocado",
@@ -747,7 +747,7 @@ const HERBS = section({ aisle: "produce", location: "produce", perishable: true 
     packageQuantity: 1,
     eachWeightG: 60,
     shelfLifeDays: 5,
-    aliases: ["cilantro", "coriander bunch", "fresh coriander", "chinese parsley", "coriander fresh"],
+    aliases: ["cilantro", "coriander bunch", "fresh coriander", "chinese parsley", "coriander fresh", "coriander leaves"],
   },
   {
     slug: "parsley",
@@ -1200,7 +1200,7 @@ const DAIRY = section({ aisle: "dairy", location: "fridge", perishable: true }, 
     dailyUsePerPerson: 0.4,
     contains: ["egg"],
     commonStaple: true,
-    aliases: ["egg", "free range eggs", "cage eggs", "cage free eggs", "barn laid eggs", "dozen eggs", "eggs dozen", "large eggs", "extra large eggs", "jumbo eggs", "eggs free range", "organic eggs", "pasture raised eggs", "eggs cage free", "eggs large", "barn eggs"],
+    aliases: ["egg", "free range eggs", "cage eggs", "cage free eggs", "barn laid eggs", "dozen eggs", "eggs dozen", "large eggs", "extra large eggs", "jumbo eggs", "eggs free range", "organic eggs", "pasture raised eggs", "eggs cage free", "eggs large", "barn eggs", "egg whites", "egg yolks"],
   },
   {
     slug: "custard",

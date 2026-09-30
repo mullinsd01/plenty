@@ -6,7 +6,8 @@
  *   - meal plan: shortfalls from `computePlanRequirements`, already net of
  *     what's in the kitchen;
  *   - predicted: products forecast to run out before the shop after next,
- *     with enough to last until then;
+ *     with enough to last until then — or, for perishables, only as much
+ *     as will be used before it goes off;
  *   - staples: regular buys the household has none of and is due to buy.
  *
  * Needs for the same item merge into one line: raw amounts add up in the
@@ -40,6 +41,8 @@ const MAX_WASTE_REDUCTION = 0.9;
 
 export const WASTE_ADVICE_SMALLER = "You often throw some of this out — this is a smaller amount than usual.";
 export const WASTE_ADVICE_SMALLEST = "You often throw some of this out — the smallest pack should do.";
+/** Shown when a predicted amount was limited to what keeps (12 bananas for a fortnight would go brown). */
+export const FRESHNESS_ADVICE = "Just what you'll use while it's fresh — top up later if you run low.";
 
 type NeedSource = Exclude<ShoppingSource, "manual">;
 
@@ -78,6 +81,8 @@ interface Contribution {
   unit: Unit | null;
   /** Predicted and staple amounts can be trimmed for waste; meal-plan amounts are exact. */
   wasteAdjustable: boolean;
+  /** The amount was limited to what will be used before the product goes off. */
+  freshnessLimited: boolean;
   reason: string;
   sources: ShoppingNeedSource[];
 }
@@ -134,11 +139,23 @@ function predictionKey(prediction: PredictionInput): string {
   return prediction.itemKey || shoppingItemKey({ productId: prediction.productId, name: prediction.name });
 }
 
+/**
+ * How many days of use a purchase can sensibly cover: all of `coverDays`,
+ * except that a perishable (not kept frozen) is bought for no longer than it
+ * keeps — two loaves now and another later beats four going stale.
+ */
+function freshCoverDays(product: ProductInfo | null, coverDays: number): number {
+  if (!product || !product.perishable || product.location === "freezer") return coverDays;
+  const shelfLife = product.shelfLifeDays;
+  return typeof shelfLife === "number" && shelfLife > 0 ? Math.min(coverDays, shelfLife) : coverDays;
+}
+
 function predictedContribution(prediction: PredictionInput, product: ProductInfo | null, horizonDays: number): Contribution | null {
   // Enough at home to last past the shop after next: not needed.
   if (!(prediction.daysRemaining <= horizonDays)) return null;
   const coverDays = Math.max(0, horizonDays - Math.max(0, prediction.daysRemaining));
-  const { amount, unit } = fromBase(Math.max(0, prediction.dailyRate) * coverDays, prediction.baseUnit, product);
+  const freshDays = freshCoverDays(product, coverDays);
+  const { amount, unit } = fromBase(Math.max(0, prediction.dailyRate) * freshDays, prediction.baseUnit, product);
   const reason = runOutReason(prediction);
   return {
     itemKey: predictionKey(prediction),
@@ -149,6 +166,7 @@ function predictedContribution(prediction: PredictionInput, product: ProductInfo
     amount,
     unit,
     wasteAdjustable: true,
+    freshnessLimited: freshDays < coverDays,
     reason,
     sources: [{ source: "predicted", quantity: standalonePurchase(amount, unit, product), unit, note: reason }],
   };
@@ -172,6 +190,7 @@ function stapleContribution(staple: StapleInput, product: ProductInfo | null, no
     amount,
     unit,
     wasteAdjustable: true,
+    freshnessLimited: false,
     reason,
     sources: [{ source: "staple", quantity: standalonePurchase(amount, unit, product), unit, note: reason }],
   };
@@ -195,6 +214,7 @@ function mealPlanContribution(missing: MissingIngredient, product: ProductInfo |
     amount,
     unit,
     wasteAdjustable: false,
+    freshnessLimited: false,
     reason: missing.reason,
     // One source per plan item (so it disappears with that meal); the line's quantity rides on the first.
     sources: planItemIds.map((mealPlanItemId, i) => ({
@@ -270,6 +290,7 @@ function mergeGroup(
   const product = lookupProduct(products, productId);
   const wasteFactor = productId ? wasteFactorFor(waste.get(productId)) : null;
   const merged = product ? mergeKnownProduct(ordered, product, wasteFactor) : mergeFreeText(ordered, wasteFactor);
+  const advice = merged.advice ?? (ordered.some((c) => c.freshnessLimited) ? FRESHNESS_ADVICE : undefined);
   return {
     itemKey: lead.itemKey,
     productId,
@@ -280,7 +301,7 @@ function mergeGroup(
     sources: ordered.flatMap((c) => c.sources),
     primarySource: lead.source,
     reason: [...new Set(ordered.map((c) => c.reason))].join(" · "),
-    ...(merged.advice ? { advice: merged.advice } : {}),
+    ...(advice ? { advice } : {}),
   };
 }
 
@@ -301,8 +322,10 @@ function byAisleThenName(a: ShoppingNeed, b: ShoppingNeed): number {
  * - Meal plan: each `planMissing` line (already net of inventory), keeping
  *   its plan item ids in the sources.
  * - Predicted: products whose `daysRemaining` ≤ `horizonDays`, with enough to
- *   cover usage until the shop after next (at least one package). Products
- *   predicted to last longer are left off — the household has enough.
+ *   cover usage until the shop after next (at least one package) — capped,
+ *   for perishables not kept frozen, at their shelf life's worth of use, with
+ *   FRESHNESS_ADVICE. Products predicted to last longer are left off — the
+ *   household has enough.
  * - Staples: no active stock, not tracked by a prediction, and due (no known
  *   rhythm, or ≥ 80% of the usual interval since the last purchase) — one
  *   typical purchase.
