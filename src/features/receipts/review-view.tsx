@@ -32,12 +32,14 @@ interface Draft {
 
 const WARNING_TEXT: Record<string, string> = {
   duplicate: "This looks like a receipt you've already added. Discard it unless you really bought all this twice.",
+  duplicate_pending: "This looks like the same receipt as one that's still waiting to be checked. Keep just one of them, unless you really bought all this twice.",
   blurry: "The photo was a little blurry, so double-check the items below.",
   no_date: "We couldn't find the date on this receipt — we've assumed today. Change it below if needed.",
   ai_fallback: "Our AI reader was busy, so this was read on-device. Give the names a quick check.",
   total_mismatch: "The items don't quite add up to the receipt total — some lines may be missing or misread.",
   partial: "Part of the receipt may be cut off. Add anything that's missing from your kitchen afterwards.",
   low_resolution: "The photo is quite small, so some lines may be misread.",
+  unclear: "Parts of the receipt were hard to read, so double-check the items below.",
 };
 
 function toDraft(item: ReceiptReviewItem): Draft {
@@ -57,6 +59,27 @@ function toDraft(item: ReceiptReviewItem): Draft {
 
 function amountLabel(d: Draft): string {
   return d.packCount > 1 ? `${d.packCount} × ${formatQuantity(d.quantity / d.packCount, d.unit)}` : formatQuantity(d.quantity, d.unit);
+}
+
+/** The amount in one pack, as shown for editing (drafts hold the total across packs). */
+function perPackText(d: Draft): string {
+  return String(Math.round((d.quantity / d.packCount) * 1000) / 1000);
+}
+
+function localeDecimal(): string {
+  return new Intl.NumberFormat().formatToParts(1.5).find((p) => p.type === "decimal")?.value ?? ".";
+}
+
+/** A typed amount. A decimal comma ("1,5" on many phone keyboards) counts as a point; "1,500" groups thousands where that's the local style. */
+function parseAmount(text: string): number {
+  const t = text.trim();
+  if (!t) return NaN;
+  const comma = t.lastIndexOf(",");
+  const point = t.lastIndexOf(".");
+  if (comma < 0) return Number(t);
+  if (point >= 0) return Number(comma > point ? t.replace(/\./g, "").replace(",", ".") : t.replace(/,/g, ""));
+  const grouping = /^\d{1,3}(,\d{3})+$/.test(t) && localeDecimal() === ".";
+  return Number(grouping ? t.replace(/,/g, "") : t.replace(",", "."));
 }
 
 export function ReviewView({ review, currency, today }: { review: ReceiptReview; currency: string; today: string }) {
@@ -316,12 +339,15 @@ function EditForm({ draft, item, onSave, onCancel }: { draft: Draft; item: Recei
   const [name, setName] = useState(draft.name);
   const [productId, setProductId] = useState(draft.productId);
   const [productName, setProductName] = useState(draft.productName);
-  const [quantity, setQuantity] = useState(String(draft.quantity));
+  // "Amount" is per pack, so changing Packs scales the total (two 2 L milks are 4 L).
+  const [quantity, setQuantity] = useState(perPackText(draft));
   const [unit, setUnit] = useState<Unit>(draft.unit);
   const [packs, setPacks] = useState(String(draft.packCount));
   const [location, setLocation] = useState<StorageLocation>(draft.location);
-  const qty = Number(quantity);
+  const qty = parseAmount(quantity);
   const packCount = Math.max(1, Math.round(Number(packs) || 1));
+  // Left as they were, keep the exact total (the per-pack figure is rounded for display).
+  const total = quantity === perPackText(draft) && packCount === draft.packCount ? draft.quantity : Math.round(qty * packCount * 1000) / 1000;
   const valid = name.trim().length > 0 && qty > 0;
   const candidates = [
     ...(item.productId && item.productName ? [{ productId: item.productId, name: item.productName }] : []),
@@ -334,7 +360,7 @@ function EditForm({ draft, item, onSave, onCancel }: { draft: Draft; item: Recei
       onSubmit={(e) => {
         e.preventDefault();
         if (!valid) return;
-        onSave({ name: name.trim(), productId, productName, quantity: qty, unit, packCount, location, include: true });
+        onSave({ name: name.trim(), productId, productName, quantity: total, unit, packCount, location, include: true });
       }}
     >
       {candidates.length > 0 && (
@@ -376,8 +402,13 @@ function EditForm({ draft, item, onSave, onCancel }: { draft: Draft; item: Recei
         />
       </Field>
       <div className="grid grid-cols-3 gap-3">
-        <Field label="Amount" htmlFor="rqty" error={qty > 0 ? null : "More than 0"}>
-          <Input id="rqty" inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value.replace(/[^\d.]/g, ""))} />
+        <Field
+          label={packCount > 1 ? "Each pack" : "Amount"}
+          htmlFor="rqty"
+          error={qty > 0 ? null : "More than 0"}
+          hint={packCount > 1 ? `${formatQuantity(total, unit)} in total` : undefined}
+        >
+          <Input id="rqty" inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value.replace(/[^\d.,]/g, ""))} />
         </Field>
         <Field label="Unit" htmlFor="runit">
           <NativeSelect id="runit" value={unit} onChange={(e) => setUnit(e.target.value as Unit)}>

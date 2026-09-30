@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { ProductInfo } from "@/lib/catalog/types";
 import { addDays, relativeDayLabel, toDateString, weekdayOf } from "@/lib/dates";
 import {
@@ -275,10 +275,10 @@ async function planItemViews(tx: Tx, loaded: LoadedContext, rows: DbMealPlanItem
   return out;
 }
 
-/** The coming week of dinners with live ingredient availability. */
-export async function getMealPlan(ctx: HouseholdContext, now = new Date()): Promise<MealPlanView> {
+/** The coming week of dinners with live ingredient availability. Pass `live` to reuse a kitchen state already computed for this request. */
+export async function getMealPlan(ctx: HouseholdContext, now = new Date(), live?: LiveState): Promise<MealPlanView> {
   return withUser(ctx.user.id, async (tx) => {
-    const loaded = await loadContext(tx, ctx, now);
+    const loaded = await loadContext(tx, ctx, now, live);
     const end = addDays(loaded.today, 6);
     const rows = await tx
       .select()
@@ -367,37 +367,74 @@ export async function generateMealPlan(
   ctx: HouseholdContext,
   range: PlanRange,
   opts: { regenerate?: boolean } = {},
-): Promise<{ planned: number }> {
+): Promise<PlanResult> {
+  return planDinners(ctx, (today, nightsPerWeek) => planDates(range, today, nightsPerWeek), { regenerate: opts.regenerate, range });
+}
+
+/** Plan one specific night (from an empty day on the plan), whatever the usual takeaway nights are. */
+export async function planDinnerOn(ctx: HouseholdContext, date: string): Promise<PlanResult> {
+  return planDinners(ctx, (today) => {
+    if (date < today || date > addDays(today, 6)) throw new AppError("validation", "Pick a day in the coming week.");
+    return [date];
+  });
+}
+
+export interface PlanResult {
+  planned: number;
+  /** Nights asked for that nothing suitable could fill (or, when regenerating, that kept their meal). */
+  unfilled: number;
+}
+
+async function planDinners(
+  ctx: HouseholdContext,
+  pickDates: (today: string, nightsPerWeek: number) => string[],
+  opts: { regenerate?: boolean; range?: PlanRange } = {},
+): Promise<PlanResult> {
   const now = new Date();
+  const { range } = opts;
   return withUser(ctx.user.id, async (tx) => {
     const loaded = await loadContext(tx, ctx, now);
-    const dates = planDates(range, loaded.today, loaded.nightsPerWeek);
+    const dates = pickDates(loaded.today, loaded.nightsPerWeek);
     const planId = await activePlanId(tx, ctx.household.id, loaded.today, ctx.user.id);
     const existing = await tx
       .select()
       .from(mealPlanItems)
       .where(and(eq(mealPlanItems.householdId, ctx.household.id), gte(mealPlanItems.date, loaded.today), eq(mealPlanItems.slot, "dinner")));
 
+    // A planned dinner whose recipe has since been deleted is an empty night.
+    const known = new Set(loaded.planner.meals.map((m) => m.id));
+    const orphaned = (e: DbMealPlanItem) => e.status === "planned" && !known.has(e.mealId);
     const targetDates = new Set(dates);
-    const replaceable = existing.filter((e) => targetDates.has(e.date) && e.status === "planned" && opts.regenerate);
+    const replaceable = existing.filter((e) => targetDates.has(e.date) && e.status === "planned" && (opts.regenerate || orphaned(e)));
     const keep = existing
-      .filter((e) => e.status !== "skipped" && !replaceable.some((r) => r.id === e.id))
+      .filter((e) => e.status !== "skipped" && !orphaned(e) && !replaceable.some((r) => r.id === e.id))
       .map((e) => ({ date: e.date, mealId: e.mealId }));
     const openDates = dates.filter((d) => !keep.some((k) => k.date === d));
-    if (openDates.length === 0) return { planned: 0 };
+    if (openDates.length === 0) return { planned: 0, unfilled: 0 };
 
+    // The planner only honours kept meals on dates it's planning, so hand it those nights
+    // too: variety and ingredient allocation then account for them. Only open nights are written.
+    const open = new Set(openDates);
+    const plannerKeep = keep.filter((k) => known.has(k.mealId));
     const picks = generatePlan(loaded.planner, {
-      dates: openDates,
+      dates: [...new Set([...openDates, ...plannerKeep.map((k) => k.date)])],
       servings: loaded.servings,
-      keep,
+      keep: plannerKeep,
       exclude: replaceable.map((r) => r.mealId),
       seed: seedFrom(now),
-    });
+    }).filter((p) => open.has(p.date));
     if (picks.length === 0) {
-      throw new AppError("not_found", "Plenty couldn't find meals that fit your preferences. Try relaxing a dislike or allergy filter.");
+      throw new AppError(
+        "not_found",
+        opts.regenerate
+          ? "Plenty couldn't find anything different that fits your preferences, so your plan is unchanged."
+          : "Plenty couldn't find meals that fit your preferences. Try relaxing a dislike or allergy filter.",
+      );
     }
+    // Only replace a night that got a new meal; a night nothing else fits keeps what it had.
+    const pickedDates = new Set(picks.map((p) => p.date));
     for (const r of replaceable) {
-      await tx.delete(mealPlanItems).where(eq(mealPlanItems.id, r.id));
+      if (pickedDates.has(r.date) || orphaned(r)) await tx.delete(mealPlanItems).where(eq(mealPlanItems.id, r.id));
     }
     for (const pick of picks) {
       await tx
@@ -432,7 +469,7 @@ export async function generateMealPlan(
       });
     }
     await syncShoppingList(tx, ctx.household, now, loaded.live);
-    return { planned: picks.length };
+    return { planned: picks.length, unfilled: openDates.length - picks.length };
   });
 }
 
@@ -460,17 +497,24 @@ export async function replacePlanItem(ctx: HouseholdContext, itemId: string, opt
         .where(and(eq(mealPreferences.householdId, ctx.household.id), eq(mealPreferences.mealId, item.mealId)));
     }
     const loaded = await loadContext(tx, ctx, now);
-    const others = await tx
-      .select({ date: mealPlanItems.date, mealId: mealPlanItems.mealId })
-      .from(mealPlanItems)
-      .where(and(eq(mealPlanItems.householdId, ctx.household.id), gte(mealPlanItems.date, loaded.today), sql`${mealPlanItems.id} <> ${itemId}`));
-    const [pick] = generatePlan(loaded.planner, {
-      dates: [item.date],
+    const known = new Set(loaded.planner.meals.map((m) => m.id));
+    const others = (
+      await tx
+        .select({ date: mealPlanItems.date, mealId: mealPlanItems.mealId, status: mealPlanItems.status })
+        .from(mealPlanItems)
+        .where(and(eq(mealPlanItems.householdId, ctx.household.id), gte(mealPlanItems.date, loaded.today), sql`${mealPlanItems.id} <> ${itemId}`))
+    )
+      .filter((o) => o.status !== "skipped" && o.date !== item.date && known.has(o.mealId))
+      .map((o) => ({ date: o.date, mealId: o.mealId }));
+    // The planner only honours kept meals on dates it's planning: include the rest of the plan
+    // so the swap can't repeat one of them or count their ingredients as free.
+    const pick = generatePlan(loaded.planner, {
+      dates: [item.date, ...others.map((o) => o.date)],
       servings: item.servings,
       keep: others,
       exclude: [item.mealId],
       seed: seedFrom(now),
-    });
+    }).find((p) => p.date === item.date);
     if (!pick) throw new AppError("not_found", "There's nothing else that fits right now. Try adjusting your preferences.");
     await tx.update(mealPlanItems).set({ mealId: pick.mealId, reason: pick.reason }).where(eq(mealPlanItems.id, itemId));
     await bumpPreference(tx, ctx.household.id, pick.mealId, "planned", now);
@@ -505,11 +549,16 @@ export async function movePlanItem(ctx: HouseholdContext, itemId: string, date: 
     const item = await loadPlanItem(tx, ctx.household.id, itemId);
     const today = toDateString(now, ctx.household.timezone);
     if (date < today || date > addDays(today, 13)) throw new AppError("validation", "Pick a day in the next two weeks.");
+    // A cooked dinner is a record of what happened that night; it doesn't move.
+    if (item.status === "cooked") throw new AppError("conflict", "That meal has already been cooked.");
     const [other] = await tx
       .select()
       .from(mealPlanItems)
       .where(and(eq(mealPlanItems.householdId, ctx.household.id), eq(mealPlanItems.date, date), eq(mealPlanItems.slot, item.slot)))
       .limit(1);
+    if (other && other.id !== item.id && other.status === "cooked") {
+      throw new AppError("conflict", "Dinner that night has already been cooked. Pick another day.");
+    }
     if (other && other.id !== item.id) {
       await tx.update(mealPlanItems).set({ date: "1900-01-01" }).where(eq(mealPlanItems.id, other.id));
       await tx.update(mealPlanItems).set({ date, mealPlanId: other.mealPlanId }).where(eq(mealPlanItems.id, item.id));
@@ -521,35 +570,62 @@ export async function movePlanItem(ctx: HouseholdContext, itemId: string, date: 
   });
 }
 
-export async function addMealToPlan(ctx: HouseholdContext, mealId: string, date: string): Promise<void> {
+/**
+ * Put a meal on a night. A dinner already planned that night is replaced (and
+ * its name returned so the person is told); a cooked one is never overwritten.
+ */
+export async function addMealToPlan(ctx: HouseholdContext, mealId: string, date: string): Promise<{ replaced: string | null }> {
   const now = new Date();
-  await withUser(ctx.user.id, async (tx) => {
+  return withUser(ctx.user.id, async (tx) => {
     const today = toDateString(now, ctx.household.timezone);
     if (date < today || date > addDays(today, 13)) throw new AppError("validation", "Pick a day in the next two weeks.");
     const visible = await loadPlannableMeals(tx, ctx.household.id, [mealId]);
     if (!visible.has(mealId)) throw notFound("That meal");
+    const [current] = await tx
+      .select()
+      .from(mealPlanItems)
+      .where(and(eq(mealPlanItems.householdId, ctx.household.id), eq(mealPlanItems.date, date), eq(mealPlanItems.slot, "dinner")))
+      .limit(1)
+      .for("update");
+    if (current?.status === "cooked") {
+      throw new AppError("conflict", "Dinner that night has already been cooked. Pick another day.");
+    }
+    let replaced: string | null = null;
     const planId = await activePlanId(tx, ctx.household.id, today, ctx.user.id);
-    await tx
-      .insert(mealPlanItems)
-      .values({
-        mealPlanId: planId,
-        householdId: ctx.household.id,
-        date,
-        slot: "dinner",
-        mealId,
-        servings: defaultServings(ctx.household),
-        reason: "You picked this one",
-      })
-      .onConflictDoUpdate({
-        target: [mealPlanItems.mealPlanId, mealPlanItems.date, mealPlanItems.slot],
-        set: { mealId, reason: "You picked this one", status: "planned" },
-      });
+    if (current) {
+      if (current.status === "planned" && current.mealId !== mealId) {
+        const [old] = await tx.select({ name: meals.name, deletedAt: meals.deletedAt }).from(meals).where(eq(meals.id, current.mealId)).limit(1);
+        replaced = old && !old.deletedAt ? old.name : null;
+      }
+      await tx
+        .update(mealPlanItems)
+        .set({ mealId, reason: "You picked this one", status: "planned", cookedAt: null })
+        .where(eq(mealPlanItems.id, current.id));
+    } else {
+      await tx
+        .insert(mealPlanItems)
+        .values({
+          mealPlanId: planId,
+          householdId: ctx.household.id,
+          date,
+          slot: "dinner",
+          mealId,
+          servings: defaultServings(ctx.household),
+          reason: "You picked this one",
+        })
+        .onConflictDoUpdate({
+          target: [mealPlanItems.mealPlanId, mealPlanItems.date, mealPlanItems.slot],
+          set: { mealId, reason: "You picked this one", status: "planned" },
+          setWhere: sql`${mealPlanItems.status} <> 'cooked'`,
+        });
+    }
     await tx
       .update(mealPlans)
       .set({ endDate: sql`greatest(${mealPlans.endDate}, ${date}::date)` })
       .where(eq(mealPlans.id, planId));
     await bumpPreference(tx, ctx.household.id, mealId, "planned", now);
     await syncShoppingList(tx, ctx.household, now);
+    return { replaced };
   });
 }
 
@@ -562,12 +638,14 @@ export async function markPlanItemCooked(ctx: HouseholdContext, itemId: string):
   return withUser(ctx.user.id, async (tx) => {
     const item = await loadPlanItem(tx, ctx.household.id, itemId);
     if (item.status === "cooked") return { usedItems: 0 };
+    // Claim it before touching the kitchen: a second tap (or a housemate on another phone)
+    // waits here, then finds it already cooked instead of deducting everything twice.
+    if (!(await claimCooked(tx, item.id, now))) return { usedItems: 0 };
     const loaded = await loadContext(tx, ctx, now);
     const meal = loaded.planner.meals.find((m) => m.id === item.mealId);
     if (!meal) throw notFound("That meal");
     const usage = allocationFor(meal, loaded, item.servings, loaded.today);
     const touched = await consumeForMealTx(tx, ctx.household, ctx.user.id, usage, item.id, now);
-    await tx.update(mealPlanItems).set({ status: "cooked", cookedAt: now }).where(eq(mealPlanItems.id, item.id));
     await bumpPreference(tx, ctx.household.id, item.mealId, "cooked", now);
     await refreshLearning(tx, ctx.household, touched, now);
     await syncShoppingList(tx, ctx.household, now);
@@ -582,19 +660,33 @@ export async function cookMealNow(ctx: HouseholdContext, mealId: string, serving
     const loaded = await loadContext(tx, ctx, now);
     const meal = loaded.planner.meals.find((m) => m.id === mealId);
     if (!meal) throw notFound("That meal");
-    const usage = allocationFor(meal, loaded, servings ?? loaded.servings, loaded.today);
-    const touched = await consumeForMealTx(tx, ctx.household, ctx.user.id, usage, null, now);
-    const [planned] = await tx
+    const todays = await tx
       .select()
       .from(mealPlanItems)
-      .where(and(eq(mealPlanItems.householdId, ctx.household.id), eq(mealPlanItems.date, loaded.today), eq(mealPlanItems.mealId, mealId)))
-      .limit(1);
-    if (planned) await tx.update(mealPlanItems).set({ status: "cooked", cookedAt: now }).where(eq(mealPlanItems.id, planned.id));
+      .where(and(eq(mealPlanItems.householdId, ctx.household.id), eq(mealPlanItems.date, loaded.today), eq(mealPlanItems.mealId, mealId)));
+    // Tonight's plan has this meal: cook that (claimed first, so it can't be cooked twice).
+    const open = todays.find((r) => r.status !== "cooked");
+    const planItemId = open && (await claimCooked(tx, open.id, now)) ? open.id : null;
+    if (!planItemId && todays.length > 0) {
+      throw new AppError("conflict", `${meal.name} is already marked as cooked today, so Plenty has taken its ingredients out of your kitchen.`);
+    }
+    const usage = allocationFor(meal, loaded, servings ?? loaded.servings, loaded.today);
+    const touched = await consumeForMealTx(tx, ctx.household, ctx.user.id, usage, planItemId, now);
     await bumpPreference(tx, ctx.household.id, mealId, "cooked", now);
     await refreshLearning(tx, ctx.household, touched, now);
     await syncShoppingList(tx, ctx.household, now);
     return { usedItems: usage.length };
   });
+}
+
+/** Mark a plan item cooked unless it already is. False when someone else got there first. */
+async function claimCooked(tx: Tx, itemId: string, now: Date): Promise<boolean> {
+  const claimed = await tx
+    .update(mealPlanItems)
+    .set({ status: "cooked", cookedAt: now })
+    .where(and(eq(mealPlanItems.id, itemId), ne(mealPlanItems.status, "cooked")))
+    .returning({ id: mealPlanItems.id });
+  return claimed.length > 0;
 }
 
 /** Which inventory items (and how much of each, in the item's unit) a meal would use. */
@@ -639,6 +731,14 @@ function convertNeed(amount: number, from: Unit, to: Unit, product: ProductInfo 
 
 // ─── Preferences ────────────────────────────────────────────────────────────
 
+/** When a meal stops being disliked, take back the one rejection the dislike added. */
+function undoDislike() {
+  return {
+    timesRejected: sql<number>`greatest(0, ${mealPreferences.timesRejected} - case when ${mealPreferences.rating} = -1 then 1 else 0 end)`,
+    lastRejectedAt: sql<Date | null>`case when ${mealPreferences.rating} = -1 and ${mealPreferences.timesRejected} <= 1 then null else ${mealPreferences.lastRejectedAt} end`,
+  };
+}
+
 export async function rateMeal(ctx: HouseholdContext, mealId: string, rating: -1 | 0 | 1): Promise<void> {
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
@@ -655,10 +755,17 @@ export async function rateMeal(ctx: HouseholdContext, mealId: string, rating: -1
       })
       .onConflictDoUpdate({
         target: [mealPreferences.householdId, mealPreferences.mealId],
+        // A dislike counts as one rejection, once: tapping it again doesn't add more, and
+        // undoing it takes that rejection back so an accidental tap isn't held against the meal.
         set:
           rating === -1
-            ? { rating, saved: false, timesRejected: sql`${mealPreferences.timesRejected} + 1`, lastRejectedAt: now }
-            : { rating },
+            ? {
+                rating,
+                saved: false,
+                timesRejected: sql`${mealPreferences.timesRejected} + case when ${mealPreferences.rating} = -1 then 0 else 1 end`,
+                lastRejectedAt: sql`case when ${mealPreferences.rating} = -1 then ${mealPreferences.lastRejectedAt} else ${now.toISOString()}::timestamptz end`,
+              }
+            : { rating, ...undoDislike() },
       });
   });
 }
@@ -669,10 +776,12 @@ export async function setMealSaved(ctx: HouseholdContext, mealId: string, saved:
     if (!visible.has(mealId)) throw notFound("That meal");
     await tx
       .insert(mealPreferences)
-      .values({ householdId: ctx.household.id, mealId, saved, rating: saved ? 1 : 0 })
+      // Saving is a bookmark, not a like (the planner already rewards saved meals): it clears a
+      // dislike but never sets the rating, whether or not Plenty has seen the meal before.
+      .values({ householdId: ctx.household.id, mealId, saved, rating: 0 })
       .onConflictDoUpdate({
         target: [mealPreferences.householdId, mealPreferences.mealId],
-        set: saved ? { saved, rating: sql`greatest(${mealPreferences.rating}, 0)` } : { saved },
+        set: saved ? { saved, rating: sql`greatest(${mealPreferences.rating}, 0)`, ...undoDislike() } : { saved },
       });
   });
 }
@@ -968,16 +1077,35 @@ export async function editMeal(ctx: HouseholdContext, mealId: string, input: Edi
   });
 }
 
-/** Remove a household's own recipe (library recipes can't be deleted, only disliked). */
-export async function deleteHouseholdMeal(ctx: HouseholdContext, mealId: string): Promise<void> {
-  await withUser(ctx.user.id, async (tx) => {
+/**
+ * Remove a household's own recipe (library recipes can't be deleted, only
+ * disliked). Upcoming dinners that used it come off the plan — a night with a
+ * recipe nobody can open would otherwise look empty but block planning.
+ */
+export async function deleteHouseholdMeal(ctx: HouseholdContext, mealId: string): Promise<{ unplanned: number }> {
+  const now = new Date();
+  return withUser(ctx.user.id, async (tx) => {
     const [existing] = await tx
       .select()
       .from(meals)
       .where(and(eq(meals.id, mealId), eq(meals.householdId, ctx.household.id)))
       .limit(1);
     if (!existing) throw new AppError("forbidden", "Only your own recipes can be deleted.");
-    await tx.update(meals).set({ deletedAt: new Date() }).where(eq(meals.id, mealId));
+    await tx.update(meals).set({ deletedAt: now }).where(eq(meals.id, mealId));
+    const today = toDateString(now, ctx.household.timezone);
+    const unplanned = await tx
+      .delete(mealPlanItems)
+      .where(
+        and(
+          eq(mealPlanItems.householdId, ctx.household.id),
+          eq(mealPlanItems.mealId, mealId),
+          gte(mealPlanItems.date, today),
+          eq(mealPlanItems.status, "planned"),
+        ),
+      )
+      .returning({ id: mealPlanItems.id });
+    if (unplanned.length > 0) await syncShoppingList(tx, ctx.household, now);
+    return { unplanned: unplanned.length };
   });
 }
 

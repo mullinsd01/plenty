@@ -88,7 +88,7 @@ export function ListView({ items }: { items: ShoppingItemView[] }) {
       optimistic: () => apply({ type: "remove", id: item.id }),
       onSuccess: () =>
         toast.success(item.source === "manual" ? `Removed ${item.name}` : `Removed ${item.name}`, {
-          description: item.source === "manual" ? undefined : "Plenty won't add it again before your next shop.",
+          description: item.source === "manual" && item.sources.length === 0 ? undefined : "Plenty won't add it again before your next shop.",
         }),
     });
   };
@@ -296,13 +296,22 @@ function EditForm({ item, onDone }: { item: ShoppingItemView; onDone: () => void
   const save = useAction();
   const qty = quantity ? Number(quantity) : null;
   const valid = name.trim().length > 0 && (qty === null || qty > 0);
+  // Only send what the person actually changed: re-saving Plenty's suggested amount would
+  // fix it as theirs, so Plenty could no longer adjust it or take the item off when it's not needed.
+  const amountChanged = qty !== item.quantity || (qty !== null && unit !== (item.unit ?? "each"));
+  const patch = {
+    ...(name.trim() !== item.name ? { name: name.trim() } : {}),
+    ...(amountChanged ? { quantity: qty, unit: qty ? unit : null } : {}),
+    ...(aisle !== item.aisle ? { aisle } : {}),
+  };
   return (
     <form
       className="space-y-4"
       onSubmit={(e) => {
         e.preventDefault();
         if (!valid) return;
-        save.run(() => updateListItemAction(item.id, { name: name.trim(), quantity: qty, unit: qty ? unit : null, aisle }), { onSuccess: onDone });
+        if (Object.keys(patch).length === 0) return onDone();
+        save.run(() => updateListItemAction(item.id, patch), { onSuccess: onDone });
       }}
     >
       <Field label="Name" htmlFor="li-name">

@@ -16,6 +16,8 @@ import { requireHousehold } from "@/server/auth/context";
 import { getReceiptReview } from "@/server/services/receipts";
 
 export const metadata: Metadata = { title: "Receipt" };
+// "Try reading it again" re-reads the receipt in after() from this page's server action.
+export const maxDuration = 300;
 
 export default async function ReceiptPage({ params }: PageProps<"/receipts/[id]">) {
   const { id } = await params;

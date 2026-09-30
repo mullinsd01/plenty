@@ -48,6 +48,12 @@ export type ReceiptExtraction = z.infer<typeof receiptExtractionSchema> & {
   provider: "anthropic" | "local";
 };
 
+/**
+ * Longest an external AI provider may spend on one receipt, retries included.
+ * Receipt processing sizes its lease (and the routes their `maxDuration`) from this.
+ */
+export const RECEIPT_AI_BUDGET_MS = 180_000;
+
 export interface ReceiptExtractionInput {
   /** Prepared JPEG (rotated, resized, metadata stripped). */
   image: Buffer;

@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Notifications" };
 
 export default async function NotificationsPage() {
   const ctx = await requireHousehold();
-  await refreshNotifications(ctx);
+  await refreshNotifications(ctx, new Date(), { force: true });
   const items = await listNotifications(ctx);
   return (
     <div className="mx-auto max-w-2xl animate-fade-in">

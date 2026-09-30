@@ -5,6 +5,7 @@ import type { z } from "zod";
 import {
   AIUnavailableError,
   generatedRecipesSchema,
+  RECEIPT_AI_BUDGET_MS,
   receiptExtractionSchema,
   type AIProvider,
   type GeneratedRecipe,
@@ -39,7 +40,7 @@ function mapError(err: unknown): never {
   if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) {
     throw new AIUnavailableError("The AI service isn't configured correctly.", "config");
   }
-  if (err instanceof Anthropic.APIConnectionTimeoutError) {
+  if (err instanceof Anthropic.APIConnectionTimeoutError || err instanceof Anthropic.APIUserAbortError) {
     throw new AIUnavailableError("The AI service took too long to respond.", "timeout");
   }
   if (err instanceof Anthropic.APIConnectionError) {
@@ -76,18 +77,23 @@ export class AnthropicProvider implements AIProvider {
     content: Anthropic.Beta.BetaContentBlockParam[];
     maxTokens: number;
     effort: "low" | "medium" | "high";
+    /** Upper bound for the whole call, SDK retries and back-off included. */
+    budgetMs?: number;
   }): Promise<z.infer<S>> {
     try {
-      const response = await this.client.beta.messages.parse({
-        model: this.model,
-        max_tokens: params.maxTokens,
-        system: params.system,
-        // Server-side refusal fallback: if a safety classifier declines, the API retries on a suitable model.
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
-        output_config: { effort: params.effort, format: betaZodOutputFormat(params.schema) },
-        messages: [{ role: "user", content: params.content }],
-      });
+      const response = await this.client.beta.messages.parse(
+        {
+          model: this.model,
+          max_tokens: params.maxTokens,
+          system: params.system,
+          // Server-side refusal fallback: if a safety classifier declines, the API retries on a suitable model.
+          betas: ["server-side-fallback-2026-07-01"],
+          fallbacks: "default",
+          output_config: { effort: params.effort, format: betaZodOutputFormat(params.schema) },
+          messages: [{ role: "user", content: params.content }],
+        },
+        params.budgetMs ? { signal: AbortSignal.timeout(params.budgetMs) } : undefined,
+      );
       if (response.stop_reason === "refusal") {
         throw new AIUnavailableError("The AI service declined this request.", "refused");
       }
@@ -109,6 +115,8 @@ export class AnthropicProvider implements AIProvider {
       system: RECEIPT_SYSTEM,
       maxTokens: 16_000,
       effort: "medium",
+      // Bounded so a slow API can't outlive the processing lease or the route's time limit.
+      budgetMs: RECEIPT_AI_BUDGET_MS,
       content: [
         { type: "image", source: { type: "base64", media_type: input.mimeType, data: input.image.toString("base64") } },
         {

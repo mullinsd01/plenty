@@ -1,14 +1,15 @@
 import "server-only";
-import { and, asc, count, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, lte, max } from "drizzle-orm";
 import { addDays, hourInTimeZone, relativeDayLabel, toDateString } from "@/lib/dates";
 import { PREDICTION_BASIS_LABELS, type Confidence, type PredictionBasis } from "@/lib/domain";
 import { pluralNoun } from "@/lib/format";
 import { spendSummary, wasteInsights } from "@/lib/insights";
 import type { HouseholdContext } from "@/server/auth/context";
 import { withUser } from "@/server/db/client";
-import { mealPlanItems, receiptItems, receipts, shoppingListItems, preferences } from "@/server/db/schema";
+import { mealPlanItems, predictions, receiptItems, receipts, shoppingListItems, preferences } from "@/server/db/schema";
 import { toItemView } from "./inventory";
-import { computeLiveState, persistPredictions } from "./learning";
+import { computeLiveState, persistPredictions, type LiveState } from "./learning";
+import { getMealPlan, type MealPlanView } from "./meals";
 import { getOrCreateActiveList, loadShoppingRhythm } from "./shopping";
 
 export interface RunningLowView {
@@ -66,6 +67,11 @@ export interface DashboardView {
 
 /** Days past its date before Plenty assumes something is gone and offers to clear it out. */
 const PAST_DATE_AFTER_DAYS = 4;
+/**
+ * Every kitchen change already refreshes stored predictions; viewing Home only
+ * needs to keep them up with time passing, so it rewrites them at most this often.
+ */
+const PREDICTIONS_REFRESH_MS = 30 * 60_000;
 
 function greetingFor(hour: number): string {
   if (hour < 5) return "Good evening";
@@ -74,16 +80,27 @@ function greetingFor(hour: number): string {
   return "Good evening";
 }
 
+/** The Home screen: the kitchen is read once and shared by the dashboard and the meal plan. */
+export async function getHome(ctx: HouseholdContext, now = new Date()): Promise<{ dashboard: DashboardView; plan: MealPlanView }> {
+  const live = await withUser(ctx.user.id, (tx) => computeLiveState(tx, ctx.household, now));
+  const [dashboard, plan] = await Promise.all([getDashboard(ctx, now, live), getMealPlan(ctx, now, live)]);
+  return { dashboard, plan };
+}
+
 /**
  * Everything the home screen needs, computed in one pass from the live
- * kitchen state. Also refreshes stored predictions.
+ * kitchen state (pass `liveState` to reuse one already computed for this
+ * request). Also keeps stored predictions from going stale.
  */
-export async function getDashboard(ctx: HouseholdContext, now = new Date()): Promise<DashboardView> {
+export async function getDashboard(ctx: HouseholdContext, now = new Date(), liveState?: LiveState): Promise<DashboardView> {
   return withUser(ctx.user.id, async (tx) => {
     const tz = ctx.household.timezone;
     const today = toDateString(now, tz);
-    const live = await computeLiveState(tx, ctx.household, now);
-    await persistPredictions(tx, ctx.household, live);
+    const live = liveState ?? (await computeLiveState(tx, ctx.household, now));
+    const [stored] = await tx.select({ at: max(predictions.computedAt) }).from(predictions).where(eq(predictions.householdId, ctx.household.id));
+    if (!stored?.at || now.getTime() - stored.at.getTime() > PREDICTIONS_REFRESH_MS) {
+      await persistPredictions(tx, ctx.household, live);
+    }
 
     const list = await getOrCreateActiveList(tx, ctx.household.id);
     const listRows = await tx

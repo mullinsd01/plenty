@@ -3,6 +3,9 @@ import { jsonError, routeContext } from "@/server/http";
 import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { getReceiptStatus, processReceipt } from "@/server/services/receipts";
 
+// A nudge may restart reading in after(): allow for the slowest attempt (see PROCESSING_LEASE_SECONDS).
+export const maxDuration = 300;
+
 /** Poll a receipt's processing status. Re-queues work that was interrupted (e.g. a server restart). */
 export async function GET(_request: Request, { params }: RouteContext<"/api/receipts/[id]/status">) {
   const ctx = await routeContext();

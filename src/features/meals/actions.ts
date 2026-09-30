@@ -10,19 +10,33 @@ import * as meals from "@/server/services/meals";
 const id = z.uuid({ error: "That meal couldn't be found." });
 const date = z.string().refine(isDateString, "Pick a valid day.");
 
+function planMessage(r: meals.PlanResult, regenerate: boolean): string {
+  const main =
+    r.planned === 0
+      ? "Those days are already planned"
+      : r.planned === 1
+        ? "Dinner's planned"
+        : `Planned ${r.planned} dinners — missing ingredients are on your list`;
+  if (r.unfilled === 0) return main;
+  const nights = r.unfilled === 1 ? "1 night" : `${r.unfilled} nights`;
+  return regenerate
+    ? `${main}. Nothing else fits your preferences for ${nights}, so ${r.unfilled === 1 ? "it keeps its" : "they keep their"} meal.`
+    : `${main}. Nothing fits your preferences for ${nights} — try relaxing a dislike or allergy filter.`;
+}
+
 export async function generatePlanAction(range: meals.PlanRange, regenerate = false) {
   return householdAction(
     "meals.generate",
     async (ctx) => meals.generateMealPlan(ctx, parseInput(z.enum(["tonight", "tomorrow", "3days", "week"]), range), { regenerate }),
-    {
-      message: (r) =>
-        r.planned === 0
-          ? "Those days are already planned"
-          : r.planned === 1
-            ? "Dinner's planned"
-            : `Planned ${r.planned} dinners — missing ingredients are on your list`,
-    },
+    { message: (r) => planMessage(r, regenerate) },
   );
+}
+
+/** Plan one particular night (an empty day on the plan). */
+export async function planDayAction(onDate: string) {
+  return householdAction("meals.planDay", async (ctx) => meals.planDinnerOn(ctx, parseInput(date, onDate)), {
+    message: (r) => planMessage(r, false),
+  });
 }
 
 export async function replacePlanItemAction(itemId: string, dislike = false) {
@@ -49,7 +63,7 @@ export async function movePlanItemAction(itemId: string, toDate: string) {
 
 export async function addMealToPlanAction(mealId: string, onDate: string) {
   return householdAction("meals.addToPlan", async (ctx) => meals.addMealToPlan(ctx, parseInput(id, mealId), parseInput(date, onDate)), {
-    message: "Added to your plan",
+    message: (r) => (r.replaced ? `Added to your plan in place of ${r.replaced}` : "Added to your plan"),
   });
 }
 
@@ -106,7 +120,7 @@ export async function editMealAction(mealId: string, input: z.input<typeof editS
 
 export async function deleteMealAction(mealId: string) {
   return householdAction("meals.delete", async (ctx) => meals.deleteHouseholdMeal(ctx, parseInput(id, mealId)), {
-    message: "Recipe deleted",
+    message: (r) => (r.unplanned > 0 ? "Recipe deleted and taken off your meal plan" : "Recipe deleted"),
   });
 }
 

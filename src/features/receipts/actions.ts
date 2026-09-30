@@ -12,24 +12,37 @@ import * as receipts from "@/server/services/receipts";
 
 const id = z.uuid({ error: "That receipt couldn't be found." });
 
+const confirmItem = z
+  .object({
+    id: z.uuid(),
+    include: z.boolean(),
+    name: z.string().trim().max(120),
+    productId: z.uuid().nullable(),
+    quantity: z.number(),
+    unit: z.enum(UNITS),
+    packCount: z.number(),
+    location: z.enum(STORAGE_LOCATIONS),
+    existingDecision: z.enum(["replace", "keep", "merge"]).nullable(),
+  })
+  // Only lines going into the kitchen need sensible amounts; messages name the line so it can be found.
+  .superRefine((item, ctx) => {
+    if (!item.include) return;
+    if (!item.name) {
+      ctx.addIssue({ code: "custom", path: ["name"], message: "Every item needs a name." });
+      return;
+    }
+    if (!(item.quantity > 0) || item.quantity > receipts.MAX_RECEIPT_QUANTITY) {
+      ctx.addIssue({ code: "custom", path: ["quantity"], message: `Check the amount for ${item.name}.` });
+    }
+    if (!Number.isInteger(item.packCount) || item.packCount < 1 || item.packCount > receipts.MAX_RECEIPT_PACKS) {
+      ctx.addIssue({ code: "custom", path: ["packCount"], message: `Check the number of packs for ${item.name}.` });
+    }
+  });
+
 const confirmSchema = z.object({
   storeName: z.string().trim().max(80).nullable(),
   purchasedOn: z.string().refine(isDateString, "Use a valid date.").nullable(),
-  items: z
-    .array(
-      z.object({
-        id: z.uuid(),
-        include: z.boolean(),
-        name: z.string().trim().min(1, "Every item needs a name.").max(120),
-        productId: z.uuid().nullable(),
-        quantity: z.number().positive("Amounts must be more than zero.").max(100000),
-        unit: z.enum(UNITS),
-        packCount: z.number().int().min(1).max(100),
-        location: z.enum(STORAGE_LOCATIONS),
-        existingDecision: z.enum(["replace", "keep", "merge"]).nullable(),
-      }),
-    )
-    .max(300),
+  items: z.array(confirmItem).max(300),
 });
 
 export async function confirmReceiptAction(receiptId: string, input: z.input<typeof confirmSchema>) {

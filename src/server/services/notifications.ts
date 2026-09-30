@@ -1,9 +1,38 @@
 import "server-only";
-import { and, count, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import type { NotificationType } from "@/lib/domain";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
-import { withUser, type Queryable } from "@/server/db/client";
-import { householdMembers, notifications } from "@/server/db/schema";
+import { withUser, type Queryable, type Tx } from "@/server/db/client";
+import { householdMembers, notificationSettings, notifications } from "@/server/db/schema";
+
+/** Which setting switches each kind of notification on or off. */
+const SETTING_FOR_TYPE: Partial<Record<NotificationType, "runningLow" | "useSoon" | "mealPlanReady" | "shoppingReminder" | "checkIns" | "insights">> = {
+  running_low: "runningLow",
+  use_soon: "useSoon",
+  meal_plan_ready: "mealPlanReady",
+  shopping_reminder: "shoppingReminder",
+  check_in: "checkIns",
+  insight: "insights",
+};
+
+/**
+ * Kinds of notification the signed-in member has switched off. Some are
+ * created by a housemate's action (e.g. "meal plan ready"), whose session
+ * can't see this member's settings, so they're filtered when read instead.
+ */
+async function mutedTypes(tx: Tx, ctx: HouseholdContext): Promise<NotificationType[]> {
+  const [s] = await tx
+    .select()
+    .from(notificationSettings)
+    .where(and(eq(notificationSettings.userId, ctx.user.id), eq(notificationSettings.householdId, ctx.household.id)))
+    .limit(1);
+  if (!s) return [];
+  return (Object.entries(SETTING_FOR_TYPE) as Array<[NotificationType, keyof typeof s]>).filter(([, key]) => s[key] === false).map(([type]) => type);
+}
+
+function notMuted(muted: NotificationType[]) {
+  return muted.length > 0 ? notInArray(notifications.type, muted) : undefined;
+}
 
 // ─── Reading ────────────────────────────────────────────────────────────────
 
@@ -19,6 +48,7 @@ export interface NotificationView {
 
 export async function countUnreadNotifications(ctx: HouseholdContext): Promise<number> {
   return withUser(ctx.user.id, async (tx) => {
+    const muted = await mutedTypes(tx, ctx);
     const [row] = await tx
       .select({ n: count() })
       .from(notifications)
@@ -28,6 +58,7 @@ export async function countUnreadNotifications(ctx: HouseholdContext): Promise<n
           eq(notifications.userId, ctx.user.id),
           isNull(notifications.readAt),
           isNull(notifications.dismissedAt),
+          notMuted(muted),
         ),
       );
     return Number(row?.n ?? 0);
@@ -36,6 +67,7 @@ export async function countUnreadNotifications(ctx: HouseholdContext): Promise<n
 
 export async function listNotifications(ctx: HouseholdContext, limit = 50): Promise<NotificationView[]> {
   return withUser(ctx.user.id, async (tx) => {
+    const muted = await mutedTypes(tx, ctx);
     const rows = await tx
       .select()
       .from(notifications)
@@ -44,6 +76,7 @@ export async function listNotifications(ctx: HouseholdContext, limit = 50): Prom
           eq(notifications.householdId, ctx.household.id),
           eq(notifications.userId, ctx.user.id),
           isNull(notifications.dismissedAt),
+          notMuted(muted),
         ),
       )
       .orderBy(desc(notifications.createdAt))
@@ -80,7 +113,11 @@ export async function dismissNotification(ctx: HouseholdContext, id: string): Pr
   });
 }
 
-/** Tell other members about something a housemate did (e.g. planned the week). */
+/**
+ * Tell other members about something a housemate did (e.g. planned the week).
+ * Runs in the actor's session, which can't read the others' settings; members
+ * who switched the kind off never see it (see `mutedTypes`).
+ */
 export async function notifyHousemates(
   db: Queryable,
   household: Pick<HouseholdInfo, "id">,

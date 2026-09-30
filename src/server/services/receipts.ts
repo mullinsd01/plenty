@@ -1,5 +1,6 @@
 import "server-only";
-import { and, desc, eq, inArray, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
+import sharp from "sharp";
 import type { ProductInfo } from "@/lib/catalog/types";
 import { formatShortDate, isDateString, toDateString, zonedDateTimeToInstant } from "@/lib/dates";
 import { levelPhrase, type Aisle, type StorageLocation } from "@/lib/domain";
@@ -7,35 +8,85 @@ import { aliasKey as toAliasKey, cleanReceiptText, normalizeReceiptLine } from "
 import { receiptFingerprint } from "@/lib/receipts/fingerprint";
 import { assessReceiptQuality } from "@/lib/receipts/quality";
 import { formatQuantity, isContainerUnit, isUnit, unitDimension, type Unit } from "@/lib/units";
-import { AIUnavailableError, getLocalProvider, getProvider, type ReceiptExtraction } from "@/server/ai";
+import { AIUnavailableError, getLocalProvider, getProvider, RECEIPT_AI_BUDGET_MS, type ReceiptExtraction } from "@/server/ai";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
-import { withUser, type Tx } from "@/server/db/client";
-import { notifications, preferences, receiptItems, receipts, inventoryItems, type DbReceipt } from "@/server/db/schema";
+import { systemDb, withUser } from "@/server/db/client";
+import {
+  householdMembers,
+  households,
+  notifications,
+  preferences,
+  receiptItems,
+  receipts,
+  inventoryItems,
+  type DbInventoryItem,
+  type DbReceipt,
+} from "@/server/db/schema";
 import { AppError, notFound } from "@/server/errors";
 import { deleteFile, readStoredFile, receiptImageKey, saveFile } from "@/server/storage/files";
-import { prepareReceiptImage, ReceiptImageError } from "@/server/receipts/image";
+import { MAX_STORED_EDGE_PX, prepareReceiptImage, ReceiptImageError } from "@/server/receipts/image";
 import { addItemsTx, finishItemTx, inferEndTime } from "./inventory";
 import { computeLiveState, refreshLearning } from "./learning";
 import { loadProductIndex, matchOptions, productCandidates, rememberAlias, type ProductIndex } from "./products";
 import { markPurchasedFromReceipt, syncShoppingList } from "./shopping";
 
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+/** Time allowed for the on-device reader after the AI reader gives up. */
+const LOCAL_READ_ALLOWANCE_MS = 60_000;
 /**
  * A processing attempt "owns" a receipt for this long. Another attempt (a
  * retry, or a nudge after a server restart) can only take over once it lapses,
- * so two readers never race to write the same receipt.
+ * so two readers never race to write the same receipt. It outlasts the slowest
+ * attempt (the AI budget plus the on-device fallback), so a slow but live
+ * attempt is never taken over; the receipt routes' maxDuration (300 s) outlasts it.
  */
-const PROCESSING_LEASE_SECONDS = 150;
+const PROCESSING_LEASE_SECONDS = Math.ceil((RECEIPT_AI_BUDGET_MS + LOCAL_READ_ALLOWANCE_MS) / 1000) + 30;
+/** Receipts still "processing" this long after upload are given up on (with a retry button), not read again. */
+const MAX_PROCESSING_AGE_MS = 3 * 3_600_000;
 const MATCH_CONFIDENT = 0.8;
 const MATCH_PLAUSIBLE = 0.55;
+/** Largest amount and pack count a receipt line can have; readings are clamped to them and confirming checks them. */
+export const MAX_RECEIPT_QUANTITY = 100_000;
+export const MAX_RECEIPT_PACKS = 1_000;
+/** Prices beyond this are misreads (card or barcode digits); they'd also overflow the money columns. */
+const MAX_RECEIPT_MONEY = 100_000;
+/** A kitchen item ticked off the shopping list this close to the receipt's date is probably the same purchase. */
+const LIST_PURCHASE_WINDOW_MS = 3 * 86_400_000;
 /** Receipt wording for things sold one at a time. */
 const LOOSE_ITEM = /\b(EA|EACH|LOOSE)\b/i;
+/** What the AI reader says when part of the receipt isn't in the photo. */
+const CUT_OFF_PROBLEM = /\b(cut off|cropped|missing|torn|folded|incomplete|partial|not visible|out of (the )?frame)\b/i;
+
+/** A money amount read from a receipt, or null when it can't be a real price. */
+function receiptMoney(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || Math.abs(value) > MAX_RECEIPT_MONEY) return null;
+  return Math.round(value * 100) / 100;
+}
+
+/** Line prices that don't add up to the printed total (or subtotal) mean lines were missed or misread. */
+function totalsDisagree(prices: number[], total: number | null, subtotal: number | null): boolean {
+  const references = [total, subtotal].filter((r): r is number => r !== null && r > 0);
+  if (prices.length === 0 || references.length === 0) return false;
+  const sum = prices.reduce((acc, p) => acc + p, 0);
+  return references.every((ref) => Math.abs(sum - ref) > Math.max(ref * 0.05, 0.1));
+}
+
+/** Kitchen items ticked off the shopping list around the time of this shop — likely this very purchase. */
+function listBatchesFor(activeItems: DbInventoryItem[], productId: string, receiptTime: Date): DbInventoryItem[] {
+  return activeItems.filter(
+    (i) =>
+      i.productId === productId &&
+      i.source === "shopping_list" &&
+      Math.abs(i.purchasedAt.getTime() - receiptTime.getTime()) < LIST_PURCHASE_WINDOW_MS,
+  );
+}
 
 // ─── Upload ─────────────────────────────────────────────────────────────────
 
 export interface UploadResult {
   receiptId: string;
-  duplicateOf: { id: string; date: string | null } | null;
+  /** The same photo was uploaded before; `status` says whether it's already in the kitchen or still waiting. */
+  duplicateOf: { id: string; date: string | null; status: DbReceipt["status"] } | null;
 }
 
 /**
@@ -61,7 +112,7 @@ export async function createReceiptFromUpload(
   return withUser(ctx.user.id, async (tx) => {
     if (!opts.allowDuplicate) {
       const [dupe] = await tx
-        .select({ id: receipts.id, purchasedAt: receipts.purchasedAt })
+        .select({ id: receipts.id, purchasedAt: receipts.purchasedAt, status: receipts.status })
         .from(receipts)
         .where(
           and(
@@ -75,7 +126,11 @@ export async function createReceiptFromUpload(
       if (dupe) {
         return {
           receiptId: dupe.id,
-          duplicateOf: { id: dupe.id, date: dupe.purchasedAt ? toDateString(dupe.purchasedAt, ctx.household.timezone) : null },
+          duplicateOf: {
+            id: dupe.id,
+            date: dupe.purchasedAt ? toDateString(dupe.purchasedAt, ctx.household.timezone) : null,
+            status: dupe.status,
+          },
         };
       }
     }
@@ -101,6 +156,9 @@ const FAILURE_MESSAGES: Record<string, string> = {
   empty: "We couldn't find any items on this receipt. Make sure the item lines are in the photo.",
   missing_image: "The photo for this receipt is missing. Please upload it again.",
   ai_failed: "Reading this receipt failed. Please try again in a moment.",
+  // The AI reader was unavailable and the on-device reader couldn't manage: the photo is probably fine.
+  ai_busy: "Our receipt reader is busy right now, and the backup reader couldn't make this one out. Try reading it again in a few minutes.",
+  interrupted: "Reading this receipt was interrupted. Try reading it again.",
 };
 
 interface NormalizedReceiptLine {
@@ -171,11 +229,12 @@ export function normalizeExtraction(extraction: ReceiptExtraction, index: Produc
       name: name.slice(0, 120),
       product,
       matchConfidence: match?.score ?? 0,
-      quantity: quantity > 0 ? quantity : 1,
+      quantity: quantity > 0 ? Math.min(quantity, MAX_RECEIPT_QUANTITY) : 1,
       unit: isUnit(unit) ? unit : "each",
-      packCount: Math.max(1, packCount),
-      unitPrice: line.unitPrice,
-      totalPrice: line.price,
+      // e.g. "TEA BAGS 200PK" or 5 × "WATER 24PK"; kept within what confirming accepts.
+      packCount: Math.min(MAX_RECEIPT_PACKS, Math.max(1, Math.round(packCount) || 1)),
+      unitPrice: receiptMoney(line.unitPrice),
+      totalPrice: receiptMoney(line.price),
       isFood: !nonGrocery,
       aliasKey: best.aliasKey || toAliasKey(raw),
       ignoredByDefault: nonGrocery,
@@ -271,17 +330,39 @@ export async function processReceipt(userId: string, household: HouseholdInfo, r
       preferredStores: stores,
     });
 
-    const warnings = new Set<string>(receipt.qualityWarnings);
+    // Only the photo check from upload carries over; everything else is worked out afresh on each read.
+    const warnings = new Set<string>(receipt.qualityWarnings.filter((w) => w === "blurry"));
     if (fellBack) warnings.add("ai_fallback");
-    for (const p of extraction.problems) if (p.length < 60) warnings.add(p);
-    if (!extraction.isReceipt) return fail(extraction.lines.length === 0 && (extraction.rawText?.length ?? 0) < 20 ? "not_a_receipt" : "unreadable", extraction.rawText);
+    const total = receiptMoney(extraction.total);
+    const subtotal = receiptMoney(extraction.subtotal);
     if (extraction.provider === "local") {
+      // The on-device parser reports codes ("total_mismatch", "no_date", …).
+      for (const p of extraction.problems) if (p.length < 60) warnings.add(p);
+    } else {
+      // The AI reader reports free text ("bottom of receipt cut off"): map it to warnings the review can show.
+      for (const p of extraction.problems) warnings.add(CUT_OFF_PROBLEM.test(p) ? "partial" : "unclear");
+      if (!extraction.legible) warnings.add("unclear");
+      const prices = extraction.lines.map((l) => receiptMoney(l.price)).filter((p): p is number => p !== null);
+      if (total === null && subtotal === null) warnings.add("partial");
+      else if (totalsDisagree(prices, total, subtotal)) warnings.add("total_mismatch");
+    }
+    // When the AI reader was unavailable, a failed on-device read says nothing about the photo.
+    if (!extraction.isReceipt) {
+      if (fellBack) return fail("ai_busy", extraction.rawText);
+      return fail(extraction.lines.length === 0 && (extraction.rawText?.length ?? 0) < 20 ? "not_a_receipt" : "unreadable", extraction.rawText);
+    }
+    if (extraction.provider === "local") {
+      const size = await sharp(image)
+        .metadata()
+        .catch(() => null);
       const quality = assessReceiptQuality({
         ocrConfidence: extraction.ocrConfidence,
         text: extraction.rawText,
+        // The upload already flagged blur from the full photo.
         blurScore: null,
-        width: 1000,
-        height: 1000,
+        // The stored copy keeps the original size up to MAX_STORED_EDGE_PX; unknown sizes aren't flagged.
+        width: size?.width || MAX_STORED_EDGE_PX,
+        height: size?.height || MAX_STORED_EDGE_PX,
         parsed: {
           store: extraction.store,
           purchasedOn: extraction.purchasedOn,
@@ -301,10 +382,11 @@ export async function processReceipt(userId: string, household: HouseholdInfo, r
       });
       for (const w of quality.warnings) warnings.add(w);
       if (!quality.ok && extraction.lines.length === 0) {
+        if (fellBack) return fail("ai_busy", extraction.rawText);
         return fail(quality.warnings.includes("not_a_receipt") ? "not_a_receipt" : "unreadable", extraction.rawText);
       }
     }
-    if (extraction.lines.length === 0) return fail("empty", extraction.rawText);
+    if (extraction.lines.length === 0) return fail(fellBack ? "ai_busy" : "empty", extraction.rawText);
 
     await withUser(userId, async (tx) => {
       // Re-check ownership under a row lock before replacing anything.
@@ -313,9 +395,10 @@ export async function processReceipt(userId: string, household: HouseholdInfo, r
       const index = await loadProductIndex(tx, household.id);
       const lines = normalizeExtraction(extraction, index);
       if (lines.length === 0) {
+        const code = fellBack ? "ai_busy" : "empty";
         await tx
           .update(receipts)
-          .set({ status: "failed", errorCode: "empty", errorMessage: FAILURE_MESSAGES.empty, processedAt: new Date() })
+          .set({ status: "failed", errorCode: code, errorMessage: FAILURE_MESSAGES[code], processedAt: new Date() })
           .where(eq(receipts.id, receiptId));
         return;
       }
@@ -324,7 +407,7 @@ export async function processReceipt(userId: string, household: HouseholdInfo, r
       const fingerprint = receiptFingerprint({
         store: extraction.store,
         purchasedOn,
-        total: extraction.total,
+        total,
         linePrices: lines.map((l) => l.totalPrice).filter((p): p is number => typeof p === "number"),
       });
       let duplicateOfId: string | null = null;
@@ -374,8 +457,8 @@ export async function processReceipt(userId: string, household: HouseholdInfo, r
           status: "needs_review",
           storeName: extraction.store?.slice(0, 80) ?? null,
           purchasedAt: purchasedOn ? zonedDateTimeToInstant(purchasedOn, 12, household.timezone) : null,
-          subtotal: extraction.subtotal,
-          total: extraction.total,
+          subtotal,
+          total,
           currency: extraction.currency ?? household.currency,
           rawText: extraction.rawText.slice(0, 20000),
           provider: extraction.provider,
@@ -391,7 +474,8 @@ export async function processReceipt(userId: string, household: HouseholdInfo, r
         .insert(notifications)
         .values({
           householdId: household.id,
-          userId,
+          // The person who uploaded it was promised this, even when someone else's nudge or retry did the reading.
+          userId: receipt.uploadedBy ?? userId,
           type: "receipt_ready",
           title: "Your receipt is ready to check",
           body: `${lines.filter((l) => !l.ignoredByDefault).length} items found${extraction.store ? ` from ${extraction.store}` : ""}. Give them a quick look before they go in your kitchen.`,
@@ -408,13 +492,16 @@ export async function processReceipt(userId: string, household: HouseholdInfo, r
 
 export async function retryReceipt(ctx: HouseholdContext, receiptId: string): Promise<void> {
   await withUser(ctx.user.id, async (tx) => {
+    // Locked so a confirm by another member can't slip in between the check and the update.
     const [r] = await tx
       .select()
       .from(receipts)
-      .where(and(eq(receipts.id, receiptId), eq(receipts.householdId, ctx.household.id)))
+      .where(and(eq(receipts.id, receiptId), eq(receipts.householdId, ctx.household.id), isNull(receipts.deletedAt)))
+      .for("update")
       .limit(1);
     if (!r) throw notFound("That receipt");
     if (r.status === "confirmed") throw new AppError("conflict", "This receipt has already been added to your kitchen.");
+    if (r.status === "discarded") throw notFound("That receipt");
     if (r.status === "processing") return; // Already being read; the claim in processReceipt decides who runs.
     await tx
       .update(receipts)
@@ -461,7 +548,8 @@ export interface ReceiptReview {
   provider: string | null;
   warnings: string[];
   errorMessage: string | null;
-  duplicateOf: { id: string; date: string | null } | null;
+  /** Another receipt with the same contents that's still around (not discarded or failed). */
+  duplicateOf: { id: string; date: string | null; status: DbReceipt["status"] } | null;
   items: ReceiptReviewItem[];
   createdAt: string;
   confirmedAt: string | null;
@@ -487,11 +575,18 @@ export async function getReceiptReview(ctx: HouseholdContext, receiptId: string,
     const purchasedOn = r.purchasedAt ? toDateString(r.purchasedAt, ctx.household.timezone) : null;
     const receiptTime = r.purchasedAt ?? r.createdAt;
 
+    // Worked out now rather than at reading time: the other copy may since have been discarded or confirmed.
     let duplicateOf: ReceiptReview["duplicateOf"] = null;
     if (r.duplicateOfId) {
-      const [d] = await tx.select({ id: receipts.id, purchasedAt: receipts.purchasedAt }).from(receipts).where(eq(receipts.id, r.duplicateOfId)).limit(1);
-      if (d) duplicateOf = { id: d.id, date: d.purchasedAt ? toDateString(d.purchasedAt, ctx.household.timezone) : null };
+      const [d] = await tx
+        .select({ id: receipts.id, purchasedAt: receipts.purchasedAt, status: receipts.status })
+        .from(receipts)
+        .where(and(eq(receipts.id, r.duplicateOfId), isNull(receipts.deletedAt), notInArray(receipts.status, ["discarded", "failed"])))
+        .limit(1);
+      if (d) duplicateOf = { id: d.id, date: d.purchasedAt ? toDateString(d.purchasedAt, ctx.household.timezone) : null, status: d.status };
     }
+    const warnings = r.qualityWarnings.filter((w) => w !== "duplicate");
+    if (duplicateOf) warnings.unshift(duplicateOf.status === "confirmed" ? "duplicate" : "duplicate_pending");
 
     const items: ReceiptReviewItem[] = rows.map((row) => {
       const product = row.productId ? index.byId.get(row.productId) ?? null : null;
@@ -506,12 +601,7 @@ export async function getReceiptReview(ctx: HouseholdContext, receiptId: string,
       let existing: ReceiptReviewItem["existing"] = null;
       if (live && row.productId) {
         const batches = live.activeItems.filter((i) => i.productId === row.productId && i.purchasedAt < receiptTime);
-        const fromList = live.activeItems.filter(
-          (i) =>
-            i.productId === row.productId &&
-            i.source === "shopping_list" &&
-            Math.abs(i.purchasedAt.getTime() - receiptTime.getTime()) < 3 * 86_400_000,
-        );
+        const fromList = listBatchesFor(live.activeItems, row.productId, receiptTime);
         if (fromList.length > 0) {
           existing = {
             itemIds: fromList.map((i) => i.id),
@@ -563,7 +653,7 @@ export async function getReceiptReview(ctx: HouseholdContext, receiptId: string,
       total: r.total,
       currency: r.currency,
       provider: r.provider,
-      warnings: r.qualityWarnings,
+      warnings,
       errorMessage: r.errorMessage,
       duplicateOf,
       items,
@@ -629,8 +719,13 @@ export async function confirmReceipt(
     const effectivePurchase = purchasedAt > now ? now : purchasedAt;
 
     const live = await computeLiveState(tx, ctx.household, now);
+    const reviewTime = r.purchasedAt ?? r.createdAt;
     const accepted = input.items.filter((i) => i.include && byId.has(i.id));
     const touchedProducts: Array<string | null> = [];
+    /** What actually went into the kitchen, with the products it resolved to — ticked off the list afterwards. */
+    const bought: Array<{ productId: string | null; name: string }> = [];
+    /** Shopping-list batches already taken over by an earlier line of this receipt. */
+    const merged = new Set<string>();
     let added = 0;
 
     for (const decision of input.items) {
@@ -648,10 +743,13 @@ export async function confirmReceipt(
       }
       const productId = item.productId && index.byId.has(item.productId) ? item.productId : null;
 
-      // Merge into a batch already added from the shopping list, instead of duplicating it.
-      if (item.existingDecision === "merge" && productId) {
-        const target = live.activeItems.find((i) => i.productId === productId && i.source === "shopping_list");
+      // Merge into a batch already added from the shopping list, instead of duplicating it — only one
+      // the review offered for this line (same product, same shop), and each batch only once: a second
+      // line of the same product is a second one bought.
+      if (item.existingDecision === "merge" && productId && productId === row.productId) {
+        const target = listBatchesFor(live.activeItems, productId, reviewTime).find((i) => !merged.has(i.id));
         if (target) {
+          merged.add(target.id);
           await tx
             .update(inventoryItems)
             .set({
@@ -667,6 +765,7 @@ export async function confirmReceipt(
             .where(eq(inventoryItems.id, target.id));
           await tx.update(receiptItems).set({ status: "accepted", productId, inventoryItemId: target.id, name: item.name }).where(eq(receiptItems.id, row.id));
           touchedProducts.push(productId);
+          bought.push({ productId, name: item.name });
           continue;
         }
       }
@@ -677,7 +776,6 @@ export async function confirmReceipt(
       // bought before this receipt — even if the household then corrected the product.
       const shownProductId = row.productId ?? productId;
       if (item.existingDecision === "replace" && shownProductId) {
-        const reviewTime = r.purchasedAt ?? r.createdAt;
         const previous = live.activeItems.filter((i) => i.productId === shownProductId && i.purchasedAt < reviewTime);
         const emptyAt = live.predictions.get(shownProductId)?.emptyAt ?? null;
         for (const old of previous) {
@@ -713,6 +811,7 @@ export async function confirmReceipt(
       );
       added += 1;
       touchedProducts.push(created.productId);
+      bought.push({ productId: created.productId, name: item.name });
       await tx
         .update(receiptItems)
         .set({
@@ -726,9 +825,11 @@ export async function confirmReceipt(
         })
         .where(eq(receiptItems.id, row.id));
 
-      // Learn this household's receipt vocabulary when a person confirmed or corrected the match.
-      const corrected = productId !== row.productId;
-      if (created.productId && (corrected || row.matchConfidence >= MATCH_PLAUSIBLE)) {
+      // Learn this household's receipt vocabulary from what a person actually told us: a different
+      // product, or a name they typed for the line. An unsure guess left as it was isn't remembered
+      // (it would come back as "certain", with no alternatives offered); a confident match is.
+      const corrected = productId !== row.productId || item.name.trim().toLowerCase() !== row.name.trim().toLowerCase();
+      if (created.productId && (corrected || row.matchConfidence >= MATCH_CONFIDENT)) {
         await rememberAlias(tx, ctx.household.id, toAliasKey(row.rawText), created.productId);
       }
     }
@@ -744,11 +845,8 @@ export async function confirmReceipt(
       })
       .where(eq(receipts.id, receiptId));
 
-    const tickedOff = await markPurchasedFromReceipt(
-      tx,
-      ctx.household.id,
-      accepted.map((a) => ({ productId: a.productId, name: a.name })),
-    );
+    // Only list items added by the day of this shop: a later "Bread" is for the next shop.
+    const tickedOff = await markPurchasedFromReceipt(tx, ctx.household.id, bought, { purchasedAt: effectivePurchase });
     await refreshLearning(tx, ctx.household, touchedProducts, now);
     await syncShoppingList(tx, ctx.household, now);
     return { added, tickedOff };
@@ -757,10 +855,12 @@ export async function confirmReceipt(
 
 export async function discardReceipt(ctx: HouseholdContext, receiptId: string): Promise<void> {
   const key = await withUser(ctx.user.id, async (tx) => {
+    // Locked so a confirm by another member can't slip in between the check and the update.
     const [r] = await tx
       .select()
       .from(receipts)
       .where(and(eq(receipts.id, receiptId), eq(receipts.householdId, ctx.household.id)))
+      .for("update")
       .limit(1);
     if (!r) throw notFound("That receipt");
     if (r.status === "confirmed") {
@@ -842,11 +942,71 @@ export async function getReceiptImage(ctx: HouseholdContext, receiptId: string):
   return key ? readStoredFile(key) : null;
 }
 
-/** Receipts still waiting in "processing" (e.g. after a server restart) — requeue them. */
-export async function pendingReceiptIds(tx: Tx, householdId: string): Promise<string[]> {
-  const rows = await tx
-    .select({ id: receipts.id })
+/** A "processing" receipt whose reading attempt has lapsed (or never started) by `lapsed`. */
+function stalledBy(lapsed: Date) {
+  return or(
+    and(isNull(receipts.processingStartedAt), lt(receipts.updatedAt, lapsed)),
+    lt(receipts.processingStartedAt, lapsed),
+  );
+}
+
+/**
+ * Scheduled job: pick up receipts whose reading was interrupted (e.g. a server
+ * restart or redeploy while `after()` was reading) and that nobody reopened.
+ * Recent ones are read again — the claim in `processReceipt` stops double runs —
+ * and old ones are marked failed, so the household gets "Try reading it again"
+ * instead of "Reading…" forever. Finds them across households with the system
+ * connection; each receipt is then handled as a member of its own household.
+ */
+export async function resumeStalledReceipts(now = new Date(), limit = 5): Promise<{ restarted: number; failed: number }> {
+  const lapsed = new Date(now.getTime() - PROCESSING_LEASE_SECONDS * 1000);
+  const tooOld = new Date(now.getTime() - MAX_PROCESSING_AGE_MS);
+  const stalled = await systemDb
+    .select({
+      id: receipts.id,
+      createdAt: receipts.createdAt,
+      household: {
+        id: households.id,
+        name: households.name,
+        adults: households.adults,
+        children: households.children,
+        currency: households.currency,
+        timezone: households.timezone,
+        onboardedAt: households.onboardedAt,
+        isDemo: households.isDemo,
+      },
+      // The uploader while they're still a member, otherwise the longest-standing member.
+      memberId: sql<string | null>`(
+        select ${householdMembers.userId} from ${householdMembers}
+        where ${householdMembers.householdId} = ${receipts.householdId}
+        order by (${householdMembers.userId} = ${receipts.uploadedBy}) desc nulls last, ${householdMembers.joinedAt}
+        limit 1
+      )`,
+    })
     .from(receipts)
-    .where(and(eq(receipts.householdId, householdId), inArray(receipts.status, ["processing", "uploaded"])));
-  return rows.map((r) => r.id);
+    .innerJoin(households, eq(households.id, receipts.householdId))
+    .where(and(eq(receipts.status, "processing"), isNull(receipts.deletedAt), isNull(households.deletedAt), stalledBy(lapsed)))
+    .orderBy(receipts.createdAt)
+    .limit(limit);
+
+  let failed = 0;
+  const restarts: Array<Promise<void>> = [];
+  for (const r of stalled) {
+    if (!r.memberId) continue;
+    if (r.createdAt < tooOld) {
+      const gaveUp = await withUser(r.memberId, (tx) =>
+        tx
+          .update(receipts)
+          .set({ status: "failed", errorCode: "interrupted", errorMessage: FAILURE_MESSAGES.interrupted, processedAt: now })
+          .where(and(eq(receipts.id, r.id), eq(receipts.status, "processing"), stalledBy(lapsed)))
+          .returning({ id: receipts.id }),
+      );
+      failed += gaveUp.length;
+    } else {
+      restarts.push(processReceipt(r.memberId, r.household, r.id));
+    }
+  }
+  const results = await Promise.allSettled(restarts);
+  for (const r of results) if (r.status === "rejected") console.error("[receipts] restarting a stalled receipt failed:", r.reason);
+  return { restarted: results.filter((r) => r.status === "fulfilled").length, failed };
 }

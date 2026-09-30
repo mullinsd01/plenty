@@ -4,7 +4,8 @@ import { AppError } from "@/server/errors";
 import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { MAX_UPLOAD_BYTES, createReceiptFromUpload, processReceipt } from "@/server/services/receipts";
 
-export const maxDuration = 120;
+// Reading runs in after() on this request: allow for the slowest attempt (see PROCESSING_LEASE_SECONDS).
+export const maxDuration = 300;
 
 /** Upload a receipt photo (multipart field "file"). Reading happens in the background. */
 export async function POST(request: Request) {

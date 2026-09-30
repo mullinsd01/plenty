@@ -16,6 +16,7 @@ import {
   freshIdeasAction,
   generatePlanAction,
   movePlanItemAction,
+  planDayAction,
   removePlanItemAction,
   replacePlanItemAction,
   setPlanServingsAction,
@@ -90,20 +91,14 @@ export function PlanView({ plan, aiAvailable }: { plan: MealPlanView; aiAvailabl
 
 function EmptyDay({ date, label, isToday }: { date: string; label: string; isToday: boolean }) {
   const { pending, run } = useAction();
-  const range = isToday ? "tonight" : null;
   return (
     <div className="flex items-center gap-4 rounded-2xl border border-dashed border-line-strong px-4 py-3.5">
       <DayLabel label={label} />
       <p className="flex-1 text-[14px] text-ink-3">Nothing planned</p>
-      {range ? (
-        <Button size="sm" variant="secondary" loading={pending} onClick={() => run(() => generatePlanAction("tonight"))}>
-          Plan it
-        </Button>
-      ) : (
-        <Button size="sm" variant="ghost" loading={pending} onClick={() => run(() => generatePlanAction("week"))} aria-label={`Plan ${label}`}>
-          Plan it
-        </Button>
-      )}
+      {/* Plans exactly this night — even one Plenty usually leaves free for takeaway. */}
+      <Button size="sm" variant={isToday ? "secondary" : "ghost"} loading={pending} onClick={() => run(() => planDayAction(date))} aria-label={`Plan ${label}`}>
+        Plan it
+      </Button>
       <span className="sr-only">{date}</span>
     </div>
   );

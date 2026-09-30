@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { and, eq, inArray } from "drizzle-orm";
+import { toDateString } from "@/lib/dates";
 import { normalizeReceiptLine } from "@/lib/normalize";
 import { pool, systemDb, withUser } from "@/server/db/client";
 import { consumptionEvents, inventoryEvents, inventoryItems, mealPlanItems, receipts, shoppingListItems } from "@/server/db/schema";
@@ -71,7 +72,9 @@ describe("receipt → kitchen → meal plan → shopping list", () => {
     const milkLine = review.items.find((i) => i.productName?.toLowerCase().includes("milk"))!;
     const result = await confirmReceipt(ctx, receiptId, {
       storeName: review.storeName,
-      purchasedOn: review.purchasedOn,
+      // Today's shop: list items added before it count as bought (an older receipt wouldn't tick off
+      // things added to the list after that shop).
+      purchasedOn: toDateString(new Date(), ctx.household.timezone),
       items: review.items.map((i) => ({
         id: i.id,
         include: i.status !== "ignored",

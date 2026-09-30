@@ -62,10 +62,10 @@ Sign up to start your own household, or click **Explore the demo household** on 
 | `npm test` | Unit + integration tests (integration tests use the `plenty_test` database) |
 | `npm run test:e2e` | Playwright end-to-end test of the whole loop (uses `plenty_e2e`, builds the app) |
 | `npm run lint` / `typecheck` | Static checks |
-| `npm run cron:notifications` | Run the notifications job once |
+| `npm run cron:notifications` | Run the scheduled jobs once (resume interrupted receipts, then notifications) |
 | `npm run receipts:fixtures` | Regenerate the sample receipt images |
 
-For scheduled notifications in production, call the job hourly:
+In production, call the scheduled job hourly. It picks up any receipt whose reading was interrupted (for example by a restart) and generates notifications:
 
 ```bash
 curl -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/notifications"

@@ -51,7 +51,7 @@ function upload(blob: Blob, allowDuplicate: boolean, onProgress: (p: number) => 
 type Stage =
   | { kind: "idle" }
   | { kind: "uploading"; progress: number; preview: string }
-  | { kind: "duplicate"; receiptId: string; date: string | null; blob: Blob; preview: string }
+  | { kind: "duplicate"; receiptId: string; date: string | null; added: boolean; blob: Blob; preview: string }
   | { kind: "error"; message: string };
 
 export function ReceiptUploader() {
@@ -68,7 +68,11 @@ export function ReceiptUploader() {
       try {
         const blob = await compress(original);
         const res = await upload(blob, allowDuplicate, (p) => setStage({ kind: "uploading", progress: p, preview }));
-        const body = (res.body ?? {}) as { receiptId?: string; duplicateOf?: { id: string; date: string | null } | null; error?: string };
+        const body = (res.body ?? {}) as {
+          receiptId?: string;
+          duplicateOf?: { id: string; date: string | null; status?: string } | null;
+          error?: string;
+        };
         if (res.status === 401) {
           router.push("/login?next=/receipts/new");
           return;
@@ -78,7 +82,14 @@ export function ReceiptUploader() {
           return;
         }
         if (body.duplicateOf) {
-          setStage({ kind: "duplicate", receiptId: body.duplicateOf.id, date: body.duplicateOf.date, blob: original, preview });
+          setStage({
+            kind: "duplicate",
+            receiptId: body.duplicateOf.id,
+            date: body.duplicateOf.date,
+            added: body.duplicateOf.status === "confirmed",
+            blob: original,
+            preview,
+          });
           return;
         }
         router.push(`/receipts/${body.receiptId}`);
@@ -131,10 +142,21 @@ export function ReceiptUploader() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={stage.preview} alt="" className="h-24 w-auto rounded-md object-contain shadow-card" />
           <div>
-            <p className="text-[16px] font-semibold">You&apos;ve already added this receipt</p>
-            <p className="mt-1 text-[14px] text-ink-3">
-              This exact photo was uploaded before{stage.date ? ` (shopping on ${stage.date})` : ""}. Adding it again would double up your kitchen.
-            </p>
+            {stage.added ? (
+              <>
+                <p className="text-[16px] font-semibold">You&apos;ve already added this receipt</p>
+                <p className="mt-1 text-[14px] text-ink-3">
+                  This exact photo was uploaded before{stage.date ? ` (shopping on ${stage.date})` : ""}. Adding it again would double up your kitchen.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-[16px] font-semibold">You&apos;ve already uploaded this photo</p>
+                <p className="mt-1 text-[14px] text-ink-3">
+                  It hasn&apos;t gone into your kitchen yet{stage.date ? ` (shopping on ${stage.date})` : ""}. Open it to check it and add it from there.
+                </p>
+              </>
+            )}
             <div className="mt-4 flex flex-wrap gap-2">
               <Button asChild size="sm">
                 <Link href={`/receipts/${stage.receiptId}`}>View that receipt</Link>

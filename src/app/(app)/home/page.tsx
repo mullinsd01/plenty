@@ -10,15 +10,14 @@ import { AddToListButton, CheckInList, PastDateCard, PlanTonightButton, TonightA
 import { cn } from "@/lib/cn";
 import { formatMoney, pluralize, remainingPhrase } from "@/lib/format";
 import { requireHousehold } from "@/server/auth/context";
-import { getDashboard } from "@/server/services/dashboard";
-import { getMealPlan } from "@/server/services/meals";
+import { getHome } from "@/server/services/dashboard";
 import { refreshNotifications } from "@/server/services/notification-jobs";
 
 export const metadata: Metadata = { title: "Home" };
 
 export default async function HomePage() {
   const ctx = await requireHousehold();
-  const [d, plan] = await Promise.all([getDashboard(ctx), getMealPlan(ctx)]);
+  const { dashboard: d, plan } = await getHome(ctx);
   after(() => refreshNotifications(ctx));
 
   const tonight = plan.days.find((day) => day.date === plan.today)?.item ?? null;

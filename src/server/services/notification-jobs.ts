@@ -1,5 +1,5 @@
 import "server-only";
-import { and, count, eq, gte, isNull, sql } from "drizzle-orm";
+import { and, count, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { hourInTimeZone, toDateString, weekdayOf, zonedDateTimeToInstant } from "@/lib/dates";
 import type { NotificationType } from "@/lib/domain";
 import { wasteInsights } from "@/lib/insights";
@@ -63,22 +63,32 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date):
     }
   }
 
+  // One nudge per product (the most urgent pack), not one per pack or receipt line.
+  const useSoon = new Map<string, { urgent: boolean; candidate: Candidate }>();
   for (const item of live.activeItems) {
     const view = toItemView(item, live, household);
     if (view.estimatedFraction < 0.1 || !view.perishable) continue;
     const s = view.useSoon;
     if ((s.status === "today" || (s.status === "soon" && (s.daysUntilExpiry ?? 9) <= 1)) && s.atRiskOfWaste) {
-      out.push({
-        type: "use_soon",
-        title: `Don't forget to use your ${view.name.toLowerCase()}.`,
-        body: s.status === "today" ? "It's best used today. Plenty can suggest a meal that uses it." : "It's likely to go off tomorrow. Plenty can suggest a meal that uses it.",
-        link: "/meals/cook",
-        dedupeKey: `use_soon:${item.id}:${view.expiresOn ?? today}`,
-        priority: 2,
-        setting: "useSoon",
+      const key = item.productId ? `p:${item.productId}` : `n:${view.name.toLowerCase()}`;
+      const urgent = s.status === "today";
+      const seen = useSoon.get(key);
+      if (seen && (seen.urgent || !urgent)) continue;
+      useSoon.set(key, {
+        urgent,
+        candidate: {
+          type: "use_soon",
+          title: `Don't forget to use your ${view.name.toLowerCase()}.`,
+          body: urgent ? "It's best used today. Plenty can suggest a meal that uses it." : "It's likely to go off tomorrow. Plenty can suggest a meal that uses it.",
+          link: "/meals/cook",
+          dedupeKey: `use_soon:${key}:${view.expiresOn ?? today}`,
+          priority: 2,
+          setting: "useSoon",
+        },
       });
     }
   }
+  for (const { candidate } of useSoon.values()) out.push(candidate);
 
   const rhythm = await loadShoppingRhythm(db, household, now);
   if (rhythm.nextShopDate === today && rhythm.basis !== "default") {
@@ -86,7 +96,15 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date):
     const [open] = await db
       .select({ n: count() })
       .from(shoppingListItems)
-      .where(and(eq(shoppingListItems.listId, list.id), isNull(shoppingListItems.checkedAt), isNull(shoppingListItems.purchasedAt)));
+      .where(
+        and(
+          eq(shoppingListItems.listId, list.id),
+          isNull(shoppingListItems.checkedAt),
+          isNull(shoppingListItems.purchasedAt),
+          // Only what's showing on the list: items the household dismissed don't count.
+          or(isNull(shoppingListItems.dismissedUntil), lte(shoppingListItems.dismissedUntil, now)),
+        ),
+      );
     const n = Number(open?.n ?? 0);
     if (n >= 3) {
       out.push({
@@ -135,6 +153,10 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date):
  * keys, so it's safe to run as often as you like.
  */
 export async function generateNotificationsForHousehold(db: Queryable, household: HouseholdRow, now: Date): Promise<number> {
+  // One run per household at a time (page loads, the notifications page and the scheduled
+  // job can overlap): otherwise two runs both count what's been sent today and both fill
+  // the daily limit. Held until the calling transaction ends.
+  await db.execute(sql`select pg_advisory_xact_lock(hashtext(${`notifications:${household.id}`}))`);
   const candidates = await candidatesFor(db, household, now);
   if (candidates.length === 0) return 0;
   const members = await db
@@ -152,9 +174,13 @@ export async function generateNotificationsForHousehold(db: Queryable, household
   let created = 0;
   for (const member of members) {
     const s = member.settings;
-    const quietStart = s?.quietStartHour ?? 21;
-    const quietEnd = s?.quietEndHour ?? 7;
-    const quiet = quietStart > quietEnd ? hour >= quietStart || hour < quietEnd : hour >= quietStart && hour < quietEnd;
+    // Defaults only apply without a settings row; a cleared hour means "No quiet hours".
+    const quietStart = s ? s.quietStartHour : 21;
+    const quietEnd = s ? s.quietEndHour : 7;
+    const quiet =
+      quietStart !== null &&
+      quietEnd !== null &&
+      (quietStart > quietEnd ? hour >= quietStart || hour < quietEnd : hour >= quietStart && hour < quietEnd);
     if (quiet) continue;
     const limit = s?.dailyLimit ?? 3;
     const [sent] = await db
@@ -203,8 +229,18 @@ export async function generateNotificationsForHousehold(db: Queryable, household
   return created;
 }
 
-/** Run for the signed-in household (called opportunistically after page loads). */
-export async function refreshNotifications(ctx: HouseholdContext, now = new Date()): Promise<void> {
+/** Opportunistic runs per household at most this often (the scheduled job covers the rest). */
+const REFRESH_EVERY_MS = 5 * 60_000;
+const lastRefresh = new Map<string, number>();
+
+/**
+ * Run for the signed-in household (called opportunistically after page loads,
+ * throttled). `force` runs regardless — for the notifications page itself.
+ */
+export async function refreshNotifications(ctx: HouseholdContext, now = new Date(), opts: { force?: boolean } = {}): Promise<void> {
+  const last = lastRefresh.get(ctx.household.id);
+  if (!opts.force && last !== undefined && now.getTime() - last < REFRESH_EVERY_MS) return;
+  lastRefresh.set(ctx.household.id, now.getTime());
   try {
     await withSystem((tx) => generateNotificationsForHousehold(tx, ctx.household, now));
   } catch (err) {

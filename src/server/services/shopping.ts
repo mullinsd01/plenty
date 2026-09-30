@@ -1,6 +1,6 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
-import { addDaysToInstant, toDateString } from "@/lib/dates";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, max, sql } from "drizzle-orm";
+import { addDays, addDaysToInstant, toDateString, zonedDateTimeToInstant } from "@/lib/dates";
 import { AISLE_ORDER, CHECK_CUPBOARD_ADVICE, type Aisle, type ShoppingSource } from "@/lib/domain";
 import { computeShoppingRhythm, shoppingHorizonDays, type ShoppingRhythm } from "@/lib/insights";
 import { computePlanRequirements } from "@/lib/meals/requirements";
@@ -8,12 +8,14 @@ import type { ExistingListItem, PlanMealInput, PredictionInput, ShoppingNeed, St
 import { normalizeText, singularizePhrase } from "@/lib/normalize";
 import { computeShoppingNeeds } from "@/lib/shopping/needs";
 import { reconcileShoppingList } from "@/lib/shopping/reconcile";
-import { shoppingItemKey } from "@/lib/shopping/keys";
-import { formatQuantity, isUnit, type Unit } from "@/lib/units";
+import { normalizeItemName, shoppingItemKey } from "@/lib/shopping/keys";
+import { convert, formatQuantity, isUnit, type Unit } from "@/lib/units";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
 import { withUser, type Queryable, type Tx } from "@/server/db/client";
 import {
   consumptionStats,
+  households,
+  inventoryItems,
   preferences,
   receipts,
   shoppingListItemSources,
@@ -32,6 +34,11 @@ const CUPBOARD_SHELF_LIFE_DAYS = 120;
 
 const SYNC_STALE_MS = 10 * 60_000;
 const DISMISS_FALLBACK_DAYS = 4;
+/**
+ * Bought at "Finish shop" but not yet in the kitchen (the receipt is still to
+ * be scanned): hold the line this long so Plenty doesn't put it straight back.
+ */
+const PURCHASED_HOLD_DAYS = 3;
 
 export async function getOrCreateActiveList(db: Queryable, householdId: string) {
   const [existing] = await db
@@ -172,6 +179,16 @@ export async function syncShoppingList(
     }
   }
 
+  // Bought at "Finish shop" long enough ago that the receipt isn't coming: let Plenty reconsider them.
+  await tx
+    .delete(shoppingListItems)
+    .where(
+      and(
+        eq(shoppingListItems.listId, list.id),
+        isNotNull(shoppingListItems.purchasedAt),
+        lt(shoppingListItems.purchasedAt, addDaysToInstant(now, -PURCHASED_HOLD_DAYS)),
+      ),
+    );
   const existingRows = await tx.select().from(shoppingListItems).where(eq(shoppingListItems.listId, list.id));
   const existing: ExistingListItem[] = existingRows.map((r) => ({
     id: r.id,
@@ -275,9 +292,15 @@ export interface ShoppingListView {
   lastSyncedAt: string | null;
 }
 
+/** The amount to show: what the person asked for, else Plenty's suggestion — unless they cleared it ("Any"). */
+function effectiveAmount(row: DbShoppingListItem): { quantity: number | null; unit: Unit | null } {
+  if (row.quantity !== null) return { quantity: row.quantity, unit: row.unit as Unit | null };
+  if (row.userEdited) return { quantity: null, unit: null };
+  return { quantity: row.suggestedQuantity, unit: row.suggestedUnit as Unit | null };
+}
+
 function toView(row: DbShoppingListItem, sources: Array<typeof shoppingListItemSources.$inferSelect>): ShoppingItemView {
-  const quantity = row.quantity ?? row.suggestedQuantity;
-  const unit = (row.quantity !== null ? row.unit : row.suggestedUnit) as Unit | null;
+  const { quantity, unit } = effectiveAmount(row);
   return {
     id: row.id,
     name: row.name,
@@ -295,11 +318,24 @@ function toView(row: DbShoppingListItem, sources: Array<typeof shoppingListItemS
   };
 }
 
-/** The current list, re-synced first when it's gone stale. */
+/** Whether anything in the kitchen changed (finished, used, added, cleared out) after `since`. */
+async function kitchenChangedSince(tx: Tx, householdId: string, since: Date): Promise<boolean> {
+  const [row] = await tx
+    .select({ at: max(inventoryItems.updatedAt) })
+    .from(inventoryItems)
+    .where(eq(inventoryItems.householdId, householdId));
+  return Boolean(row?.at && row.at.getTime() > since.getTime());
+}
+
+/** The current list, re-synced first when it's gone stale or the kitchen has changed since. */
 export async function getShoppingList(ctx: HouseholdContext, now = new Date()): Promise<ShoppingListView> {
   return withUser(ctx.user.id, async (tx) => {
     let list = await getOrCreateActiveList(tx, ctx.household.id);
-    if (!list.lastSyncedAt || now.getTime() - list.lastSyncedAt.getTime() > SYNC_STALE_MS) {
+    if (
+      !list.lastSyncedAt ||
+      now.getTime() - list.lastSyncedAt.getTime() > SYNC_STALE_MS ||
+      (await kitchenChangedSince(tx, ctx.household.id, list.lastSyncedAt))
+    ) {
       await syncShoppingList(tx, ctx.household, now);
       list = await getOrCreateActiveList(tx, ctx.household.id);
     }
@@ -357,37 +393,13 @@ export async function addManualItem(
     // "2 milk" means two of the usual thing, so a bare count is stored as items, not litres.
     const unit = quantity ? (input.unit && isUnit(input.unit) ? input.unit : "each") : null;
 
-    const [existing] = await tx
-      .select()
-      .from(shoppingListItems)
-      .where(and(eq(shoppingListItems.listId, list.id), eq(shoppingListItems.itemKey, itemKey)))
-      .limit(1);
-    if (existing) {
-      // Two people each adding "lemons" means both amounts are needed: add them up rather
-      // than quietly replacing what someone else asked for.
-      const stillWanted = existing.source === "manual" && !existing.checkedAt && !existing.purchasedAt;
-      const combined =
-        quantity && stillWanted && existing.quantity && existing.unit === unit ? existing.quantity + quantity : quantity ?? existing.quantity;
-      await tx
-        .update(shoppingListItems)
-        .set({
-          source: "manual",
-          userEdited: quantity ? true : existing.userEdited,
-          quantity: combined,
-          unit: quantity ? unit : existing.unit,
-          checkedAt: null,
-          checkedBy: null,
-          purchasedAt: null,
-          dismissedUntil: null,
-        })
-        .where(eq(shoppingListItems.id, existing.id));
-      return existing.id;
-    }
     const [maxRow] = await tx
       .select({ max: sql<number>`coalesce(max(${shoppingListItems.position}), 0)` })
       .from(shoppingListItems)
       .where(eq(shoppingListItems.listId, list.id));
-    const [row] = await tx
+    // Insert, or fall through to merging when the line already exists — including one a
+    // housemate (or a list update) is adding at this very moment.
+    const [created] = await tx
       .insert(shoppingListItems)
       .values({
         listId: list.id,
@@ -404,8 +416,43 @@ export async function addManualItem(
         position: Number(maxRow?.max ?? 0) + 1,
         addedBy: ctx.user.id,
       })
+      .onConflictDoNothing({ target: [shoppingListItems.listId, shoppingListItems.itemKey] })
       .returning({ id: shoppingListItems.id });
-    return row.id;
+    if (created) return created.id;
+
+    // Lock the line so two people adding to it at once both count.
+    const [existing] = await tx
+      .select()
+      .from(shoppingListItems)
+      .where(and(eq(shoppingListItems.listId, list.id), eq(shoppingListItems.itemKey, itemKey)))
+      .limit(1)
+      .for("update");
+    if (!existing) throw new AppError("conflict", "The list changed while you were adding that. Please try again.");
+    // Two people each adding "lemons" means both amounts are needed: add them up rather
+    // than quietly replacing what someone else asked for.
+    const stillWanted = existing.source === "manual" && !existing.checkedAt && !existing.purchasedAt;
+    let combined = quantity ?? existing.quantity;
+    let combinedUnit = quantity ? unit : existing.unit;
+    if (quantity && unit && stillWanted && existing.quantity && existing.unit) {
+      const inExistingUnit = convert(quantity, unit, existing.unit as Unit, resolved?.product ?? null);
+      // Amounts that can't be added up ("2 L" and "1 bottle") keep what was asked for first.
+      combined = inExistingUnit !== null ? existing.quantity + inExistingUnit : existing.quantity;
+      combinedUnit = existing.unit;
+    }
+    await tx
+      .update(shoppingListItems)
+      .set({
+        source: "manual",
+        userEdited: quantity ? true : existing.userEdited,
+        quantity: combined,
+        unit: combinedUnit,
+        checkedAt: null,
+        checkedBy: null,
+        purchasedAt: null,
+        dismissedUntil: null,
+      })
+      .where(eq(shoppingListItems.id, existing.id));
+    return existing.id;
   });
 }
 
@@ -414,22 +461,57 @@ export async function updateShoppingItem(
   id: string,
   patch: { name?: string; quantity?: number | null; unit?: Unit | null; aisle?: Aisle },
 ): Promise<void> {
+  const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const row = await loadListItem(tx, ctx.household.id, id);
     const changes: Partial<typeof shoppingListItems.$inferInsert> = {};
+    let rekeyed = false;
     if (patch.name !== undefined) {
-      const name = patch.name.trim();
+      const name = patch.name.trim().slice(0, 120);
       if (!name) throw new AppError("validation", "Give it a name.");
-      changes.name = name.slice(0, 120);
+      changes.name = name;
+      // Renaming something the household added makes it a different thing ("Lemons" → "Limes"):
+      // re-key it so later adds, Plenty's own needs and receipts match the new name, not the old.
+      if (row.source === "manual" && normalizeItemName(name) !== normalizeItemName(row.name)) {
+        const index = await loadProductIndex(tx, ctx.household.id);
+        const resolved = resolveProduct(index, name, 0.8);
+        const productId = resolved?.product.id ?? null;
+        const itemKey = productId ? shoppingItemKey({ productId, name }) : nameKey(name);
+        if (itemKey !== row.itemKey) {
+          const [clash] = await tx
+            .select()
+            .from(shoppingListItems)
+            .where(and(eq(shoppingListItems.listId, row.listId), eq(shoppingListItems.itemKey, itemKey)))
+            .limit(1);
+          if (clash) {
+            const hidden = clash.purchasedAt !== null || (clash.dismissedUntil !== null && clash.dismissedUntil > now);
+            if (!hidden) throw new AppError("conflict", `${clash.name} is already on your list.`);
+            // A dismissed or already-bought line nobody can see gives way to what the person just asked for.
+            await tx.delete(shoppingListItems).where(eq(shoppingListItems.id, clash.id));
+          }
+          Object.assign(changes, { itemKey, productId, reason: null, advice: null, suggestedQuantity: null, suggestedUnit: null });
+          if (patch.aisle === undefined && resolved) changes.aisle = resolved.product.aisle;
+          rekeyed = true;
+        }
+      }
     }
     if (patch.quantity !== undefined) {
       if (patch.quantity !== null && !(patch.quantity > 0)) throw new AppError("validation", "Quantity must be more than zero.");
-      changes.quantity = patch.quantity;
-      changes.unit = patch.quantity === null ? null : patch.unit ?? row.unit ?? row.suggestedUnit ?? "each";
-      changes.userEdited = true;
+      const unit = patch.quantity === null ? null : patch.unit ?? row.unit ?? row.suggestedUnit ?? "each";
+      const current = effectiveAmount(row);
+      // Saving the form without touching the amount isn't an edit: only a real change fixes
+      // the amount (and stops Plenty adjusting or removing the item).
+      const unchanged = patch.quantity === current.quantity && (patch.quantity === null || unit === (current.unit ?? "each"));
+      if (!unchanged || rekeyed) {
+        changes.quantity = patch.quantity;
+        changes.unit = unit;
+        changes.userEdited = true;
+      }
     }
     if (patch.aisle !== undefined) changes.aisle = patch.aisle;
     if (Object.keys(changes).length > 0) await tx.update(shoppingListItems).set(changes).where(eq(shoppingListItems.id, id));
+    // The old name's reasons don't apply to the new thing.
+    if (rekeyed) await tx.delete(shoppingListItemSources).where(eq(shoppingListItemSources.itemId, id));
   });
 }
 
@@ -451,19 +533,41 @@ export async function removeShoppingItem(ctx: HouseholdContext, id: string): Pro
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const row = await loadListItem(tx, ctx.household.id, id);
+    let dismissAs: ShoppingSource = row.source as ShoppingSource;
     if (row.source === "manual") {
-      await tx.delete(shoppingListItems).where(eq(shoppingListItems.id, id));
-      return;
+      const [plenty] = await tx
+        .select({ source: shoppingListItemSources.source })
+        .from(shoppingListItemSources)
+        .where(eq(shoppingListItemSources.itemId, id))
+        .limit(1);
+      if (!plenty) {
+        await tx.delete(shoppingListItems).where(eq(shoppingListItems.id, id));
+        return;
+      }
+      // Plenty wants this too (running low, a meal, a staple): deleting it would only let the
+      // next update add it straight back, so hand it back to Plenty, dismissed like its own.
+      dismissAs = plenty.source as ShoppingSource;
     }
-    const rhythm = await loadShoppingRhythm(tx, ctx.household, now);
-    const until = rhythm.nextShopDate
-      ? new Date(`${rhythm.nextShopDate}T23:59:59Z`)
-      : addDaysToInstant(now, DISMISS_FALLBACK_DAYS);
+    const until = await dismissUntil(tx, ctx.household, now);
     await tx
       .update(shoppingListItems)
-      .set({ dismissedUntil: until > now ? until : addDaysToInstant(now, DISMISS_FALLBACK_DAYS), checkedAt: null })
+      .set({
+        dismissedUntil: until,
+        checkedAt: null,
+        checkedBy: null,
+        ...(row.source === "manual" ? { source: dismissAs, quantity: null, unit: null, userEdited: false } : {}),
+      })
       .where(eq(shoppingListItems.id, id));
   });
+}
+
+/** Dismissed until the end of the next shop day, in the household's own time zone. */
+async function dismissUntil(tx: Tx, household: Pick<HouseholdInfo, "id" | "timezone">, now: Date): Promise<Date> {
+  const rhythm = await loadShoppingRhythm(tx, household, now);
+  const until = rhythm.nextShopDate
+    ? zonedDateTimeToInstant(addDays(rhythm.nextShopDate, 1), 0, household.timezone)
+    : addDaysToInstant(now, DISMISS_FALLBACK_DAYS);
+  return until > now ? until : addDaysToInstant(now, DISMISS_FALLBACK_DAYS);
 }
 
 /** Persist a new order for items (within an aisle group). */
@@ -474,13 +578,17 @@ export async function reorderShoppingItems(ctx: HouseholdContext, orderedIds: st
       .select({ id: shoppingListItems.id, position: shoppingListItems.position })
       .from(shoppingListItems)
       .where(and(eq(shoppingListItems.householdId, ctx.household.id), inArray(shoppingListItems.id, orderedIds)));
-    const positions = rows.map((r) => r.position).sort((a, b) => a - b);
-    for (let i = 0; i < orderedIds.length; i++) {
-      if (!rows.some((r) => r.id === orderedIds[i])) continue;
-      await tx
-        .update(shoppingListItems)
-        .set({ position: positions[i] ?? i })
-        .where(eq(shoppingListItems.id, orderedIds[i]));
+    const current = new Map(rows.map((r) => [r.id, r.position]));
+    // Ids a housemate just removed or bought drop out rather than shifting everyone else.
+    const ids = [...new Set(orderedIds)].filter((itemId) => current.has(itemId));
+    // Reuse the group's own positions in order, made distinct so tied items can still swap.
+    const slots: number[] = [];
+    for (const position of ids.map((itemId) => current.get(itemId)!).sort((a, b) => a - b)) {
+      slots.push(slots.length === 0 ? position : Math.max(position, slots[slots.length - 1] + 1));
+    }
+    for (let i = 0; i < ids.length; i++) {
+      if (current.get(ids[i]) === slots[i]) continue;
+      await tx.update(shoppingListItems).set({ position: slots[i] }).where(eq(shoppingListItems.id, ids[i]));
     }
   });
 }
@@ -488,6 +596,8 @@ export async function reorderShoppingItems(ctx: HouseholdContext, orderedIds: st
 /**
  * Finish a shop. Checked items leave the list; optionally they're added to
  * the kitchen straight away (for people who won't scan the receipt).
+ * Otherwise they're kept as bought (hidden) until the receipt is confirmed,
+ * so Plenty doesn't put them straight back while the kitchen doesn't know.
  */
 export async function completeShop(ctx: HouseholdContext, addToKitchen: boolean): Promise<{ moved: number }> {
   const now = new Date();
@@ -514,8 +624,10 @@ export async function completeShop(ctx: HouseholdContext, addToKitchen: boolean)
         now,
       );
       await refreshLearning(tx, ctx.household, created.map((c) => c.productId), now);
+      await tx.delete(shoppingListItems).where(inArray(shoppingListItems.id, checked.map((c) => c.id)));
+    } else {
+      await tx.update(shoppingListItems).set({ purchasedAt: now }).where(inArray(shoppingListItems.id, checked.map((c) => c.id)));
     }
-    await tx.delete(shoppingListItems).where(inArray(shoppingListItems.id, checked.map((c) => c.id)));
     await syncShoppingList(tx, ctx.household, now);
     return { moved: checked.length };
   });
@@ -526,18 +638,21 @@ export async function clearChecked(ctx: HouseholdContext): Promise<void> {
     const list = await getOrCreateActiveList(tx, ctx.household.id);
     await tx
       .delete(shoppingListItems)
-      .where(and(eq(shoppingListItems.listId, list.id), isNotNull(shoppingListItems.checkedAt)));
+      .where(and(eq(shoppingListItems.listId, list.id), isNotNull(shoppingListItems.checkedAt), isNull(shoppingListItems.purchasedAt)));
   });
 }
 
 /**
  * After a receipt is confirmed: tick off matching list items as bought.
- * Matches on product, or on the normalised name for free-text items.
+ * Matches on product, or on the normalised name for free-text items. Lines
+ * added after the receipt's shop are for the next one and stay put. Returns
+ * how many lines still on the list were ticked off.
  */
 export async function markPurchasedFromReceipt(
   tx: Tx,
   householdId: string,
   bought: Array<{ productId: string | null; name: string }>,
+  opts: { purchasedAt?: Date | null } = {},
 ): Promise<number> {
   const list = await getOrCreateActiveList(tx, householdId);
   const keys = new Set<string>();
@@ -545,10 +660,16 @@ export async function markPurchasedFromReceipt(
     if (b.productId) keys.add(shoppingItemKey({ productId: b.productId, name: b.name }));
     keys.add(nameKey(b.name));
   }
-  const open = await tx
-    .select()
-    .from(shoppingListItems)
-    .where(and(eq(shoppingListItems.listId, list.id), isNull(shoppingListItems.purchasedAt)));
+  // Receipt times are often just a date, so anything added by the end of the shop day counts.
+  let addedBy: Date | null = null;
+  if (opts.purchasedAt) {
+    const [household] = await tx.select({ timezone: households.timezone }).from(households).where(eq(households.id, householdId)).limit(1);
+    const tz = household?.timezone ?? "UTC";
+    addedBy = zonedDateTimeToInstant(addDays(toDateString(opts.purchasedAt, tz), 1), 0, tz);
+  }
+  const rows = await tx.select().from(shoppingListItems).where(eq(shoppingListItems.listId, list.id));
+  // Already bought at "Finish shop" (this receipt puts them in the kitchen), or on the list by the time of the shop.
+  const candidates = rows.filter((r) => r.purchasedAt !== null || addedBy === null || r.createdAt < addedBy);
   const productIds = new Set(bought.map((b) => b.productId).filter(Boolean) as string[]);
   const names = new Set(bought.map((b) => singularizePhrase(normalizeText(b.name))));
   // A general "Milk" on the list is satisfied by any milk; a specific "Full cream milk" isn't by lite.
@@ -556,14 +677,14 @@ export async function markPurchasedFromReceipt(
   const groups = new Set(
     [...productIds].map((id) => index.byId.get(id)?.group).filter((g): g is string => Boolean(g)).map((g) => singularizePhrase(normalizeText(g))),
   );
-  const matched = open.filter((row) => {
+  const matched = candidates.filter((row) => {
     const rowName = singularizePhrase(normalizeText(row.name));
     return keys.has(row.itemKey) || (row.productId && productIds.has(row.productId)) || names.has(rowName) || groups.has(rowName);
   });
   if (matched.length > 0) {
     await tx.delete(shoppingListItems).where(inArray(shoppingListItems.id, matched.map((m) => m.id)));
   }
-  return matched.length;
+  return matched.filter((m) => m.purchasedAt === null).length;
 }
 
 /** Toggle whether a product is treated as a household staple (null = let Plenty decide). */
