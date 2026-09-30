@@ -39,6 +39,8 @@ const LINE_HEIGHT = 30;
 const TITLE_LINE_HEIGHT = 56;
 const PAPER = "#f6f3ea";
 const INK = "#262421";
+/** Gaussian blur for blurry.png — well past the point where OCR can read it. */
+const BLURRY_SIGMA = 6;
 
 // ─── Receipt model ──────────────────────────────────────────────────────────
 
@@ -564,9 +566,10 @@ async function main(): Promise<void> {
     console.log(`✓ ${spec.name}.png  ${entry.width}×${entry.height}  total ${entry.expected?.total.toFixed(2)}`);
   }
 
-  // Blurry: the Woolworths receipt, out of focus.
+  // Blurry: the Woolworths receipt badly out of focus (OCR fails from σ≈5).
+  // Palette-quantised to keep the smooth gradients from bloating the PNG.
   const clean = await sharp(path.join(FIXTURE_DIR, "woolworths-weekly.png")).toBuffer();
-  const blurry = await sharp(clean).blur(6).png({ compressionLevel: 9 }).toBuffer();
+  const blurry = await sharp(clean).blur(BLURRY_SIGMA).png({ compressionLevel: 9, palette: true, colours: 64, dither: 0 }).toBuffer();
   await writeFile(path.join(FIXTURE_DIR, "blurry.png"), blurry);
   const blurryMeta = await sharp(blurry).metadata();
   manifest.blurry = { file: "blurry.png", text: "woolworths-weekly.txt", kind: "blurry", demo: false, width: blurryMeta.width, height: blurryMeta.height, expected: null };
