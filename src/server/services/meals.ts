@@ -723,8 +723,8 @@ export async function getMealDetail(ctx: HouseholdContext, mealId: string, servi
       .from(mealIngredients)
       .where(eq(mealIngredients.mealId, mealId))
       .orderBy(asc(mealIngredients.position));
-    const omit = new Set(ingredientsToOmit(meal, loaded.planner.prefs).map((o) => normalizeText(o.name)));
-    const allowed = isMealAllowed(meal, loaded.planner.prefs);
+    const omit = new Set(ingredientsToOmit(meal, loaded.planner.prefs, loaded.planner.products).map((o) => normalizeText(o.name)));
+    const allowed = isMealAllowed(meal, loaded.planner.prefs, loaded.planner.products);
     const history = loaded.planner.history.get(meal.id);
     const plannedRows = await tx
       .select({ id: mealPlanItems.id, date: mealPlanItems.date })
@@ -777,7 +777,7 @@ export async function browseMeals(ctx: HouseholdContext, filter: RecipeFilter = 
     const loaded = await loadContext(tx, ctx, now);
     const desc = await descriptions(tx, loaded.planner.meals.map((m) => m.id));
     const cards = loaded.planner.meals
-      .filter((m) => isMealAllowed(m, loaded.planner.prefs).allowed)
+      .filter((m) => isMealAllowed(m, loaded.planner.prefs, loaded.planner.products).allowed)
       .map((m) => {
         const avail = assessMealAvailability(m, loaded.planner.lots, loaded.planner.products, { servings: loaded.servings, date: loaded.today });
         return toCard(m, avail, loaded.planner.history.get(m.id), null, desc.get(m.id) ?? "");
@@ -1062,7 +1062,7 @@ export async function generateFreshIdeas(ctx: HouseholdContext): Promise<{ creat
       // Deterministic safety check — never trust the model's own claims about allergens or diets.
       const stored = await loadPlannableMeals(tx, ctx.household.id, [id]);
       const meal = stored.get(id);
-      if (!meal || !isMealAllowed(meal, loaded.planner.prefs).allowed) {
+      if (!meal || !isMealAllowed(meal, loaded.planner.prefs, loaded.planner.products).allowed) {
         await tx.delete(meals).where(eq(meals.id, id));
         continue;
       }
