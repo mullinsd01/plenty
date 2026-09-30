@@ -20,7 +20,7 @@ import { assessMealAvailability, summarizeAvailability } from "@/lib/meals/match
 import { generatePlan, rankMealsForNow, type PlannerContext } from "@/lib/meals/planner";
 import { computePlanRequirements } from "@/lib/meals/requirements";
 import type { IngredientAvailability, MealHistory, PlannableMeal, PlannerPreferences } from "@/lib/meals/types";
-import { normalizeText } from "@/lib/normalize";
+import { ACCEPT_MATCH_SCORE, normalizeText } from "@/lib/normalize";
 import { RECIPES, recipeContains } from "@/lib/recipes";
 import { convert, formatQuantity, formatRecipeQuantity, isUnit, type Unit } from "@/lib/units";
 import { AIUnavailableError, getProvider, type GeneratedRecipe } from "@/server/ai";
@@ -963,7 +963,7 @@ async function insertHouseholdMeal(
 ): Promise<string> {
   const index = await loadProductIndex(tx, ctx.household.id);
   const ingredients = input.ingredients.filter((i) => i.name.trim());
-  const resolved = ingredients.map((i) => resolveProduct(index, i.name, 0.72)?.product ?? null);
+  const resolved = ingredients.map((i) => resolveProduct(index, i.name, ACCEPT_MATCH_SCORE)?.product ?? null);
   const slug = `${base.source}-${normalizeText(input.name).replace(/\s+/g, "-").slice(0, 50)}-${Date.now().toString(36)}`;
   const [row] = await tx
     .insert(meals)
@@ -1046,7 +1046,7 @@ export async function editMeal(ctx: HouseholdContext, mealId: string, input: Edi
     } else {
       const index = await loadProductIndex(tx, ctx.household.id);
       const ingredients = input.ingredients.filter((i) => i.name.trim());
-      const resolved = ingredients.map((i) => resolveProduct(index, i.name, 0.72)?.product ?? null);
+      const resolved = ingredients.map((i) => resolveProduct(index, i.name, ACCEPT_MATCH_SCORE)?.product ?? null);
       await tx
         .update(meals)
         .set({
