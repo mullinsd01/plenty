@@ -365,3 +365,9 @@ export function levelPhrase(fraction: number): string {
   if (fraction <= 0.9) return "mostly full";
   return "still full";
 }
+
+/**
+ * Advice on a list item Plenty added for the meal plan but can't confirm is
+ * missing: a long-life cupboard item it has never seen the household buy.
+ */
+export const CHECK_CUPBOARD_ADVICE = "You may already have this — check the cupboard first.";

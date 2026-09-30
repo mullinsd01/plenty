@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { addDaysToInstant, toDateString } from "@/lib/dates";
-import { AISLE_ORDER, type Aisle, type ShoppingSource } from "@/lib/domain";
+import { AISLE_ORDER, CHECK_CUPBOARD_ADVICE, type Aisle, type ShoppingSource } from "@/lib/domain";
 import { computeShoppingRhythm, shoppingHorizonDays, type ShoppingRhythm } from "@/lib/insights";
 import { computePlanRequirements } from "@/lib/meals/requirements";
 import type { ExistingListItem, PlanMealInput, PredictionInput, ShoppingNeed, StapleInput } from "@/lib/meals/types";
@@ -26,6 +26,9 @@ import { addItemsTx } from "./inventory";
 import { computeLiveState, productBase, refreshLearning, type LiveState } from "./learning";
 import { loadPlannableMeals, lotsFromLive, upcomingPlanItems } from "./meal-data";
 import { loadProductIndex, resolveProduct } from "./products";
+
+/** Keeps at least this long unopened → a cupboard item the household may already have. */
+const CUPBOARD_SHELF_LIFE_DAYS = 120;
 
 const SYNC_STALE_MS = 10 * 60_000;
 const DISMISS_FALLBACK_DAYS = 4;
@@ -155,6 +158,19 @@ export async function syncShoppingList(
     horizonDays: shoppingHorizonDays(rhythm, today),
     now,
   });
+
+  // Plenty only knows about the cupboard from receipts. A long-life pantry item it has
+  // never seen the household buy may well be at home already, so say so rather than
+  // presenting it as a definite need.
+  const seenProducts = new Set([...live.statsRows.keys(), ...live.activeItems.map((i) => i.productId).filter(Boolean)] as string[]);
+  for (const need of needs) {
+    const product = need.productId ? products.get(need.productId) : undefined;
+    const onlyForMeals = need.sources.every((src) => src.source === "meal_plan");
+    const longLife = product && !product.perishable && (product.shelfLifeDays == null || product.shelfLifeDays >= CUPBOARD_SHELF_LIFE_DAYS);
+    if (onlyForMeals && longLife && !seenProducts.has(product.id) && !need.advice) {
+      need.advice = CHECK_CUPBOARD_ADVICE;
+    }
+  }
 
   const existingRows = await tx.select().from(shoppingListItems).where(eq(shoppingListItems.listId, list.id));
   const existing: ExistingListItem[] = existingRows.map((r) => ({

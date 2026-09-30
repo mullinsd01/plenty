@@ -140,15 +140,17 @@ export function normalizeExtraction(extraction: ReceiptExtraction, index: Produc
     const cleaned = cleanReceiptText(description);
     // Loose produce priced per item ("BANANAS CAVENDISH EA", "7 @ $0.62"): the count is
     // the number of items, not a number of the product's usual bags or bunches.
-    const soldLoose =
-      product !== null &&
-      unitDimension(product.unit) === "count" &&
-      !isContainerUnit(product.unit) &&
-      cleaned.size === null &&
-      cleaned.packCount === null &&
-      LOOSE_ITEM.test(description);
-    if (soldLoose && !(line.weightKg && line.weightKg > 0)) {
-      quantity = line.quantity && line.quantity > 0 && Number.isInteger(line.quantity) ? line.quantity : 1;
+    const looseLine = product !== null && cleaned.size === null && cleaned.packCount === null && LOOSE_ITEM.test(description);
+    const itemsBought = line.quantity && line.quantity > 0 && Number.isInteger(line.quantity) ? line.quantity : 1;
+    const hasWeight = Boolean(line.weightKg && line.weightKg > 0);
+    if (looseLine && !hasWeight && unitDimension(product.unit) === "count" && !isContainerUnit(product.unit)) {
+      quantity = itemsBought;
+      unit = product.unit;
+      packCount = 1;
+    } else if (looseLine && !hasWeight && unitDimension(product.unit) === "mass" && product.eachWeightG) {
+      // Weighed produce bought by the piece ("CARROTS EA", 4 @ $0.50): about 400 g, not four 1 kg bags.
+      const grams = itemsBought * product.eachWeightG;
+      quantity = product.unit === "kg" ? Math.round(grams) / 1000 : Math.round(grams);
       unit = product.unit;
       packCount = 1;
     } else if (line.weightKg && line.weightKg > 0) {

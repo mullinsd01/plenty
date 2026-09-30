@@ -12,7 +12,7 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Sheet } from "@/components/ui/sheet";
 import { useAction } from "@/components/hooks/use-action";
 import { cn } from "@/lib/cn";
-import { AISLE_LABELS, AISLE_ORDER, AISLES, type Aisle } from "@/lib/domain";
+import { AISLE_LABELS, AISLE_ORDER, AISLES, CHECK_CUPBOARD_ADVICE, type Aisle } from "@/lib/domain";
 import { parseQuickAdd } from "@/lib/quick-add";
 import { UNITS, type Unit } from "@/lib/units";
 import type { ShoppingItemView } from "@/server/services/shopping";
@@ -42,7 +42,8 @@ export function ListView({ items }: { items: ShoppingItemView[] }) {
   const reorder = useAction();
   const complete = useAction();
 
-  const open = optimistic.filter((i) => !i.checked);
+  const open = optimistic.filter((i) => !i.checked && i.advice !== CHECK_CUPBOARD_ADVICE);
+  const maybeAtHome = optimistic.filter((i) => !i.checked && i.advice === CHECK_CUPBOARD_ADVICE);
   const inTrolley = optimistic.filter((i) => i.checked);
   const groups = useMemo(
     () =>
@@ -142,6 +143,22 @@ export function ListView({ items }: { items: ShoppingItemView[] }) {
               </Card>
             </section>
           ))}
+
+          {maybeAtHome.length > 0 && (
+            <section aria-labelledby="check-cupboard">
+              <h2 id="check-cupboard" className="text-[13px] font-semibold uppercase tracking-[0.06em] text-ink-3">
+                Check the cupboard first
+              </h2>
+              <p className="mb-2 mt-1 text-[13px] text-ink-3">
+                Your meal plan uses these. Plenty hasn&apos;t seen you buy them, so you may already have them — remove any you do.
+              </p>
+              <Card className="divide-y divide-line">
+                {maybeAtHome.map((item) => (
+                  <Row key={item.id} item={{ ...item, advice: null }} onToggle={(v) => toggle(item, v)} onEdit={() => setEditing(item)} onRemove={() => del(item)} />
+                ))}
+              </Card>
+            </section>
+          )}
 
           {inTrolley.length > 0 && (
             <section aria-label="In your trolley">
