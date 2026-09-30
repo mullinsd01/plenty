@@ -6,8 +6,8 @@
  * source of truth for what is in a dish.
  */
 
-import { getCatalogProduct } from "@/lib/catalog";
-import { CONTAINS_FLAGS, DIET_EXCLUDES, DIETS, type ContainsFlag, type Diet } from "@/lib/domain";
+import { catalogProductsInGroup, getCatalogProduct } from "@/lib/catalog";
+import { ALLERGENS, CONTAINS_FLAGS, DIET_EXCLUDES, DIETS, type Allergen, type ContainsFlag, type Diet } from "@/lib/domain";
 import { RECIPES } from "@/lib/recipes/library";
 import type { Recipe } from "@/lib/recipes/types";
 
@@ -95,4 +95,35 @@ export function isRecipeCompatibleWithDiet(recipe: Pick<Recipe, "ingredients">, 
 export function recipeDiets(recipe: Pick<Recipe, "ingredients">): Diet[] {
   const contains = new Set(recipeContains(recipe));
   return DIETS.filter((diet) => !DIET_EXCLUDES[diet].some((flag) => contains.has(flag)));
+}
+
+/** The allergens a recipe contains, in `ALLERGENS` order — the subset of `recipeContains` worth a warning badge. */
+export function recipeAllergens(recipe: Pick<Recipe, "ingredients">): Allergen[] {
+  const contains = new Set<string>(recipeContains(recipe));
+  return ALLERGENS.filter((allergen) => contains.has(allergen));
+}
+
+// ─── Ingredient lookups ─────────────────────────────────────────────────────
+
+export interface RecipesUsingProductOptions {
+  /** Also match interchangeable products in the same catalog group, e.g. cherry tomatoes for tomatoes. Default true. */
+  includeGroup?: boolean;
+  /** Count ingredients the recipe marks optional. Default false. */
+  includeOptional?: boolean;
+}
+
+/**
+ * Library recipes that call for `productSlug` — and, unless `includeGroup` is
+ * false, for any product interchangeable with it — in library order. Drives
+ * "use it up" suggestions for food that's about to go off. Unknown slugs match
+ * only themselves.
+ */
+export function recipesUsingProduct(productSlug: string, options: RecipesUsingProductOptions = {}): Recipe[] {
+  const { includeGroup = true, includeOptional = false } = options;
+  const wanted = new Set<string>([productSlug]);
+  const group = includeGroup ? getCatalogProduct(productSlug)?.group : undefined;
+  if (group) for (const member of catalogProductsInGroup(group)) wanted.add(member.slug);
+  return RECIPES.filter((recipe) =>
+    recipe.ingredients.some((ingredient) => ingredient.product !== null && wanted.has(ingredient.product) && (includeOptional || !ingredient.optional)),
+  );
 }
