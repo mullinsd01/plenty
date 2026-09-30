@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, notInArray, sql } from
 import type { ProductInfo } from "@/lib/catalog/types";
 import { computeConsumptionStats } from "@/lib/consumption/stats";
 import type { BatchState, ConsumptionObservation, ConsumptionStats, RunOutPrediction } from "@/lib/consumption/types";
-import { toDateString, DAY_MS } from "@/lib/dates";
+import { addDays, toDateString, DAY_MS, zonedDateTimeToInstant } from "@/lib/dates";
 import { adultEquivalents, type Confidence, type ConsumptionOutcome, type PredictionBasis } from "@/lib/domain";
 import { estimateBatchFractions, predictRunOut, simulateBatches, type PredictionStats } from "@/lib/prediction/engine";
 import { baseUnitFor, toBase, toBaseUnit, unitDimension, type BaseUnit, type Unit } from "@/lib/units";
@@ -275,7 +275,7 @@ export interface LiveState {
   statsRows: Map<string, DbConsumptionStats>;
 }
 
-function batchOf(item: DbInventoryItem, product: ProductInfo | null): BatchState | null {
+function batchOf(item: DbInventoryItem, product: ProductInfo | null, timeZone: string): BatchState | null {
   const base = itemBaseAmount(item, product);
   if (!base) return null;
   const expiry = item.actualExpiry ?? item.estimatedExpiry;
@@ -285,7 +285,8 @@ function batchOf(item: DbInventoryItem, product: ProductInfo | null): BatchState
     knownFraction: item.remainingFraction,
     levelUpdatedAt: item.levelUpdatedAt,
     purchasedAt: item.purchasedAt,
-    expiresAt: expiry ? new Date(`${expiry}T23:59:59Z`) : null,
+    // Good until the end of that day where the household lives.
+    expiresAt: expiry ? new Date(zonedDateTimeToInstant(addDays(expiry, 1), 0, timeZone).getTime() - 1) : null,
   };
 }
 
@@ -327,7 +328,7 @@ export async function computeLiveState(
     const product = index.byId.get(productId)!;
     const row = statsRows.get(productId);
     const stats = row && row.baseUnit === productBase(product) ? statsRowToPredictionStats(row) : priorOnlyStats(product, size, now);
-    const batches = items.map((i) => batchOf(i, product)).filter((b): b is BatchState => b !== null);
+    const batches = items.map((i) => batchOf(i, product, household.timezone)).filter((b): b is BatchState => b !== null);
     const rate = stats.dailyRate && stats.dailyRate > 0 ? stats.dailyRate : null;
     const fractions = estimateBatchFractions(batches, rate, now);
     for (const item of items) itemFractions.set(item.id, fractions[item.id] ?? item.remainingFraction);

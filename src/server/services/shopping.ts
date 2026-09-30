@@ -129,7 +129,7 @@ export async function syncShoppingList(
   const planInputs: PlanMealInput[] = planRows
     .filter((r) => meals.has(r.mealId))
     .map((r) => ({ planItemId: r.id, date: r.date, servings: r.servings, meal: meals.get(r.mealId)! }));
-  const requirements = computePlanRequirements({ items: planInputs, lots: lotsFromLive(live), products });
+  const requirements = computePlanRequirements({ items: planInputs, lots: lotsFromLive(live, today), products });
 
   // Staples: learned (or user-forced) regular buys.
   const stapleRows = [...live.statsRows.values()].filter((s) => (s.stapleOverride ?? s.isStaple) && !s.predictionsPaused);

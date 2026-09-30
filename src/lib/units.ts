@@ -299,6 +299,19 @@ export function formatQuantity(quantity: number | null | undefined, unit: Unit |
   return `${amount} ${label}`.trim();
 }
 
+/**
+ * A multipack's amount: "2 × 2 L" when each item is a clean size, otherwise
+ * the total with the pack size ("500 g · pack of 8", not "8 × 62.5 g").
+ * Counted things just show the count ("12", not "12 × 1").
+ */
+export function formatPackQuantity(quantity: number, unit: Unit, packCount: number): string {
+  if (packCount <= 1 || UNIT_DEFS[unit].dimension === "count") return formatQuantity(quantity, unit);
+  const per = quantity / packCount;
+  const perInSmallUnits = unit === "kg" || unit === "l" ? per * 1000 : per;
+  if (Math.abs(perInSmallUnits - Math.round(perInSmallUnits)) < 1e-6) return `${packCount} × ${formatQuantity(per, unit)}`;
+  return `${formatQuantity(quantity, unit)} · pack of ${packCount}`;
+}
+
 const KITCHEN_FRACTIONS = [0, 0.25, 1 / 3, 0.5, 2 / 3, 0.75, 1];
 
 /**

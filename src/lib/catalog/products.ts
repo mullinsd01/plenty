@@ -2235,6 +2235,8 @@ const BAKING = section({ aisle: "pantry", location: "pantry", perishable: false 
     unit: "g",
     packageQuantity: 300,
     shelfLifeDays: 730,
+    // Much Australian cornflour is wheaten; only maize cornflour is gluten free, so assume gluten.
+    contains: ["gluten"],
     aliases: ["corn flour", "cornstarch", "corn starch", "maize cornflour", "wheaten cornflour"],
   },
   {

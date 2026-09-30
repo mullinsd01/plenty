@@ -465,8 +465,12 @@ export function scoreMeal(meal: PlannableMeal, ctx: PlannerContext, opts: ScoreM
 
 // ─── What can I make right now? ─────────────────────────────────────────────
 
-/** Missing 0, 1, 2 or 3+ ingredients. */
-const MAX_AVAILABILITY_BUCKET = 3;
+/**
+ * Missing 0, 1, 2, 3, 4 or 5+ ingredients. Finer than "3+" so a meal three
+ * things short never ranks below one nine things short just because the
+ * latter uses something that's about to go off.
+ */
+const MAX_AVAILABILITY_BUCKET = 5;
 
 function availabilityBucket(missingCount: number): number {
   return Math.min(missingCount, MAX_AVAILABILITY_BUCKET);
@@ -479,7 +483,7 @@ function compareForNow(a: MealEvaluation, b: MealEvaluation): number {
   const bucketB = availabilityBucket(b.scored.missingCount);
   if (bucketA !== bucketB) return bucketA - bucketB;
   if (a.scored.useSoonNames.length !== b.scored.useSoonNames.length) return b.scored.useSoonNames.length - a.scored.useSoonNames.length;
-  // Nothing in the 3+ bucket is makeable tonight; prefer what uses most of the kitchen.
+  // Nothing in the 5+ bucket is makeable tonight; prefer what uses most of the kitchen.
   if (bucketA === MAX_AVAILABILITY_BUCKET && a.scored.haveCount !== b.scored.haveCount) return b.scored.haveCount - a.scored.haveCount;
   const preferenceA = a.parts.preference + a.parts.recency;
   const preferenceB = b.parts.preference + b.parts.recency;
@@ -492,8 +496,8 @@ function compareForNow(a: MealEvaluation, b: MealEvaluation): number {
 
 /**
  * "What can I make right now?" — allowed meals for today, ranked by:
- * (1) how many ingredients are missing (0, 1, 2, 3+); (2) how many
- * soon-expiring items they use; (3) in the 3+ bucket only, how many
+ * (1) how many ingredients are missing (0, 1, 2, 3, 4, 5+); (2) how many
+ * soon-expiring items they use; (3) in the 5+ bucket only, how many
  * ingredients the kitchen already covers; (4) preference (likes, saves,
  * favourite cuisines, rejections, aversions and recency); (5) time,
  * quickest first; (6) difficulty, easiest first. Weeknight limits apply

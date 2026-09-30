@@ -3,7 +3,7 @@ import { addDays, daysBetweenDates, relativeDayLabel, toDateString, weekdayOf, z
 import { adultEquivalents, levelLabel, levelPhrase } from "@/lib/domain";
 import { formatMoney, pluralize, pluralNoun, remainingPhrase } from "@/lib/format";
 import { parseQuickAdd } from "@/lib/quick-add";
-import { convert, formatQuantity, formatRecipeQuantity, packagesNeeded, parseUnit, toBaseUnit } from "@/lib/units";
+import { convert, formatPackQuantity, formatQuantity, formatRecipeQuantity, packagesNeeded, parseUnit, toBaseUnit } from "@/lib/units";
 
 describe("quick add parsing", () => {
   it("understands counts, measures, dozens and plain names", () => {
@@ -78,6 +78,13 @@ describe("units", () => {
     expect(formatQuantity(679.61, "ml")).toBe("680 ml");
     expect(formatQuantity(907, "g")).toBe("907 g");
     expect(formatQuantity(12.46, "g")).toBe("12.5 g");
+  });
+
+  it("shows multipacks by item when each is a clean size, otherwise as a total", () => {
+    expect(formatPackQuantity(4000, "ml", 2)).toBe("2 × 2 L");
+    expect(formatPackQuantity(500, "g", 8)).toBe("500 g · pack of 8");
+    expect(formatPackQuantity(12, "each", 12)).toBe("12");
+    expect(formatPackQuantity(1.5, "kg", 3)).toBe("3 × 500 g");
   });
 
   it("rounds scaled recipe amounts the way a cook measures", () => {

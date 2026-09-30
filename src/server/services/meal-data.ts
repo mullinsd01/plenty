@@ -5,7 +5,7 @@ import type { InventoryLot, PlannableMeal } from "@/lib/meals/types";
 import type { Unit } from "@/lib/units";
 import type { Queryable } from "@/server/db/client";
 import { mealIngredients, mealPlanItems, meals, type DbMeal } from "@/server/db/schema";
-import type { LiveState } from "./learning";
+import { itemBaseAmount, type LiveState } from "./learning";
 
 function toPlannable(meal: DbMeal, ingredients: Array<typeof mealIngredients.$inferSelect>): PlannableMeal {
   return {
@@ -60,17 +60,39 @@ export async function loadPlannableMeals(
 }
 
 /** Current kitchen as lots for the meal and shopping engines (using estimated levels). */
-export function lotsFromLive(live: LiveState): InventoryLot[] {
-  return live.activeItems.map((item) => ({
-    id: item.id,
-    productId: item.productId,
-    name: item.name,
-    quantity: item.quantity,
-    unit: item.unit as Unit,
-    remainingFraction: live.itemFractions.get(item.id) ?? item.remainingFraction,
-    expiresOn: item.actualExpiry ?? item.estimatedExpiry,
-    location: item.location as StorageLocation,
-  }));
+/**
+ * The kitchen as the meal and shopping engines see it. The batch of each
+ * product that's currently being used carries the household's everyday pace,
+ * so meals later in the week don't count milk or bread that will have gone
+ * into lunches by then.
+ */
+export function lotsFromLive(live: LiveState, today: string): InventoryLot[] {
+  const inUse = new Set<string>();
+  const seen = new Set<string>();
+  for (const item of live.activeItems) {
+    if (!item.productId || seen.has(item.productId)) continue;
+    if ((live.itemFractions.get(item.id) ?? item.remainingFraction) <= 0.02) continue;
+    seen.add(item.productId);
+    inUse.add(item.id);
+  }
+  return live.activeItems.map((item) => {
+    const product = item.productId ? live.index.byId.get(item.productId) ?? null : null;
+    const rate = item.productId ? live.dailyRates.get(item.productId) : undefined;
+    const base = product ? itemBaseAmount(item, product) : null;
+    const dailyUseFraction = inUse.has(item.id) && rate && base && base.amount > 0 ? rate / base.amount : 0;
+    return {
+      id: item.id,
+      productId: item.productId,
+      name: item.name,
+      quantity: item.quantity,
+      unit: item.unit as Unit,
+      remainingFraction: live.itemFractions.get(item.id) ?? item.remainingFraction,
+      expiresOn: item.actualExpiry ?? item.estimatedExpiry,
+      location: item.location as StorageLocation,
+      dailyUseFraction,
+      levelAsOf: today,
+    };
+  });
 }
 
 /** Upcoming planned meals (today onwards), in date order. */

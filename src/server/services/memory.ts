@@ -93,11 +93,14 @@ export async function getHouseholdMemory(ctx: HouseholdContext, now = new Date()
           observations: s.observations,
           paceLabel: paceLabel(s.dailyRate, s.baseUnit as BaseUnit, s.typicalPurchaseAmount),
           purchaseLabel:
-            s.typicalPurchaseIntervalDays && s.purchaseCount >= 2
+            // One gap between two purchases isn't a pattern yet.
+            s.typicalPurchaseIntervalDays && s.purchaseCount >= 3
               ? `Bought about every ${formatDuration(s.typicalPurchaseIntervalDays)}`
               : s.purchaseCount === 1
                 ? "Bought once so far"
-                : null,
+                : s.purchaseCount === 2
+                  ? "Bought twice so far"
+                  : null,
           isStaple: s.stapleOverride ?? s.isStaple,
           stapleOverride: s.stapleOverride,
           paused: s.predictionsPaused,

@@ -13,7 +13,7 @@ import { useAction } from "@/components/hooks/use-action";
 import { cn } from "@/lib/cn";
 import { STORAGE_LOCATIONS, STORAGE_LOCATION_LABELS, type StorageLocation } from "@/lib/domain";
 import { formatMoney } from "@/lib/format";
-import { formatQuantity, UNITS, type Unit } from "@/lib/units";
+import { formatPackQuantity, formatQuantity, UNITS, type Unit } from "@/lib/units";
 import type { ReceiptReview, ReceiptReviewItem } from "@/server/services/receipts";
 import { confirmReceiptAction, discardReceiptAction } from "./actions";
 
@@ -58,7 +58,7 @@ function toDraft(item: ReceiptReviewItem): Draft {
 }
 
 function amountLabel(d: Draft): string {
-  return d.packCount > 1 ? `${d.packCount} × ${formatQuantity(d.quantity / d.packCount, d.unit)}` : formatQuantity(d.quantity, d.unit);
+  return formatPackQuantity(d.quantity, d.unit, d.packCount);
 }
 
 /** The amount in one pack, as shown for editing (drafts hold the total across packs). */

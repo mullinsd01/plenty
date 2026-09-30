@@ -42,7 +42,7 @@ import { consumeForMealTx } from "./inventory";
 import { computeLiveState, householdSizeOf, refreshLearning, type LiveState } from "./learning";
 import { loadPlannableMeals, lotsFromLive } from "./meal-data";
 import { notifyHousemates } from "./notifications";
-import { loadProductIndex, resolveProduct } from "./products";
+import { inferContains, loadProductIndex, resolveProduct } from "./products";
 import { syncShoppingList } from "./shopping";
 
 // ─── Library sync ───────────────────────────────────────────────────────────
@@ -143,7 +143,7 @@ async function loadContext(tx: Tx, ctx: HouseholdContext, now: Date, live?: Live
   return {
     planner: {
       meals: [...mealMap.values()],
-      lots: lotsFromLive(state),
+      lots: lotsFromLive(state, today),
       products: state.index.byId,
       prefs: plannerPrefs,
       history,
@@ -402,25 +402,32 @@ async function planDinners(
       .where(and(eq(mealPlanItems.householdId, ctx.household.id), gte(mealPlanItems.date, loaded.today), eq(mealPlanItems.slot, "dinner")));
 
     // A planned dinner whose recipe has since been deleted is an empty night.
-    const known = new Set(loaded.planner.meals.map((m) => m.id));
+    const mealsById = new Map(loaded.planner.meals.map((m) => [m.id, m]));
+    const known = new Set(mealsById.keys());
     const orphaned = (e: DbMealPlanItem) => e.status === "planned" && !known.has(e.mealId);
+    // Allergies and diets are hard rules: a planned dinner that no longer fits them (say an
+    // allergy was added since) is replaced rather than kept.
+    const noLongerAllowed = (e: DbMealPlanItem) =>
+      e.status === "planned" && known.has(e.mealId) && !isMealAllowed(mealsById.get(e.mealId)!, loaded.planner.prefs, loaded.planner.products).allowed;
     const targetDates = new Set(dates);
-    const replaceable = existing.filter((e) => targetDates.has(e.date) && e.status === "planned" && (opts.regenerate || orphaned(e)));
-    const keep = existing
-      .filter((e) => e.status !== "skipped" && !orphaned(e) && !replaceable.some((r) => r.id === e.id))
-      .map((e) => ({ date: e.date, mealId: e.mealId }));
+    const replaceable = existing.filter(
+      (e) => targetDates.has(e.date) && e.status === "planned" && (opts.regenerate || orphaned(e) || noLongerAllowed(e)),
+    );
+    const keep = existing.filter((e) => e.status !== "skipped" && !orphaned(e) && !replaceable.some((r) => r.id === e.id));
     const openDates = dates.filter((d) => !keep.some((k) => k.date === d));
     if (openDates.length === 0) return { planned: 0, unfilled: 0 };
 
-    // The planner only honours kept meals on dates it's planning, so hand it those nights
-    // too: variety and ingredient allocation then account for them. Only open nights are written.
+    // The planner only honours kept meals on dates it's planning, so hand it the planned nights
+    // too: variety and ingredient allocation then account for them. Cooked dinners have already
+    // used their ingredients, so they only count for variety. Only open nights are written.
     const open = new Set(openDates);
-    const plannerKeep = keep.filter((k) => known.has(k.mealId));
+    const plannerKeep = keep.filter((k) => k.status === "planned" && known.has(k.mealId)).map((k) => ({ date: k.date, mealId: k.mealId }));
+    const alreadyCooked = keep.filter((k) => k.status === "cooked").map((k) => k.mealId);
     const picks = generatePlan(loaded.planner, {
       dates: [...new Set([...openDates, ...plannerKeep.map((k) => k.date)])],
       servings: loaded.servings,
       keep: plannerKeep,
-      exclude: replaceable.map((r) => r.mealId),
+      exclude: [...replaceable.map((r) => r.mealId), ...alreadyCooked],
       seed: seedFrom(now),
     }).filter((p) => open.has(p.date));
     if (picks.length === 0) {
@@ -504,15 +511,16 @@ export async function replacePlanItem(ctx: HouseholdContext, itemId: string, opt
         .from(mealPlanItems)
         .where(and(eq(mealPlanItems.householdId, ctx.household.id), gte(mealPlanItems.date, loaded.today), sql`${mealPlanItems.id} <> ${itemId}`))
     )
-      .filter((o) => o.status !== "skipped" && o.date !== item.date && known.has(o.mealId))
-      .map((o) => ({ date: o.date, mealId: o.mealId }));
+      .filter((o) => o.status !== "skipped" && o.date !== item.date && known.has(o.mealId));
     // The planner only honours kept meals on dates it's planning: include the rest of the plan
-    // so the swap can't repeat one of them or count their ingredients as free.
+    // so the swap can't repeat one of them or count their ingredients as free. Cooked dinners
+    // have already used their ingredients, so they only rule out repeats.
+    const plannedOthers = others.filter((o) => o.status === "planned").map((o) => ({ date: o.date, mealId: o.mealId }));
     const pick = generatePlan(loaded.planner, {
-      dates: [item.date, ...others.map((o) => o.date)],
+      dates: [item.date, ...plannedOthers.map((o) => o.date)],
       servings: item.servings,
-      keep: others,
-      exclude: [item.mealId],
+      keep: plannedOthers,
+      exclude: [item.mealId, ...others.filter((o) => o.status === "cooked").map((o) => o.mealId)],
       seed: seedFrom(now),
     }).find((p) => p.date === item.date);
     if (!pick) throw new AppError("not_found", "There's nothing else that fits right now. Try adjusting your preferences.");
@@ -921,25 +929,10 @@ export interface EditMealInput {
 function containsForIngredients(names: string[], productsList: Array<ProductInfo | null>): ContainsFlag[] {
   const flags = new Set<ContainsFlag>();
   for (const p of productsList) for (const f of p?.contains ?? []) flags.add(f);
-  // Keyword safety net for ingredients we couldn't resolve to a product.
-  const text = names.join(" ").toLowerCase();
-  const KEYWORDS: Array<[RegExp, ContainsFlag]> = [
-    [/peanut/, "peanuts"],
-    [/\b(almond|cashew|walnut|pecan|pistachio|hazelnut|macadamia|pine nut)/, "tree_nuts"],
-    [/\b(milk|cheese|butter|cream|yoghurt|yogurt|parmesan|feta|ricotta|mozzarella)\b/, "dairy"],
-    [/\beggs?\b/, "egg"],
-    [/\b(flour|bread|pasta|spaghetti|noodle|couscous|soy sauce|breadcrumb|tortilla|wrap)/, "gluten"],
-    [/\b(soy|tofu|edamame|miso|tempeh)/, "soy"],
-    [/\b(prawn|shrimp|crab|lobster|mussel|scallop|squid|calamari|oyster)/, "shellfish"],
-    [/\b(fish|salmon|tuna|cod|snapper|barramundi|anchov|sardine|fish sauce)/, "fish"],
-    [/\b(sesame|tahini)/, "sesame"],
-    [/\b(chicken|turkey|duck)/, "poultry"],
-    [/\b(bacon|ham|pork|prosciutto|chorizo|salami|pancetta)/, "pork"],
-    [/\b(beef|lamb|mince|steak|veal|goat)/, "meat"],
-    [/\b(wine|beer|sake|mirin|brandy|rum)\b/, "alcohol"],
-    [/\bhoney\b/, "honey"],
-  ];
-  for (const [re, flag] of KEYWORDS) if (re.test(text)) flags.add(flag);
+  // Safety net from the wording itself, for ingredients we couldn't resolve to a product.
+  names.forEach((name, i) => {
+    if (!productsList[i]) for (const f of inferContains(name)) flags.add(f);
+  });
   return [...flags];
 }
 

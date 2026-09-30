@@ -563,6 +563,21 @@ interface CandidateLot {
   lot: InventoryLot;
   product: ProductInfo | null;
   substitute: boolean;
+  /** Fraction expected to go in everyday use before the meal date (added back when recording a claim). */
+  routine: number;
+}
+
+/**
+ * The lot as it's likely to be on `date`: everyday use keeps drawing it down
+ * between the day its level was known and the meal. Also returns how much
+ * that was, so claims can be recorded against the lot's real level.
+ */
+export function projectLotToDate(lot: InventoryLot, date: string): { lot: InventoryLot; routine: number } {
+  const perDay = lot.dailyUseFraction ?? 0;
+  if (!(perDay > 0) || !lot.levelAsOf) return { lot, routine: 0 };
+  const days = Math.max(0, daysBetweenDates(lot.levelAsOf, date));
+  const projected = Math.max(0, clampFraction(lot.remainingFraction) - perDay * days);
+  return { lot: { ...lot, remainingFraction: projected }, routine: clampFraction(lot.remainingFraction) - projected };
 }
 
 function withBalance(lot: InventoryLot, balances: LotBalances): InventoryLot {
@@ -604,12 +619,19 @@ function candidateLots(
   balances: LotBalances,
   allowedFlags: ReadonlySet<ContainsFlag>,
 ): CandidateLot[] {
-  const usable = lots.filter((lot) => lot.expiresOn === null || lot.expiresOn >= date).map((lot) => withBalance(lot, balances));
+  const routineById = new Map<string, number>();
+  const usable = lots
+    .filter((lot) => lot.expiresOn === null || lot.expiresOn >= date)
+    .map((lot) => {
+      const projected = projectLotToDate(withBalance(lot, balances), date);
+      routineById.set(lot.id, projected.routine);
+      return projected.lot;
+    });
   const { exact, substitutes } = findMatchingLots(ingredient, usable, products);
   const candidates: CandidateLot[] = [];
   const add = (substitute: boolean) => (lot: InventoryLot) => {
     const product = lookupProduct(products, lot.productId);
-    if (addsNoNewFlags(ingredient, lot, product, allowedFlags)) candidates.push({ lot, product, substitute });
+    if (addsNoNewFlags(ingredient, lot, product, allowedFlags)) candidates.push({ lot, product, substitute, routine: routineById.get(lot.id) ?? 0 });
   };
   exact.forEach(add(false));
   substitutes.forEach(add(true));
@@ -699,7 +721,8 @@ function allocateQuantified(
     if (available <= EPSILON) continue;
     const take = Math.min(available, remaining);
     const fraction = clampFraction(candidate.lot.remainingFraction);
-    balances.set(candidate.lot.id, fraction * (1 - take / available));
+    // Balances hold the lot's level before everyday use, so later meals project from the same start.
+    balances.set(candidate.lot.id, fraction * (1 - take / available) + candidate.routine);
     remaining -= take;
     used.push(candidate);
   }

@@ -7,7 +7,7 @@ import { levelPhrase, type Aisle, type StorageLocation } from "@/lib/domain";
 import { aliasKey as toAliasKey, cleanReceiptText, normalizeReceiptLine } from "@/lib/normalize";
 import { receiptFingerprint } from "@/lib/receipts/fingerprint";
 import { assessReceiptQuality } from "@/lib/receipts/quality";
-import { formatQuantity, isContainerUnit, isUnit, unitDimension, type Unit } from "@/lib/units";
+import { formatPackQuantity, isContainerUnit, isUnit, unitDimension, type Unit } from "@/lib/units";
 import { AIUnavailableError, getLocalProvider, getProvider, RECEIPT_AI_BUDGET_MS, type ReceiptExtraction } from "@/server/ai";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
 import { systemDb, withUser } from "@/server/db/client";
@@ -632,10 +632,7 @@ export async function getReceiptReview(ctx: HouseholdContext, receiptId: string,
         quantity: row.quantity,
         unit: row.unit as Unit,
         packCount: row.packCount,
-        quantityLabel:
-          row.packCount > 1
-            ? `${row.packCount} × ${formatQuantity(row.quantity / row.packCount, row.unit as Unit)}`
-            : formatQuantity(row.quantity, row.unit as Unit),
+        quantityLabel: formatPackQuantity(row.quantity, row.unit as Unit, row.packCount),
         location: row.location as StorageLocation,
         aisle: row.aisle as Aisle,
         totalPrice: row.totalPrice,

@@ -13,7 +13,7 @@ import {
   type StorageLocation,
 } from "@/lib/domain";
 import { assessUseSoon, estimateExpiry, type UseSoonAssessment } from "@/lib/prediction/expiry";
-import { formatQuantity, isUnit, unitDimension, type Unit } from "@/lib/units";
+import { formatPackQuantity, isUnit, unitDimension, type Unit } from "@/lib/units";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
 import { withUser, type Tx } from "@/server/db/client";
 import { consumptionEvents, inventoryEvents, inventoryItems, type DbInventoryItem } from "@/server/db/schema";
@@ -72,6 +72,13 @@ function isCountable(item: Pick<DbInventoryItem, "unit" | "quantity">): boolean 
   return unitDimension(unit) === "count" && item.quantity >= 2 && item.quantity <= 36 && Number.isInteger(item.quantity);
 }
 
+/** Whether this is the batch of its product currently being used (the oldest with some left). */
+function isBatchInUse(item: DbInventoryItem, live: LiveState): boolean {
+  if (!item.productId) return true;
+  const inUse = live.activeItems.find((i) => i.productId === item.productId && (live.itemFractions.get(i.id) ?? i.remainingFraction) > 0.02);
+  return !inUse || inUse.id === item.id;
+}
+
 export function toItemView(item: DbInventoryItem, live: LiveState, household: Pick<HouseholdInfo, "timezone">): InventoryItemView {
   const product = item.productId ? live.index.byId.get(item.productId) ?? null : null;
   const estimated = Math.max(0, Math.min(1, live.itemFractions.get(item.id) ?? item.remainingFraction));
@@ -90,11 +97,7 @@ export function toItemView(item: DbInventoryItem, live: LiveState, household: Pi
     quantity: item.quantity,
     unit: item.unit as Unit,
     packCount: item.packCount,
-    // "2 × 2 L" for multipacks of measured things; counted things just show the count ("12", not "12 × 1").
-    quantityLabel:
-      item.packCount > 1 && unitDimension(item.unit as Unit) !== "count"
-        ? `${item.packCount} × ${formatQuantity(item.quantity / item.packCount, item.unit as Unit)}`
-        : formatQuantity(item.quantity, item.unit as Unit),
+    quantityLabel: formatPackQuantity(item.quantity, item.unit as Unit, item.packCount),
     knownFraction: item.remainingFraction,
     estimatedFraction: estimated,
     levelLabel: levelLabel(estimated),
@@ -107,7 +110,8 @@ export function toItemView(item: DbInventoryItem, live: LiveState, household: Pi
       expiresOn,
       today,
       remainingFraction: estimated,
-      dailyShareOfBatch: rate && base && base.amount > 0 ? rate / base.amount : null,
+      // Households use the oldest one first, so only that batch is being eaten into right now.
+      dailyShareOfBatch: rate && base && base.amount > 0 && isBatchInUse(item, live) ? rate / base.amount : null,
     }),
     prediction:
       productPrediction && !productPrediction.paused
@@ -315,13 +319,12 @@ export async function addItemsTx(
       quantity = packs;
     }
     if (!product) {
-      product = await ensureCustomProduct(tx, household.id, {
-        name: input.name,
-        aisle: "other",
-        location,
-        unit,
-        packageQuantity: quantity,
-      });
+      product = await ensureCustomProduct(
+        tx,
+        household.id,
+        { name: input.name, aisle: "other", location, unit, packageQuantity: quantity },
+        index,
+      );
     }
     const purchasedAt = input.purchasedAt ?? now;
     const estimatedExpiry = estimateExpiry({

@@ -218,11 +218,50 @@ function slugify(text: string): string {
     .slice(0, 60);
 }
 
+/** Words that reveal what a food contains, for things Plenty has no catalog entry for. */
+const CONTAINS_WORDS: ReadonlyArray<readonly [RegExp, ContainsFlag]> = [
+  [/\b(beef|steak|lamb|veal|goat|venison|kangaroo|rabbit|mince|burger|meatball|salami|pepperoni|chorizo)\b/, "meat"],
+  [/\b(pork|bacon|ham|prosciutto|pancetta|chorizo|salami|pepperoni)\b/, "pork"],
+  [/\b(chicken|turkey|duck|poultry|quail)\b/, "poultry"],
+  [/\b(fish|salmon|tuna|cod|barramundi|snapper|anchov\w*|sardine\w*|trout|mackerel|basa|hoki)\b/, "fish"],
+  [/\b(prawn\w*|shrimp\w*|crab\w*|lobster\w*|mussel\w*|oyster\w*|scallop\w*|squid|calamari|clam\w*|octopus)\b/, "shellfish"],
+  [/\b(milk|cheese|cheddar|parmesan|mozzarella|feta|haloumi|cream|butter|yoghurt|yogurt|ricotta|mascarpone|custard|ghee|brie|camembert)\b/, "dairy"],
+  [/\b(eggs?|mayo\w*|aioli|meringue|custard|brioche)\b/, "egg"],
+  [
+    /\b(wheat|flour|bread|pasta|noodles?|spaghetti|lasagne|ravioli|tortellini|gnocchi|couscous|barley|rye|spelt|semolina|biscuits?|biscotti|cookies?|crackers?|cakes?|muffins?|scones?|crumpets?|pancakes?|waffles?|doughnuts?|donuts?|croissants?|pastry|pastries|pies?|pizza|bagels?|pretzels?|buns?|bao|naan|pita|focaccia|wraps?|tortillas?|dumplings?|gyoza|wontons?|breadcrumbs?|panko|beer|soy sauce|seitan)\b/,
+    "gluten",
+  ],
+  [/\b(peanut\w*)\b/, "peanuts"],
+  [/\b(almond\w*|cashew\w*|walnut\w*|pecan\w*|hazelnut\w*|pistachio\w*|macadamia\w*|brazil nut\w*|pine nut\w*|nutella|praline|marzipan)\b/, "tree_nuts"],
+  [/\b(soy|soya|tofu|tempeh|edamame|miso)\b/, "soy"],
+  [/\b(sesame|tahini|hummus)\b/, "sesame"],
+  [/\b(wine|beer|cider|vodka|gin|rum|whisk(e)?y|brandy|liqueur|sake|mirin)\b/, "alcohol"],
+  [/\bhoney\b/, "honey"],
+];
+
+/**
+ * Best guess at what a custom product contains: the flags of the closest
+ * catalog product, plus anything its name gives away ("almond croissant" →
+ * gluten, dairy, egg and tree nuts). Allergy and diet rules then still apply
+ * to it — erring towards flagging, never towards "safe".
+ */
+export function inferContains(name: string, index?: ProductIndex): ContainsFlag[] {
+  const text = name.toLowerCase();
+  const flags = new Set<ContainsFlag>();
+  for (const [pattern, flag] of CONTAINS_WORDS) if (pattern.test(text)) flags.add(flag);
+  if (index) {
+    const [closest] = productCandidates(index, name, 1);
+    if (closest && closest.score >= 0.55) for (const flag of closest.product.contains) flags.add(flag);
+  }
+  return [...flags];
+}
+
 /** Create (or reuse) a household-specific product for something not in the catalog. */
 export async function ensureCustomProduct(
   db: Queryable,
   householdId: string,
   input: { name: string; aisle: Aisle; location: StorageLocation; unit: Unit; packageQuantity: number },
+  index?: ProductIndex,
 ): Promise<ProductInfo> {
   const name = sentenceCase(input.name.trim()).slice(0, 80);
   const slug = `custom-${slugify(name) || "item"}`;
@@ -245,6 +284,7 @@ export async function ensureCustomProduct(
       perishable: input.location === "fridge" || input.location === "produce",
       shelfLifeDays: input.location === "fridge" || input.location === "produce" ? 7 : null,
       aliases: [name.toLowerCase()],
+      contains: inferContains(name, index),
     })
     .onConflictDoNothing()
     .returning();

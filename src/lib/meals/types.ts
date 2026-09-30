@@ -25,6 +25,13 @@ export interface InventoryLot {
   /** Effective expiry (actual if known, else estimated), YYYY-MM-DD. */
   expiresOn: string | null;
   location: StorageLocation;
+  /**
+   * Share of this lot the household gets through each day in everyday use
+   * (milk in tea, bread for lunches). 0 or absent when it isn't the batch in use.
+   */
+  dailyUseFraction?: number;
+  /** The date `remainingFraction` describes, YYYY-MM-DD. With `dailyUseFraction`, meals on later dates see less. */
+  levelAsOf?: string;
 }
 
 export interface MealIngredientInput {

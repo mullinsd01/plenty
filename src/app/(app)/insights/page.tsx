@@ -53,7 +53,7 @@ export default async function InsightsPage() {
         <SectionTitle>Your shopping rhythm</SectionTitle>
         <Card className="p-5">
           <p className="text-[17px] font-semibold tracking-[-0.01em]">
-            {m.rhythm.label ?? (m.rhythm.basis === "default" ? "Plenty is still learning when you shop" : `You shop about every ${m.rhythm.intervalDays} days`)}
+            {m.rhythm.label ?? (m.rhythm.basis === "preference" ? `You shop about every ${m.rhythm.intervalDays} days` : "Plenty is still learning when you shop")}
           </p>
           <p className="mt-1 text-[14px] text-ink-3">
             {m.rhythm.basis === "preference"
