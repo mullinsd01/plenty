@@ -51,7 +51,7 @@ async function main() {
   const owner = await account("Sam", "family@plenty.test");
   const { householdId } = await createHousehold(owner, { name: "Tour family", adults: 2, children: 1, timezone: TZ, currency: "AUD" });
   await systemDb.insert(schema.subscriptions).values({ householdId, plan: "family", period: "annual", status: "active", provider: "manual", autoRenew: false });
-  let sam = (await buildHouseholdContext({ ...owner, activeHouseholdId: householdId }, householdId))!;
+  const sam = (await buildHouseholdContext({ ...owner, activeHouseholdId: householdId }, householdId))!;
   await completeOnboarding(sam);
 
   const joinAs = async (name: string, email: string, role: "member" | "child") => {

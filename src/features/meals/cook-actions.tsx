@@ -156,7 +156,7 @@ export function ReportRecipe({ mealId }: { mealId: string }) {
         }
       >
         <fieldset className="space-y-2">
-          <legend className="sr-only">What's the matter?</legend>
+          <legend className="sr-only">What&apos;s the matter?</legend>
           {REPORT_REASONS.map((r) => (
             <label
               key={r.value}
