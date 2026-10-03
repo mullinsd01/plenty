@@ -70,7 +70,7 @@ describe("receipt lines can belong to people", () => {
       .insert(receipts)
       .values({ householdId: ctx.household.id, uploadedBy: ctx.user.id, status: "needs_review", purchasedAt: new Date(), total: 6 })
       .returning();
-    const rows = [];
+    const rows: Array<{ id: string }> = [];
     for (const [i, p] of [cola, bread].entries()) {
       const [row] = await systemDb
         .insert(receiptItems)
