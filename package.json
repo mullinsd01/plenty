@@ -44,7 +44,8 @@
     "tailwind-merge": "^3.7.0",
     "tesseract.js": "^7.0.0",
     "vaul": "^1.1.2",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "zxing-wasm": "^3.1.4"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1",
