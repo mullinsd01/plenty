@@ -50,6 +50,9 @@ Sign up to start your own household, or click **Explore the demo household** on 
 | `CRON_SECRET` | no | Protects the scheduled notifications endpoint. |
 | `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of Plenty that append to `X-Forwarded-For` (default `1`). Used to find the real client IP for rate limiting. |
 | `DEMO_MODE` | no | Shows the demo-household button on the sign-in page. |
+| `PLAN_OVERRIDE` | no | `free`, `plus`, `family` or `pro`: gives every household on this server at least that plan. For development and demos only — leave it unset in production. |
+| `LEGAL_ENTITY_NAME` / `SUPPORT_EMAIL` / `PRIVACY_CONTACT_EMAIL` | no | Named on the public `/privacy`, `/terms` and `/support` pages. Plenty never invents these: an unset one is left out (and shown as a placeholder in development). Set them for production. |
+| `ANALYTICS_SECRET` | no | 16+ random characters; keys the pseudonymous household id in first-party analytics. In production nothing is recorded until it's set. |
 | `BILLING_ACCOUNT_SECRET` | no | 32+ random characters. Makes the token that tags App Store / Google Play purchases with their household unforgeable. Required for store purchases to find their household. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRICES` | no | Web subscriptions through Stripe Checkout. `STRIPE_PRICES` is `plus.monthly=price_…,plus.annual=price_…,family.monthly=price_…,family.annual=price_…`. Without them the web option isn't shown. See [docs/billing.md](docs/billing.md). |
 | `APPLE_BUNDLE_ID` / `APPLE_APP_ID` / `APPLE_ROOT_CERTS` / `APPLE_PRODUCTS` | no | App Store subscriptions (notifications and restore). `APPLE_ROOT_CERTS` lists Apple root certificate files (or base64 DER). `APPLE_PRODUCTS` overrides product ids (default `app.plenty.<plan>.<period>`). |
@@ -89,10 +92,14 @@ curl -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/notifica
 - **Meals** — plan tonight, tomorrow, 3 days or the week. The planner prioritises food that needs using, respects allergies and diets as hard rules, avoids dislikes, leans on favourites, keeps variety and weeknight time limits, and simulates the kitchen across the week so two meals never claim the same mince. Swap, dislike, move, change servings, mark cooked (ingredients are deducted automatically), edit recipes (copy-on-write), and — with an API key — get fresh recipes written around what's in your kitchen.
 - **What can I make?** — ranked by ingredients on hand, food that needs using, preferences, time and difficulty.
 - **What Plenty knows** — every learned rate, staple, shopping rhythm, spending trend, waste pattern and meal preference, with controls to correct or reset any of it.
+- **People and ownership** — everyone in the household, with or without an account (a child, or a housemate who won't use the app). Food and shopping-list lines can belong to the household or to one person ("Pepsi Max — Dad" and "— Mum" are different things with their own pace), and on Plenty Family a person can keep their own things private. Roles: *owner* (runs the household, its people and plan), *member* (everyday use) and *child* (sees what's shared, can ask for things, changes only their own). Everyone's food rules (diets, allergies, dislikes) are personal and are combined for meal ideas without saying whose they are.
+- **Requests** — anyone can ask for something ("Mum wants Pepsi Max"); it goes on the shared list under Requests with their name and the adults are told. Notes, regular purchases (set something to repeat) and Plenty's own suggestions with *Keep it / Not needed* sit on the same list.
+- **Plans** — Free, Plus ($4.99 / $49.99) and Family ($8.99 / $89.99); Pro is defined but not offered. One definition of what each plan includes (`src/lib/billing/plans.ts`) drives the limits, the paywall and the store listing. Limits only ever stop something being *added*; nothing is hidden or deleted on a downgrade. See [docs/billing.md](docs/billing.md).
+- **Privacy and consent** — receipt details (card, loyalty and phone numbers, addresses) are removed before anything is stored, photos are deleted after review by default, AI processing happens only with the household's explicit consent on a plan that includes it, analytics are first-party with an opt-out, and account and household deletion removes everything (guarded by a test that checks every table). Public `/privacy`, `/terms`, `/support` and `/delete-account` pages. See [docs/compliance](docs/compliance).
 - **Sharing** — invite links; everyone in the household shares the kitchen, list and plans.
 - **Notifications** — only useful ones (running low, check-ins, use-soon, shopping day, meal plan ready, weekly insight), with per-member preferences, a daily cap and quiet hours.
 - **Search** — forgiving search across kitchen, list and meals (⌘K).
-- **Settings** — account, household & sharing, food preferences, shopping & budget, notifications, privacy (AI opt-out), data export, delete household / account.
+- **Settings** — account, household & sharing (people, roles, personal food rules), food preferences, shopping & budget, notifications, plan & billing, privacy & data (AI consent, photo retention, analytics), data export, delete household / account.
 
 ---
 
@@ -136,6 +143,8 @@ Quantities, consumption, predictions, list reconciliation, ingredient matching, 
 - Passwords use argon2id; session and reset tokens are random 256-bit values stored only as SHA-256 hashes; cookies are `httpOnly`, `SameSite=Lax`, `Secure` in production.
 - Sign-in, sign-up, password reset, uploads and AI calls are rate limited (Postgres-backed, so it works across instances).
 - All input is validated with zod on the server. Uploads are size-limited, decoded and re-encoded (stripping metadata), and stored outside `public/`.
+- Inside a household, row-level security also enforces *who may see what*: a private item (and what's learned from it) is invisible to housemates at the database level, a child account can only change what it owns or asked for, only owners change people, invitations and the plan, and billing, usage and analytics tables can't be written by the app role at all. (Covered by `tests/integration/members-privacy.test.ts` and `billing.test.ts`.)
+- Subscriptions belong to the household and are only ever changed by verified provider events (Stripe webhook signatures, Apple signed notifications, Google Pub/Sub tokens), applied idempotently; a purchase is never moved between households silently.
 - Errors shown to users are always friendly; details are only logged server-side. API keys never reach the browser.
 
 ---
