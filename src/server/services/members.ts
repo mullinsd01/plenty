@@ -218,7 +218,6 @@ export async function removeMember(ctx: HouseholdContext, memberId: string): Pro
  * household's; their personal notification rows are cleared.
  */
 export async function detachMember(tx: Tx, householdId: string, memberId: string, userId: string | null): Promise<void> {
-  const now = new Date();
   // Gone for good, not soft-deleted: a private item with no owner would break the privacy rule, and they asked for nobody else to see it.
   await tx
     .delete(inventoryItems)

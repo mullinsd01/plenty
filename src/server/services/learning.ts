@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import type { ProductInfo } from "@/lib/catalog/types";
 import { computeConsumptionStats } from "@/lib/consumption/stats";
 import type { BatchState, ConsumptionObservation, ConsumptionStats, RunOutPrediction } from "@/lib/consumption/types";
