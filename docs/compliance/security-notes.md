@@ -18,7 +18,7 @@ What protects Plenty's data today, and what doesn't yet. Written from the code o
 
 **Webhooks and jobs.** Stripe, Apple and Google notifications are verified (signature, certificate chain or OIDC token) and applied idempotently; the cron endpoint requires `Authorization: Bearer $CRON_SECRET` with a constant-time compare.
 
-**Secrets.** Read from the environment, validated once in `src/server/env.ts` (billing secret ≥ 32 characters, analytics secret ≥ 16). `.env*` is git-ignored. Account tokens and analytics keys are HMACs, so ids aren't exposed to the stores or stored in analytics.
+**Secrets.** Read from the environment, validated once in `src/server/env.ts` (billing secret ≥ 32 characters, analytics secret ≥ 16). `.env*` is git-ignored. Analytics keys are HMACs of the household id, so analytics rows don't contain it. (Store purchase tokens are the billing code's: see `docs/billing.md`.)
 
 **Deletion.** Account and household deletion are real deletes, covered by a test that finds every `household_id` table from the database and fails when a new one isn't covered. Receipt photos, analytics and rate-limit counters are removed with them.
 
