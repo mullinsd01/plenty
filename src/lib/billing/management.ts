@@ -59,7 +59,7 @@ export function whereToManage(provider: BillingProviderId): string {
   }
 }
 
-/** A date for messages, e.g. "10 October". Calendar dates in UTC so a message reads the same wherever it's opened. */
+/** A date for messages, e.g. "10 October 2026". The year is always there: a plan that runs for a year shouldn't read as ending soon. Calendar dates in UTC so a message reads the same wherever it's opened. */
 export function formatBillingDate(date: Date): string {
-  return date.toLocaleDateString("en-AU", { day: "numeric", month: "long", timeZone: "UTC" });
+  return date.toLocaleDateString("en-AU", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }

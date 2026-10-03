@@ -455,6 +455,6 @@ describe("where a subscription is managed", () => {
   });
 
   it("formats dates in UTC so a message reads the same everywhere", () => {
-    expect(formatBillingDate(new Date("2026-10-10T23:30:00Z"))).toBe("10 October");
+    expect(formatBillingDate(new Date("2026-10-10T23:30:00Z"))).toBe("10 October 2026");
   });
 });
