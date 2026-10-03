@@ -769,7 +769,7 @@ export async function confirmReceipt(
     if (adding > 0) await assertRoomForItems(ctx, adding);
     const touchedProducts: Array<string | null> = [];
     /** What actually went into the kitchen, with the products it resolved to — ticked off the list afterwards. */
-    const bought: Array<{ productId: string | null; name: string; ownerMemberId?: string | null }> = [];
+    const bought: Array<{ productId: string | null; name: string; ownerMemberId?: string | null; private?: boolean }> = [];
     /** Shopping-list batches already taken over by an earlier line of this receipt. */
     const merged = new Set<string>();
     let added = 0;
@@ -867,7 +867,12 @@ export async function confirmReceipt(
       );
       added += 1;
       touchedProducts.push(created.productId);
-      bought.push({ productId: created.productId, name: item.name, ownerMemberId: item.ownerMemberId === undefined ? null : owned.ownerMemberId });
+      bought.push({
+        productId: created.productId,
+        name: item.name,
+        ownerMemberId: item.ownerMemberId === undefined ? null : owned.ownerMemberId,
+        private: owned.visibility === "private",
+      });
       await tx
         .update(receiptItems)
         .set({

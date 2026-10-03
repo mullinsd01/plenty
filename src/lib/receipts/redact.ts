@@ -135,7 +135,7 @@ const ADDRESS_LABEL = /^(\s*(?:deliver(?:y|ed)?\s+(?:to|address)|ship(?:ped)?\s+
 
 /** Labels whose value is a person's name. A value is required, and the label must start the line. */
 const NAME_LABEL =
-  /^(\s*(?:served\s+by|cashier|checkout\s+operator|till\s+operator|operator|(?:store\s+|duty\s+)?manager|supervisor|team\s+member|your\s+cashier|your\s+server|server|assisted\s+by|collected\s+by|picked\s+by|packed\s+by|delivered\s+by|driver|customer\s+name|cardholder(?:\s+name)?|card\s+holder|name\s+on\s+card|member\s+name|guest\s+name|name|customer|cust|guest|member)\s*(?:[:#\-]\s*|\s+))(?!(?:copy|receipt|service|services|care|support|enquiries|inquiries|complaints|information|feedback|survey|satisfaction|charter|rewards|number|no|id|card|account|points|price|savings?|saving|discount|offer)\b)(\S.*)$/i;
+  /^(\s*(?:served\s+by|cashier|checkout\s+operator|till\s+operator|operator|(?:store\s+|duty\s+)?manager|supervisor|team\s+member|your\s+cashier|your\s+server|server|assisted\s+by|collected\s+by|picked\s+by|packed\s+by|delivered\s+by|bought\s+by|purchased\s+by|ordered\s+by|placed\s+by|account\s+holder|driver|customer\s+name|cardholder(?:\s+name)?|card\s+holder|name\s+on\s+card|member\s+name|guest\s+name|name|customer|cust|guest|member)\s*(?:[:#\-]\s*|\s+))(?!(?:copy|receipt|service|services|care|support|enquiries|inquiries|complaints|information|feedback|survey|satisfaction|charter|rewards|number|no|id|card|account|points|price|savings?|saving|discount|offer)\b)(\S.*)$/i;
 /** A colon-less "name" or "customer" label is too common in prose; these need a separator. */
 const NAME_NEEDS_SEPARATOR = /^\s*(?:name|customer|cust|guest|member|server|driver)\b/i;
 /** "Hi Sarah," / "Dear Mr Jones". */

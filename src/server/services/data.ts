@@ -61,7 +61,9 @@ export async function exportHouseholdData(ctx: HouseholdContext) {
     // makes one too. Products are the household's, so a housemate's export would carry that name. A product is exported
     // only when something this person can see uses it.
     const inUse = new Set<string>();
-    for (const rows of [inventory, consumption, learnedStats, receiptItemRows, predictionRows, recurring, barcodeRows, shoppingList, householdIngredients]) {
+    // (Every product Plenty works with gets an empty household-wide stats row; that alone isn't use.)
+    const learnedSomething = learnedStats.filter((s) => s.purchaseCount > 0 || s.observations > 0 || s.stapleOverride !== null);
+    for (const rows of [inventory, consumption, learnedSomething, receiptItemRows, predictionRows, recurring, barcodeRows, shoppingList, householdIngredients]) {
       for (const row of rows) if (row.productId) inUse.add(row.productId);
     }
     const hiddenProducts = new Set(householdProducts.filter((p) => !inUse.has(p.id)).map((p) => p.id));

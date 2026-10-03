@@ -181,7 +181,10 @@ function EditPerson({ person, isOwner, onDone }: { person: PersonRow; isOwner: b
             className="w-full"
             value={role}
             onChange={setRole}
-            options={(["owner", "member", "child"] as const).map((r) => ({ value: r, label: ROLE_LABELS[r] }))}
+            // Somebody who can't sign in can't run the household, so only account holders can be owners.
+            options={(["owner", "member", "child"] as const)
+              .filter((r) => r !== "owner" || person.hasAccount)
+              .map((r) => ({ value: r, label: ROLE_LABELS[r] }))}
           />
         </Field>
       )}

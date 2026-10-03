@@ -40,6 +40,10 @@ What protects Plenty's data today, and what doesn't yet. Written from the code o
 14. **Third-party handling is outside Plenty's control:** what the AI provider, Stripe, Apple, Google, the email and hosting providers do with data is governed by their terms. The Privacy Policy says so and links the AI provider's terms; Plenty makes no claim about the AI provider's retention.
 15. **Child accounts have no age check** (see the audit, decision 3).
 16. **The privacy and terms text is not legal advice**; it needs legal review before launch.
+17. **A private item Plenty doesn't recognise still creates a household "product" named after it** (`products` is the household's table). Nothing in the app lists products and exports leave out any that nothing visible to the person uses, but a housemate's receipt review can offer it as a match when their own receipt line resembles it. Fixing it fully needs product visibility that follows the item (a column and a policy, and care over the unique slug).
+18. **A receipt is shared with the household's adults.** A private item bought on it is private in the kitchen, the list and everything learned, but its line is part of the receipt text.
+19. **The app role can read `users.password_hash` of housemates** (row-level security allows the row, so the column goes with it). No query selects it; column-level grants would make that a database guarantee rather than a code habit.
+20. **`/dev/outbox` shows every unsent email (reset links included) to anyone when `NODE_ENV` isn't `production` and `SMTP_URL` is unset.** Fine on a laptop; never run a reachable server that way. `CRON_SECRET` has no minimum length: use a long random value (the example `change-me` is not one).
 
 ## When you change something
 

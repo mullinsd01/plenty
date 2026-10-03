@@ -5,8 +5,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { pool, systemDb } from "@/server/db/client";
-import { consumptionEvents, householdMembers, households, inventoryEvents, inventoryItems, receiptItems, receipts, recurringItems } from "@/server/db/schema";
+import { pool, systemDb, withUser } from "@/server/db/client";
+import { consumptionEvents, consumptionStats, householdMembers, households, inventoryEvents, inventoryItems, predictions, receiptItems, receipts, recurringItems, shoppingListItems } from "@/server/db/schema";
 import { buildHouseholdContext, type HouseholdContext } from "@/server/auth/build-context";
 import { acceptInvitation, createInvitation, leaveHousehold, revokeInvitations, switchHousehold, updateHouseholdBasics, updatePreferences } from "@/server/services/household";
 import { addItems, answerCheckIn, finishItem, getInventory, getInventoryItem, updateItem } from "@/server/services/inventory";
@@ -14,6 +14,8 @@ import { exportHouseholdData } from "@/server/services/data";
 import { addManagedMember, updateMember } from "@/server/services/members";
 import { resetProductLearning, setPredictionsPaused } from "@/server/services/memory";
 import { createRecurring } from "@/server/services/recurring";
+import { addManualItem } from "@/server/services/shopping";
+import { getHome } from "@/server/services/dashboard";
 import { removeMember } from "@/server/services/members";
 import { confirmReceipt } from "@/server/services/receipts";
 import { makeHousehold } from "../helpers/db";
@@ -249,5 +251,75 @@ describe("what a housemate's export can reveal", () => {
     expect(theirs).not.toMatch(/Zorblax/i);
     // What was shared is still there.
     expect(theirs).toMatch(/Quibblefruit/);
+  });
+});
+
+describe("everything a private item leaves behind is private too", () => {
+  it("history, learning, predictions, regular purchases and list lines are invisible and untouchable for a housemate or a child", async () => {
+    const alex = await makeHousehold({ name: "Private trail", plan: "family" });
+    const jordan = await joinHousehold(alex, "member");
+    const ollie = await joinHousehold(alex, "child");
+    const mine = { ownerMemberId: alex.member.id, visibility: "private" as const };
+    const [finishedId] = await addItems(alex, [{ name: "Private protein bars", ...mine }]);
+    await finishItem(alex, finishedId, "consumed");
+    await addItems(alex, [{ name: "Private protein bars", ...mine, remainingFraction: 0.05 }]);
+    await createRecurring(alex, { name: "Private vitamins", intervalDays: 30, ...mine });
+    await addManualItem(alex, { name: "Private razor blades", ...mine });
+    await getHome(alex);
+    const hid = alex.household.id;
+    const everyTable = [
+      ["inventory_events", inventoryEvents], ["consumption_events", consumptionEvents], ["consumption_stats", consumptionStats],
+      ["predictions", predictions], ["recurring_items", recurringItems], ["shopping_list_items", shoppingListItems], ["inventory_items", inventoryItems],
+    ] as const;
+    // Alex can see his own trail (otherwise the rest of this proves nothing).
+    const seenByAlex = await withUser(alex.user.id, async (tx) => {
+      const out: Record<string, number> = {};
+      for (const [name, table] of everyTable) out[name] = (await tx.select().from(table).where(eq(table.householdId, hid))).length;
+      return out;
+    });
+    // (Predictions are only stored for some items, so there may be none; the rest must exist.)
+    for (const [name] of everyTable) if (name !== "predictions") expect(seenByAlex[name], name).toBeGreaterThan(0);
+    for (const viewer of [jordan, ollie]) {
+      await withUser(viewer.user.id, async (tx) => {
+        for (const [name, table] of everyTable) {
+          const rows = await tx.select().from(table).where(eq(table.householdId, hid));
+          const privateRows = rows.filter((r) => JSON.stringify(r).match(/private:|"private"|Private /i));
+          expect(privateRows, `${name} as ${viewer.role}`).toHaveLength(0);
+        }
+        // Writes aimed at them change nothing.
+        const touched = await tx.update(inventoryItems).set({ notes: "pwned" }).where(eq(inventoryItems.householdId, hid)).returning({ id: inventoryItems.id });
+        expect(touched.every((t) => t.id !== finishedId)).toBe(true);
+        const gone = await tx.delete(recurringItems).where(eq(recurringItems.householdId, hid)).returning({ id: recurringItems.id });
+        expect(gone).toHaveLength(0);
+      });
+    }
+    const [intact] = await systemDb.select().from(inventoryItems).where(eq(inventoryItems.id, finishedId));
+    expect(intact.notes).not.toBe("pwned");
+    expect(await systemDb.select().from(recurringItems).where(eq(recurringItems.householdId, hid))).toHaveLength(1);
+  });
+});
+
+describe("a private purchase isn't the household's", () => {
+  it("buying something private doesn't tick off the household's line for it, only your own", async () => {
+    const alex = await makeHousehold({ name: "Private purchase", plan: "family" });
+    const jordan = await joinHousehold(alex, "member");
+    const sharedLine = await addManualItem(jordan, { name: "Protein bars" });
+    const alexLine = await addManualItem(alex, { name: "Protein bars", ownerMemberId: alex.member.id, visibility: "private" });
+    const [r] = await systemDb
+      .insert(receipts)
+      .values({ householdId: alex.household.id, uploadedBy: alex.user.id, status: "needs_review", storeName: "Shop", purchasedAt: new Date() })
+      .returning();
+    const [row] = await systemDb
+      .insert(receiptItems)
+      .values({ receiptId: r.id, householdId: alex.household.id, lineIndex: 0, rawText: "PROTEIN BARS", name: "Protein bars", aisle: "pantry", location: "pantry", quantity: 1, unit: "each", packCount: 1, matchConfidence: 0.9, isFood: true, status: "pending" })
+      .returning();
+    await confirmReceipt(alex, r.id, {
+      storeName: "Shop",
+      purchasedOn: null,
+      items: [{ id: row.id, include: true, name: "Protein bars", productId: null, quantity: 1, unit: "each", packCount: 1, location: "pantry", existingDecision: null, ownerMemberId: alex.member.id, visibility: "private" }],
+    });
+    const left = (await systemDb.select().from(shoppingListItems).where(eq(shoppingListItems.householdId, alex.household.id))).map((l) => l.id);
+    expect(left).toContain(sharedLine);
+    expect(left).not.toContain(alexLine);
   });
 });

@@ -914,7 +914,8 @@ export async function markPurchasedFromReceipt(
   tx: Tx,
   householdId: string,
   // `ownerMemberId` is who a bought item was assigned to; unassigned matches any line, as it always has.
-  bought: Array<{ productId: string | null; name: string; ownerMemberId?: string | null }>,
+  // `private` means nobody else can use it, so it can only be what that person's own line was waiting for.
+  bought: Array<{ productId: string | null; name: string; ownerMemberId?: string | null; private?: boolean }>,
   opts: { purchasedAt?: Date | null } = {},
 ): Promise<number> {
   const list = await getOrCreateActiveList(tx, householdId);
@@ -935,6 +936,7 @@ export async function markPurchasedFromReceipt(
     return {
       productId: b.productId,
       ownerMemberId: b.ownerMemberId ?? null,
+      private: b.private === true,
       keys: new Set([b.productId ? shoppingItemKey({ productId: b.productId, name: b.name }) : null, nameKey(b.name)].filter(Boolean) as string[]),
       name: singularizePhrase(normalizeText(b.name)),
       group: group ? singularizePhrase(normalizeText(group)) : null,
@@ -944,7 +946,9 @@ export async function markPurchasedFromReceipt(
     const rowName = singularizePhrase(normalizeText(row.name));
     return purchases.some((p) => {
       // Bought for Mum, it satisfies Mum's line and the household's, but not Dad's.
-      const ownerFits = p.ownerMemberId === null || row.ownerMemberId === null || row.ownerMemberId === p.ownerMemberId;
+      const ownerFits = p.private
+        ? row.ownerMemberId === p.ownerMemberId
+        : p.ownerMemberId === null || row.ownerMemberId === null || row.ownerMemberId === p.ownerMemberId;
       const sameThing =
         p.keys.has(row.itemKey) || (row.productId !== null && row.productId === p.productId) || p.name === rowName || p.group === rowName;
       return ownerFits && sameThing;

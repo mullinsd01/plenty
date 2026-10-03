@@ -47,7 +47,7 @@ Keep this file in step with the code. The test `tests/integration/account-deleti
 | `meal_preferences` | likes/dislikes and counts | Better suggestions | Service | Members | Hosting/DB | Until household deletion | Cascade |
 | `meal_plans`, `meal_plan_items` | plan dates, slots, chosen meals | Planning | Service | Members | Hosting/DB | Until deleted | Cascade |
 | `shopping_lists`, `shopping_list_items`, `shopping_list_item_sources` | list, items with owner/requester/visibility, notes (300 characters max), reasons | Shopping | Service | Members; private lines only to their owner. Children can add their own requests | Hosting/DB | Until deleted | Private lines hard-deleted when the owner leaves; cascade |
-| `recurring_items` | recurring purchases, owner, visibility | Recurring list lines | Service | As items | Hosting/DB | Until deleted | `detachMember`; cascade |
+| `recurring_items` | recurring purchases, owner, visibility | Recurring list lines | Service | As items | Hosting/DB | Until deleted | `detachMember` (a leaving person's private ones go; shared ones become the household's); cascade |
 
 ## 4. Receipts
 
