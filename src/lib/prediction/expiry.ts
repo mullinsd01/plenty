@@ -54,7 +54,7 @@ export interface UseSoonAssessment {
   status: UseSoonStatus;
   /** Projected to still have more than 25% left when it expires. */
   atRiskOfWaste: boolean;
-  /** "Expired 2 days ago", "Use today", "Use within 2 days", "Good for about 5 days". */
+  /** "Expired 2 days ago", "Use today", "Use within 2 days", "Around 5 days to go". */
   label: string;
 }
 
@@ -115,7 +115,8 @@ function labelFor(status: UseSoonStatus, days: number): string {
     case "soon":
       return days === 1 ? "Use by tomorrow" : `Use within ${days} days`;
     case "ok":
-      return `Good for about ${formatDuration(days)}`;
+      // A date, not a promise: Plenty can only say how far off it is, never that the food is fine to eat.
+      return `Around ${formatDuration(days)} to go`;
     case "unknown":
       return "No expiry date";
   }

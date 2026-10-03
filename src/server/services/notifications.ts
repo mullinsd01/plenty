@@ -125,10 +125,12 @@ export async function notifyHousemates(
   n: { type: NotificationType; title: string; body: string; link: string; dedupeKey: string },
 ): Promise<void> {
   const members = await db
-    .select({ userId: householdMembers.userId })
+    .select({ userId: householdMembers.userId, role: householdMembers.role })
     .from(householdMembers)
     .where(and(eq(householdMembers.householdId, household.id), sql`${householdMembers.userId} <> ${actorUserId}`));
   for (const m of members) {
+    // A profile without an account has nobody to tell; restricted members aren't sent household-management news.
+    if (!m.userId || m.role === "child") continue;
     await db
       .insert(notifications)
       .values({ householdId: household.id, userId: m.userId, ...n })

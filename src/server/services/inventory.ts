@@ -12,13 +12,26 @@ import {
   type InventorySource,
   type StorageLocation,
 } from "@/lib/domain";
+import { HOUSEHOLD_SCOPE, learningKey, type ItemVisibility } from "@/lib/members/scope";
 import { assessUseSoon, estimateExpiry, type UseSoonAssessment } from "@/lib/prediction/expiry";
 import { formatPackQuantity, isUnit, unitDimension, type Unit } from "@/lib/units";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
-import { withUser, type Tx } from "@/server/db/client";
+import { assertRoomForItems } from "@/server/billing/limits";
+import { withUser, type Queryable, type Tx } from "@/server/db/client";
 import { consumptionEvents, inventoryEvents, inventoryItems, type DbInventoryItem } from "@/server/db/schema";
 import { AppError, notFound } from "@/server/errors";
-import { computeLiveState, itemBaseAmount, recordLifecycleEnd, refreshLearning, type LiveState } from "./learning";
+import {
+  computeLiveState,
+  dailyRateFor,
+  itemBaseAmount,
+  itemScope,
+  predictionFor,
+  recordLifecycleEnd,
+  refreshLearning,
+  type LearningHousehold,
+  type LiveState,
+} from "./learning";
+import { memberNames } from "./members";
 import { ensureCustomProduct, loadProductIndex, resolveProduct, type ProductIndex } from "./products";
 
 const EMPTY_THRESHOLD = 0.02;
@@ -40,6 +53,12 @@ export interface InventoryItemView {
   id: string;
   name: string;
   productId: string | null;
+  /** Whose it is. Null = the household's. */
+  ownerMemberId: string | null;
+  ownerName: string | null;
+  visibility: ItemVisibility;
+  /** It belongs to the person looking. */
+  isMine: boolean;
   location: StorageLocation;
   aisle: Aisle;
   quantity: number;
@@ -72,26 +91,56 @@ function isCountable(item: Pick<DbInventoryItem, "unit" | "quantity">): boolean 
   return unitDimension(unit) === "count" && item.quantity >= 2 && item.quantity <= 36 && Number.isInteger(item.quantity);
 }
 
-/** Whether this is the batch of its product currently being used (the oldest with some left). */
+/** Who's looking, and what their household's plan shows. */
+export interface ItemViewOptions {
+  members: Map<string, string>;
+  myMemberId: string | null;
+  /** Run-out predictions are part of the plan. Without them an item shows only the level someone gave it. */
+  predictions: boolean;
+}
+
+const TRUSTED_VIEW: ItemViewOptions = { members: new Map(), myMemberId: null, predictions: true };
+
+export async function itemViewOptions(ctx: HouseholdContext, db: Queryable): Promise<ItemViewOptions> {
+  return {
+    members: await memberNames(db, ctx.household.id),
+    myMemberId: ctx.member.id,
+    predictions: ctx.plan.entitlements.consumption_predictions,
+  };
+}
+
+/** Whether this is the batch of its product (for its owner) being used right now: the oldest with some left. */
 function isBatchInUse(item: DbInventoryItem, live: LiveState): boolean {
   if (!item.productId) return true;
-  const inUse = live.activeItems.find((i) => i.productId === item.productId && (live.itemFractions.get(i.id) ?? i.remainingFraction) > 0.02);
+  const scope = itemScope(live, item);
+  const inUse = live.activeItems.find(
+    (i) => i.productId === item.productId && itemScope(live, i) === scope && (live.itemFractions.get(i.id) ?? i.remainingFraction) > 0.02,
+  );
   return !inUse || inUse.id === item.id;
 }
 
-export function toItemView(item: DbInventoryItem, live: LiveState, household: Pick<HouseholdInfo, "timezone">): InventoryItemView {
+export function toItemView(
+  item: DbInventoryItem,
+  live: LiveState,
+  household: Pick<HouseholdInfo, "timezone">,
+  opts: ItemViewOptions = TRUSTED_VIEW,
+): InventoryItemView {
   const product = item.productId ? live.index.byId.get(item.productId) ?? null : null;
   const estimated = Math.max(0, Math.min(1, live.itemFractions.get(item.id) ?? item.remainingFraction));
   const today = toDateString(live.now, household.timezone);
   const expiresOn = item.actualExpiry ?? item.estimatedExpiry;
-  const rate = item.productId ? live.dailyRates.get(item.productId) : undefined;
+  const rate = dailyRateFor(live, item);
   const base = itemBaseAmount(item, product);
-  const productPrediction = item.productId ? live.predictions.get(item.productId) : undefined;
+  const productPrediction = opts.predictions ? predictionFor(live, item) : undefined;
   const countable = isCountable(item);
   return {
     id: item.id,
     name: item.name,
     productId: item.productId,
+    ownerMemberId: item.ownerMemberId,
+    ownerName: item.ownerMemberId ? opts.members.get(item.ownerMemberId) ?? null : null,
+    visibility: item.visibility,
+    isMine: item.ownerMemberId !== null && item.ownerMemberId === opts.myMemberId,
     location: item.location as StorageLocation,
     aisle: (product?.aisle ?? "other") as Aisle,
     quantity: item.quantity,
@@ -147,7 +196,8 @@ export interface InventorySnapshot {
 export async function getInventory(ctx: HouseholdContext, now = new Date()): Promise<InventorySnapshot> {
   return withUser(ctx.user.id, async (tx) => {
     const live = await computeLiveState(tx, ctx.household, now);
-    const items = live.activeItems.map((i) => toItemView(i, live, ctx.household));
+    const opts = await itemViewOptions(ctx, tx);
+    const items = live.activeItems.map((i) => toItemView(i, live, ctx.household, opts));
     items.sort(
       (a, b) =>
         STORAGE_LOCATIONS.indexOf(a.location) - STORAGE_LOCATIONS.indexOf(b.location) ||
@@ -213,9 +263,11 @@ export async function getInventoryItem(
           .limit(12)
       : [];
     return {
-      item: toItemView(row, live, ctx.household),
+      item: toItemView(row, live, ctx.household, await itemViewOptions(ctx, tx)),
       status: row.status,
-      otherBatches: row.productId ? live.activeItems.filter((i) => i.productId === row.productId && i.id !== row.id).length : 0,
+      otherBatches: row.productId
+        ? live.activeItems.filter((i) => i.productId === row.productId && i.id !== row.id && itemScope(live, i) === itemScope(live, row)).length
+        : 0,
       events: events.map((e) => ({
         id: e.id,
         type: e.type,
@@ -275,6 +327,10 @@ export interface AddItemInput {
   receiptItemId?: string | null;
   /** Start at this level instead of full (e.g. adding something already half used). */
   remainingFraction?: number | null;
+  /** Whose it is; null or absent = the household's. */
+  ownerMemberId?: string | null;
+  /** `private` keeps it (and what's learned from it) to its owner. */
+  visibility?: ItemVisibility;
 }
 
 function resolveForAdd(index: ProductIndex, input: AddItemInput): ProductInfo | null {
@@ -341,6 +397,8 @@ export async function addItemsTx(
       .values({
         householdId: household.id,
         productId: product.id,
+        ownerMemberId: input.ownerMemberId ?? null,
+        visibility: input.ownerMemberId ? input.visibility ?? "household" : "household",
         name: input.name.trim().slice(0, 120) || product.name,
         location,
         quantity,
@@ -374,10 +432,36 @@ export async function addItemsTx(
   return created;
 }
 
+/**
+ * Check who an item may be assigned to, for the person adding it and their plan.
+ * Anyone can label an item with a household member; private items need the plan's
+ * individual ownership and can only be your own; a restricted member can only add their own.
+ */
+export function resolveOwnership(ctx: HouseholdContext, input: { ownerMemberId?: string | null; visibility?: ItemVisibility }): {
+  ownerMemberId: string | null;
+  visibility: ItemVisibility;
+} {
+  let owner = input.ownerMemberId ?? null;
+  const visibility = input.visibility ?? "household";
+  if (ctx.role === "child") {
+    if (owner !== null && owner !== ctx.member.id) throw new AppError("forbidden", "You can only add things for yourself.");
+    owner = ctx.member.id;
+  }
+  if (visibility === "private") {
+    if (ctx.plan.entitlements.member_ownership !== "full") {
+      throw new AppError("plan_limit", "Private items are part of Plenty Family. Everything else keeps working as it is.");
+    }
+    if (owner !== ctx.member.id) throw new AppError("forbidden", "Only you can make something private to you.");
+  }
+  return { ownerMemberId: owner, visibility: owner === null ? "household" : visibility };
+}
+
 export async function addItems(ctx: HouseholdContext, inputs: AddItemInput[], source: InventorySource = "manual"): Promise<string[]> {
   const now = new Date();
+  await assertRoomForItems(ctx, inputs.length);
+  const owned = inputs.map((input) => ({ ...input, ...resolveOwnership(ctx, input) }));
   return withUser(ctx.user.id, async (tx) => {
-    const created = await addItemsTx(tx, ctx.household, ctx.user.id, inputs, source, now);
+    const created = await addItemsTx(tx, ctx.household, ctx.user.id, owned, source, now);
     await refreshLearning(tx, ctx.household, created.map((c) => c.productId), now);
     return created.map((c) => c.id);
   });
@@ -402,6 +486,9 @@ export interface UpdateItemInput {
   unit?: Unit;
   actualExpiry?: string | null;
   notes?: string | null;
+  /** Reassign to a member (null = the household). */
+  ownerMemberId?: string | null;
+  visibility?: ItemVisibility;
 }
 
 export async function updateItem(ctx: HouseholdContext, id: string, patch: UpdateItemInput): Promise<void> {
@@ -417,6 +504,15 @@ export async function updateItem(ctx: HouseholdContext, id: string, patch: Updat
     if (patch.unit !== undefined) changes.unit = patch.unit;
     if (patch.actualExpiry !== undefined) changes.actualExpiry = patch.actualExpiry;
     if (patch.notes !== undefined) changes.notes = patch.notes?.slice(0, 500) || null;
+    if (patch.ownerMemberId !== undefined || patch.visibility !== undefined) {
+      const owned = resolveOwnership(ctx, {
+        ownerMemberId: patch.ownerMemberId === undefined ? item.ownerMemberId : patch.ownerMemberId,
+        visibility: patch.visibility ?? (patch.ownerMemberId === null ? "household" : item.visibility),
+      });
+      // Reassigning someone else's private item isn't possible: it isn't visible to anyone else in the first place.
+      changes.ownerMemberId = owned.ownerMemberId;
+      changes.visibility = owned.visibility;
+    }
     let moved = false;
     if (patch.location !== undefined && patch.location !== item.location) {
       moved = true;
@@ -449,7 +545,7 @@ export async function updateItem(ctx: HouseholdContext, id: string, patch: Updat
       note: moved ? `Moved to ${patch.location}` : null,
       occurredAt: now,
     });
-    await refreshLearning(tx, ctx.household, [], now);
+    await refreshLearning(tx, ctx.household, [item.productId], now);
   });
 }
 
@@ -505,7 +601,7 @@ function inferEndTime(item: DbInventoryItem, predictedRunOutAt: Date | null, upp
 
 export async function finishItemTx(
   tx: Tx,
-  household: Pick<HouseholdInfo, "id" | "adults" | "children" | "timezone">,
+  household: LearningHousehold,
   userId: string | null,
   item: DbInventoryItem,
   outcome: ConsumptionOutcome,
@@ -616,12 +712,14 @@ export async function restoreItem(ctx: HouseholdContext, id: string): Promise<vo
  * are empty (dated to when they most likely ran out); No sets them to "low"
  * and stops asking for a couple of days. Either way Plenty learns.
  */
-export async function answerCheckIn(ctx: HouseholdContext, productId: string, finished: boolean): Promise<void> {
+export async function answerCheckIn(ctx: HouseholdContext, productId: string, finished: boolean, scope: string = HOUSEHOLD_SCOPE): Promise<void> {
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const live = await computeLiveState(tx, ctx.household, now);
-    const p = live.predictions.get(productId);
-    const items = live.activeItems.filter((i) => i.productId === productId);
+    // A check-in is about one person's (or the household's) stock of a product; the database already
+    // hides what this person isn't allowed to see, so a made-up scope simply finds nothing.
+    const p = live.predictions.get(learningKey(productId, scope));
+    const items = live.activeItems.filter((i) => i.productId === productId && itemScope(live, i) === scope);
     if (items.length === 0) return;
     if (finished) {
       const runOut = p ? p.emptyAt : null;
@@ -701,7 +799,7 @@ export async function clearOutItems(ctx: HouseholdContext, ids: string[]): Promi
  */
 export async function consumeForMealTx(
   tx: Tx,
-  household: Pick<HouseholdInfo, "id" | "adults" | "children" | "timezone">,
+  household: LearningHousehold,
   userId: string,
   usage: Array<{ itemId: string; amount: number }>,
   mealPlanItemId: string | null,

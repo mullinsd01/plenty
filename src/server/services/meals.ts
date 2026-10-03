@@ -41,6 +41,7 @@ import { AppError, notFound } from "@/server/errors";
 import { consumeForMealTx } from "./inventory";
 import { computeLiveState, householdSizeOf, refreshLearning, type LiveState } from "./learning";
 import { loadPlannableMeals, lotsFromLive } from "./meal-data";
+import { combinedFoodRules } from "./members";
 import { notifyHousemates } from "./notifications";
 import { inferContains, loadProductIndex, resolveProduct } from "./products";
 import { syncShoppingList } from "./shopping";
@@ -130,10 +131,14 @@ async function loadContext(tx: Tx, ctx: HouseholdContext, now: Date, live?: Live
       },
     ]),
   );
+  // The household's own settings plus everyone's personal food rules, combined without saying whose:
+  // nobody has to share their allergies for meals to keep them in mind.
+  const personal = await combinedFoodRules(tx, ctx.household.id);
+  const union = <T extends string>(a: readonly T[], b: readonly string[]): T[] => [...new Set<string>([...a, ...b])] as T[];
   const plannerPrefs: PlannerPreferences = {
-    diets: (prefs?.diets ?? []) as Diet[],
-    allergies: (prefs?.allergies ?? []) as Allergen[],
-    dislikedIngredients: prefs?.dislikedIngredients ?? [],
+    diets: union((prefs?.diets ?? []) as Diet[], personal.diets),
+    allergies: union((prefs?.allergies ?? []) as Allergen[], personal.allergies),
+    dislikedIngredients: union(prefs?.dislikedIngredients ?? [], personal.dislikedIngredients),
     favouriteCuisines: (prefs?.favouriteCuisines ?? []) as Cuisine[],
     weeknightMaxMinutes: prefs?.weeknightMaxMinutes ?? null,
     householdSize: householdSizeOf(ctx.household),

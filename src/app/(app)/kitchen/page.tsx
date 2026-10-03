@@ -13,7 +13,7 @@ export default async function KitchenPage() {
   const ctx = await requireHousehold();
   const [inventory, finished] = await Promise.all([getInventory(ctx), recentlyFinished(ctx)]);
   // Count things, not purchases (three lots of bananas are one thing).
-  const thingKey = (i: (typeof inventory.items)[number]) => `${i.productId ?? i.name.toLowerCase()}|${i.location}`;
+  const thingKey = (i: (typeof inventory.items)[number]) => `${i.productId ?? i.name.toLowerCase()}|${i.location}|${i.ownerMemberId ?? "household"}|${i.visibility}`;
   const things = new Set(inventory.items.map(thingKey)).size;
   const lowCount = new Set(inventory.items.filter((i) => i.estimatedFraction <= 0.3).map(thingKey)).size;
   return (

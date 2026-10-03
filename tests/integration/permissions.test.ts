@@ -2,7 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { pool, systemDb, withUser } from "@/server/db/client";
 import { householdMembers, inventoryItems, notifications, sessions, shoppingListItems } from "@/server/db/schema";
-import { acceptInvitation, createInvitation, removeMember } from "@/server/services/household";
+import { acceptInvitation, createInvitation } from "@/server/services/household";
+import { listMembers, removeMember } from "@/server/services/members";
 import { addItems, getInventory, removeItem, setLevel } from "@/server/services/inventory";
 import { addManualItem, getShoppingList } from "@/server/services/shopping";
 import { search } from "@/server/services/search";
@@ -97,7 +98,8 @@ describe("household isolation (permissions + row-level security)", () => {
     );
     expect(list.length).toBeGreaterThan(0);
 
-    await removeMember(b, a.user.id);
+    const joined = (await listMembers(b)).find((m) => m.userId === a.user.id);
+    await removeMember(b, joined!.id);
     const after = await withUser(a.user.id, (tx) =>
       tx.select({ n: sql<number>`count(*)` }).from(inventoryItems).where(eq(inventoryItems.householdId, b.household.id)),
     );

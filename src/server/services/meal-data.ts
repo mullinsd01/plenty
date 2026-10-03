@@ -2,10 +2,11 @@ import "server-only";
 import { and, asc, eq, gte, inArray, isNull, or } from "drizzle-orm";
 import type { ContainsFlag, Cuisine, Difficulty, StorageLocation } from "@/lib/domain";
 import type { InventoryLot, PlannableMeal } from "@/lib/meals/types";
+import { learningKey } from "@/lib/members/scope";
 import type { Unit } from "@/lib/units";
 import type { Queryable } from "@/server/db/client";
 import { mealIngredients, mealPlanItems, meals, type DbMeal } from "@/server/db/schema";
-import { itemBaseAmount, type LiveState } from "./learning";
+import { dailyRateFor, itemBaseAmount, itemScope, type LiveState } from "./learning";
 
 function toPlannable(meal: DbMeal, ingredients: Array<typeof mealIngredients.$inferSelect>): PlannableMeal {
   return {
@@ -59,25 +60,32 @@ export async function loadPlannableMeals(
   return new Map(mealRows.map((m) => [m.id, toPlannable(m, byMeal.get(m.id) ?? [])]));
 }
 
-/** Current kitchen as lots for the meal and shopping engines (using estimated levels). */
 /**
  * The kitchen as the meal and shopping engines see it. The batch of each
- * product that's currently being used carries the household's everyday pace,
- * so meals later in the week don't count milk or bread that will have gone
- * into lunches by then.
+ * product that's currently being used carries the everyday pace of whoever
+ * it belongs to, so meals later in the week don't count milk or bread that
+ * will have gone into lunches by then.
+ *
+ * Meals are planned for the household, so a person's private items are left
+ * out: the plan is shared, and it shouldn't be shaped by (or reveal) food
+ * only one person can see. Items that belong to someone but are shared with
+ * the household still count.
  */
 export function lotsFromLive(live: LiveState, today: string): InventoryLot[] {
+  const shared = live.activeItems.filter((item) => item.visibility !== "private");
   const inUse = new Set<string>();
   const seen = new Set<string>();
-  for (const item of live.activeItems) {
-    if (!item.productId || seen.has(item.productId)) continue;
+  for (const item of shared) {
+    if (!item.productId) continue;
+    const key = learningKey(item.productId, itemScope(live, item));
+    if (seen.has(key)) continue;
     if ((live.itemFractions.get(item.id) ?? item.remainingFraction) <= 0.02) continue;
-    seen.add(item.productId);
+    seen.add(key);
     inUse.add(item.id);
   }
-  return live.activeItems.map((item) => {
+  return shared.map((item) => {
     const product = item.productId ? live.index.byId.get(item.productId) ?? null : null;
-    const rate = item.productId ? live.dailyRates.get(item.productId) : undefined;
+    const rate = dailyRateFor(live, item);
     const base = product ? itemBaseAmount(item, product) : null;
     const dailyUseFraction = inUse.has(item.id) && rate && base && base.amount > 0 ? rate / base.amount : 0;
     return {

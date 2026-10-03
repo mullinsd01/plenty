@@ -7,13 +7,23 @@ import { spendSummary, wasteInsights } from "@/lib/insights";
 import type { HouseholdContext } from "@/server/auth/context";
 import { withUser } from "@/server/db/client";
 import { mealPlanItems, predictions, receiptItems, receipts, shoppingListItems, preferences } from "@/server/db/schema";
-import { toItemView } from "./inventory";
-import { computeLiveState, persistPredictions, type LiveState } from "./learning";
+import { HOUSEHOLD_SCOPE, learningKey, scopeOf } from "@/lib/members/scope";
+import { itemViewOptions, toItemView } from "./inventory";
+import { computeLiveState, itemScope, persistPredictions, type LiveState } from "./learning";
 import { getMealPlan, type MealPlanView } from "./meals";
+import { memberNames } from "./members";
 import { getOrCreateActiveList, loadShoppingRhythm } from "./shopping";
 
 export interface RunningLowView {
   productId: string;
+  /** Whose pace this is (see `src/lib/members/scope.ts`); `household` for shared things. */
+  scope: string;
+  /** Set when the item belongs to one person: "Pepsi Max — Dad". */
+  ownerName: string | null;
+  /** The signed-in person owns it. */
+  ownerIsYou: boolean;
+  /** `prediction` comes from how fast it gets used; `level` is simply what someone marked as nearly empty. */
+  source: "prediction" | "level";
   name: string;
   label: string;
   daysRemaining: number;
@@ -27,6 +37,8 @@ export interface RunningLowView {
 export interface UseSoonView {
   itemId: string;
   name: string;
+  /** Set when the item belongs to one person. */
+  ownerName: string | null;
   label: string;
   status: string;
   daysUntilExpiry: number | null;
@@ -43,6 +55,9 @@ export interface PastDateView {
 
 export interface CheckInView {
   productId: string;
+  scope: string;
+  ownerName: string | null;
+  ownerIsYou: boolean;
   name: string;
 }
 
@@ -65,6 +80,8 @@ export interface DashboardView {
   hasAnyReceipt: boolean;
 }
 
+/** At or below this level (what someone set in the kitchen), an item counts as nearly finished on plans without predictions. */
+const LOW_LEVEL_FRACTION = 0.2;
 /** Days past its date before Plenty assumes something is gone and offers to clear it out. */
 const PAST_DATE_AFTER_DAYS = 4;
 /**
@@ -103,26 +120,48 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
     }
 
     const list = await getOrCreateActiveList(tx, ctx.household.id);
+    const names = await memberNames(tx, ctx.household.id);
+    const itemOptions = await itemViewOptions(ctx, tx);
     const listRows = await tx
-      .select({ productId: shoppingListItems.productId, checkedAt: shoppingListItems.checkedAt, dismissedUntil: shoppingListItems.dismissedUntil })
+      .select({
+        productId: shoppingListItems.productId,
+        ownerMemberId: shoppingListItems.ownerMemberId,
+        visibility: shoppingListItems.visibility,
+        checkedAt: shoppingListItems.checkedAt,
+        dismissedUntil: shoppingListItems.dismissedUntil,
+      })
       .from(shoppingListItems)
       .where(and(eq(shoppingListItems.listId, list.id), isNull(shoppingListItems.purchasedAt)));
     const visibleList = listRows.filter((r) => !r.dismissedUntil || r.dismissedUntil <= now);
-    const onList = new Set(visibleList.map((r) => r.productId).filter(Boolean) as string[]);
+    // On the list already: the household's line covers anyone's pace; a person's line covers theirs.
+    const onList = new Set(visibleList.filter((r) => r.productId).map((r) => learningKey(r.productId!, scopeOf(r))));
+    const isOnList = (productId: string, scope: string) =>
+      onList.has(learningKey(productId, scope)) || (scope === HOUSEHOLD_SCOPE && visibleList.some((r) => r.productId === productId));
 
     const checkIns: CheckInView[] = [];
     const runningLow: RunningLowView[] = [];
     for (const p of live.predictions.values()) {
       if (p.paused) continue;
       const snoozed = p.items.some((i) => i.checkInSnoozedUntil && i.checkInSnoozedUntil > now);
+      const ownerName = p.ownerMemberId ? names.get(p.ownerMemberId) ?? null : null;
       if (p.prediction.needsCheckIn && !snoozed) {
         // Loose things counted one by one read better in the plural: "Did you finish the apples?"
-        checkIns.push({ productId: p.productId, name: p.product.unit === "each" ? pluralNoun(p.product.name) : p.product.name });
+        checkIns.push({
+          productId: p.productId,
+          scope: p.scope,
+          ownerName,
+          ownerIsYou: p.ownerMemberId === ctx.member.id,
+          name: p.product.unit === "each" ? pluralNoun(p.product.name) : p.product.name,
+        });
         continue;
       }
       if (p.prediction.daysRemaining <= 5) {
         runningLow.push({
           productId: p.productId,
+          scope: p.scope,
+          ownerName,
+          ownerIsYou: p.ownerMemberId === ctx.member.id,
+          source: "prediction",
           name: p.product.name,
           label: p.prediction.label,
           daysRemaining: p.prediction.daysRemaining,
@@ -130,7 +169,36 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
           basis: p.prediction.basis,
           basisLabel: PREDICTION_BASIS_LABELS[p.prediction.basis],
           reason: p.prediction.reason,
-          onList: onList.has(p.productId),
+          onList: isOnList(p.productId, p.scope),
+        });
+      }
+    }
+    // Plans without predictions still answer "what are we low on?" from what people have told Plenty:
+    // anything marked as nearly empty.
+    if (!ctx.household.predictive) {
+      const seen = new Set<string>();
+      for (const item of live.activeItems) {
+        if (!item.productId || item.remainingFraction > LOW_LEVEL_FRACTION) continue;
+        const scope = itemScope(live, item);
+        const key = learningKey(item.productId, scope);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const product = live.index.byId.get(item.productId);
+        if (!product) continue;
+        runningLow.push({
+          productId: item.productId,
+          scope,
+          ownerName: item.ownerMemberId ? names.get(item.ownerMemberId) ?? null : null,
+          ownerIsYou: item.ownerMemberId === ctx.member.id,
+          source: "level",
+          name: product.name,
+          label: "Nearly finished",
+          daysRemaining: 0,
+          confidence: "high",
+          basis: "estimate",
+          basisLabel: "You marked it nearly empty",
+          reason: "You marked this as nearly empty.",
+          onList: isOnList(item.productId, scope),
         });
       }
     }
@@ -141,7 +209,7 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
     const pastDateIds: string[] = [];
     const pastDateCounts = new Map<string, number>();
     for (const item of live.activeItems) {
-      const view = toItemView(item, live, ctx.household);
+      const view = toItemView(item, live, ctx.household, itemOptions);
       const s = view.useSoon;
       if (s.status === "expired" && (s.daysUntilExpiry ?? 0) <= -PAST_DATE_AFTER_DAYS) {
         pastDateIds.push(item.id);
@@ -150,10 +218,10 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
       }
       if (view.estimatedFraction < 0.08) continue;
       if (s.status !== "expired" && s.status !== "today" && s.status !== "soon") continue;
-      const key = item.productId ?? view.name.toLowerCase();
+      const key = `${item.productId ?? view.name.toLowerCase()}|${itemScope(live, item)}`;
       const existing = useSoonByKey.get(key);
       if (!existing) {
-        useSoonByKey.set(key, { itemId: item.id, name: view.name, label: s.label, status: s.status, daysUntilExpiry: s.daysUntilExpiry, count: 1 });
+        useSoonByKey.set(key, { itemId: item.id, name: view.name, ownerName: view.ownerName, label: s.label, status: s.status, daysUntilExpiry: s.daysUntilExpiry, count: 1 });
       } else {
         existing.count += 1;
         if ((s.daysUntilExpiry ?? 99) < (existing.daysUntilExpiry ?? 99)) {
@@ -216,9 +284,10 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
           purchaseCount: s.purchaseCount,
         })),
     );
-    if (waste[0]) insights.push(`${waste[0].message} ${waste[0].suggestion}`);
-    const learned = [...live.statsRows.values()].filter((s) => s.basis === "history").length;
-    if (learned >= 3) insights.push(`Plenty has learned how fast your household gets through ${learned} things.`);
+    // Waste and spending analytics are part of the Family plan; learned paces come with predictions.
+    if (ctx.plan.entitlements.household_analytics && waste[0]) insights.push(`${waste[0].message} ${waste[0].suggestion}`);
+    const learned = new Set([...live.statsRows.values()].filter((s) => s.basis === "history").map((s) => s.productId)).size;
+    if (ctx.household.predictive && learned >= 3) insights.push(`Plenty has learned how fast your household gets through ${learned} things.`);
     const [prefs] = await tx.select({ weeklyBudget: preferences.weeklyBudget }).from(preferences).where(eq(preferences.householdId, ctx.household.id)).limit(1);
     const receiptTotals = await tx
       .select({ purchasedAt: receipts.purchasedAt, total: receipts.total })
@@ -233,7 +302,7 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
       today,
       weeklyBudget: prefs?.weeklyBudget ?? null,
     });
-    if (spend.label) insights.push(spend.label);
+    if (ctx.plan.entitlements.household_analytics && spend.label) insights.push(spend.label);
 
     return {
       greeting: greetingFor(hourInTimeZone(now, tz)),

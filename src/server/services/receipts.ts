@@ -25,8 +25,9 @@ import {
 import { AppError, notFound } from "@/server/errors";
 import { deleteFile, readStoredFile, receiptImageKey, saveFile } from "@/server/storage/files";
 import { MAX_STORED_EDGE_PX, prepareReceiptImage, ReceiptImageError } from "@/server/receipts/image";
-import { addItemsTx, finishItemTx, inferEndTime } from "./inventory";
-import { computeLiveState, refreshLearning } from "./learning";
+import { scopeOf, type ItemVisibility } from "@/lib/members/scope";
+import { addItemsTx, finishItemTx, inferEndTime, resolveOwnership } from "./inventory";
+import { computeLiveState, predictionFor, refreshLearning } from "./learning";
 import { loadProductIndex, matchOptions, productCandidates, rememberAlias, type ProductIndex } from "./products";
 import { markPurchasedFromReceipt, syncShoppingList } from "./shopping";
 
@@ -259,11 +260,14 @@ async function extractWithFallback(
   }
 }
 
+/** What reading a receipt needs to know about its household. */
+export type ReceiptHousehold = Pick<HouseholdInfo, "id" | "timezone" | "currency">;
+
 /**
  * Read a stored receipt photo, extract its lines and prepare them for review.
  * Never changes the kitchen — that only happens when the user confirms.
  */
-export async function processReceipt(userId: string, household: HouseholdInfo, receiptId: string): Promise<void> {
+export async function processReceipt(userId: string, household: ReceiptHousehold, receiptId: string): Promise<void> {
   const now = new Date();
   // Claim the receipt: only one attempt at a time, and a stalled attempt can be taken over.
   const claimedAt = await withUser(userId, async (tx) => {
@@ -608,6 +612,13 @@ export async function getReceiptReview(ctx: HouseholdContext, receiptId: string,
             summary: `Already added from your shopping list`,
             suggestion: "merge",
           };
+        } else if (batches.length > 1 && new Set(batches.map((b) => scopeOf(b))).size > 1) {
+          // Dad's and Mum's are separate: Plenty won't guess which one this purchase replaces.
+          existing = {
+            itemIds: batches.map((b) => b.id),
+            summary: `You already have ${product?.name.toLowerCase() ?? row.name.toLowerCase()} belonging to more than one person`,
+            suggestion: "keep",
+          };
         } else if (batches.length > 0) {
           const fractions = batches.map((b) => live.itemFractions.get(b.id) ?? b.remainingFraction);
           const left = Math.max(...fractions);
@@ -673,6 +684,10 @@ export interface ConfirmItemInput {
   packCount: number;
   location: StorageLocation;
   existingDecision: "replace" | "keep" | "merge" | null;
+  /** Whose it is: a member's id, null for the household, or absent to leave it as the household's. */
+  ownerMemberId?: string | null;
+  /** `private` keeps it to its owner (a Family-plan feature). */
+  visibility?: ItemVisibility;
 }
 
 export interface ConfirmReceiptInput {
@@ -720,7 +735,7 @@ export async function confirmReceipt(
     const accepted = input.items.filter((i) => i.include && byId.has(i.id));
     const touchedProducts: Array<string | null> = [];
     /** What actually went into the kitchen, with the products it resolved to — ticked off the list afterwards. */
-    const bought: Array<{ productId: string | null; name: string }> = [];
+    const bought: Array<{ productId: string | null; name: string; ownerMemberId?: string | null }> = [];
     /** Shopping-list batches already taken over by an earlier line of this receipt. */
     const merged = new Set<string>();
     let added = 0;
@@ -739,6 +754,7 @@ export async function confirmReceipt(
         throw new AppError("validation", `Check the amount for ${item.name}.`);
       }
       const productId = item.productId && index.byId.has(item.productId) ? item.productId : null;
+      const owned = resolveOwnership(ctx, item);
 
       // Merge into a batch already added from the shopping list, instead of duplicating it — only one
       // the review offered for this line (same product, same shop), and each batch only once: a second
@@ -762,7 +778,7 @@ export async function confirmReceipt(
             .where(eq(inventoryItems.id, target.id));
           await tx.update(receiptItems).set({ status: "accepted", productId, inventoryItemId: target.id, name: item.name }).where(eq(receiptItems.id, row.id));
           touchedProducts.push(productId);
-          bought.push({ productId, name: item.name });
+          bought.push({ productId, name: item.name, ownerMemberId: item.ownerMemberId === undefined ? null : target.ownerMemberId });
           continue;
         }
       }
@@ -773,8 +789,15 @@ export async function confirmReceipt(
       // bought before this receipt — even if the household then corrected the product.
       const shownProductId = row.productId ?? productId;
       if (item.existingDecision === "replace" && shownProductId) {
-        const previous = live.activeItems.filter((i) => i.productId === shownProductId && i.purchasedAt < reviewTime);
-        const emptyAt = live.predictions.get(shownProductId)?.emptyAt ?? null;
+        let previous = live.activeItems.filter((i) => i.productId === shownProductId && i.purchasedAt < reviewTime);
+        // Assigned to Dad, it replaces Dad's; with no one chosen it only replaces when they all belong together.
+        previous =
+          item.ownerMemberId === undefined
+            ? new Set(previous.map((i) => scopeOf(i))).size > 1
+              ? []
+              : previous
+            : previous.filter((i) => i.ownerMemberId === owned.ownerMemberId);
+        const emptyAt = previous[0] ? predictionFor(live, previous[0])?.emptyAt ?? null : null;
         for (const old of previous) {
           const upper = effectivePurchase > old.purchasedAt ? effectivePurchase : now;
           await finishItemTx(tx, ctx.household, ctx.user.id, old, "consumed", {
@@ -801,6 +824,8 @@ export async function confirmReceipt(
             price: row.totalPrice,
             receiptItemId: row.id,
             confidence: row.matchConfidence >= MATCH_CONFIDENT || productId !== row.productId ? "high" : "medium",
+            ownerMemberId: owned.ownerMemberId,
+            visibility: owned.visibility,
           },
         ],
         "receipt",
@@ -808,7 +833,7 @@ export async function confirmReceipt(
       );
       added += 1;
       touchedProducts.push(created.productId);
-      bought.push({ productId: created.productId, name: item.name });
+      bought.push({ productId: created.productId, name: item.name, ownerMemberId: item.ownerMemberId === undefined ? null : owned.ownerMemberId });
       await tx
         .update(receiptItems)
         .set({

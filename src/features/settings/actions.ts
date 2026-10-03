@@ -10,6 +10,7 @@ import { clearSessionCookie, getCurrentSession, invalidateAllSessions, invalidat
 import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { AppError, parseInput, toUserError } from "@/server/errors";
 import * as households from "@/server/services/household";
+import * as members from "@/server/services/members";
 import { deleteHouseholdFiles } from "@/server/storage/files";
 import { changePasswordSchema, emailSchema, nameSchema } from "@/validation/auth";
 import { householdBasicsSchema, notificationSettingsSchema, preferencesSchema, type PreferencesInput } from "@/validation/household";
@@ -88,8 +89,8 @@ export async function revokeInvitesAction() {
   });
 }
 
-export async function removeMemberAction(userId: string) {
-  return householdAction("settings.removeMember", async (ctx) => households.removeMember(ctx, parseInput(z.uuid(), userId)), {
+export async function removeMemberAction(memberId: string) {
+  return householdAction("settings.removeMember", async (ctx) => members.removeMember(ctx, parseInput(z.uuid(), memberId)), {
     message: "Removed from the household",
   });
 }

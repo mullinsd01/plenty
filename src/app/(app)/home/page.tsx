@@ -7,8 +7,12 @@ import { MealArt } from "@/components/food/meal-art";
 import { Button } from "@/components/ui/button";
 import { Card, SectionTitle } from "@/components/ui/card";
 import { AddToListButton, CheckInList, PastDateCard, PlanTonightButton, TonightActions } from "@/features/home/home-client";
+import { PersonChip } from "@/components/ui/person-chip";
 import { cn } from "@/lib/cn";
 import { formatMoney, pluralize, remainingPhrase } from "@/lib/format";
+import { can, isRestricted } from "@/lib/members/permissions";
+import { isPrivateScope, scopeOwner } from "@/lib/members/scope";
+import { listMemberOptions } from "@/server/services/members";
 import { requireHousehold } from "@/server/auth/context";
 import { getHome } from "@/server/services/dashboard";
 import { refreshNotifications } from "@/server/services/notification-jobs";
@@ -17,8 +21,13 @@ export const metadata: Metadata = { title: "Home" };
 
 export default async function HomePage() {
   const ctx = await requireHousehold();
-  const { dashboard: d, plan } = await getHome(ctx);
-  after(() => refreshNotifications(ctx));
+  const [{ dashboard: d, plan }, members] = await Promise.all([getHome(ctx), listMemberOptions(ctx)]);
+  // Children see what the household shares; receipts, prices and meal planning are for the adults.
+  const restricted = isRestricted(ctx.role);
+  const canSeeReceipts = can(ctx.role, "view_receipts_and_prices");
+  const canPlanMeals = can(ctx.role, "plan_meals");
+  const colorOf = (memberId: string | null) => (memberId ? members.find((m) => m.id === memberId)?.color : undefined);
+  if (!restricted) after(() => refreshNotifications(ctx));
 
   const tonight = plan.days.find((day) => day.date === plan.today)?.item ?? null;
   const upcoming = plan.days.filter((day) => day.date !== plan.today && day.item?.status === "planned").slice(0, 3);
@@ -34,7 +43,7 @@ export default async function HomePage() {
         </h1>
       </header>
 
-      {d.receiptsNeedingReview.length > 0 && (
+      {canSeeReceipts && d.receiptsNeedingReview.length > 0 && (
         <div className="mb-5 space-y-2">
           {d.receiptsNeedingReview.map((r) => (
             <Link
@@ -50,7 +59,9 @@ export default async function HomePage() {
                   {r.status === "processing" ? "Reading your receipt…" : "Your receipt is ready to check"}
                 </span>
                 <span className="block truncate text-[13px] text-ink-3">
-                  {r.status === "processing" ? "This usually takes a few seconds." : `${r.store ?? "Receipt"} · confirm it to update your kitchen`}
+                  {r.status === "processing"
+                    ? "This usually takes a few seconds."
+                    : `${r.store ?? "Receipt"} · confirm it to update your kitchen`}
                 </span>
               </span>
               <ArrowRight className="size-4 text-ink-4" />
@@ -72,15 +83,24 @@ export default async function HomePage() {
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] lg:gap-10">
           <div className="space-y-8">
             <section aria-labelledby="running-low">
-              <SectionTitle id="running-low" action={<Link href="/kitchen" className="text-[13px] font-medium text-ink-3 hover:text-ink">Kitchen</Link>}>
+              <SectionTitle
+                id="running-low"
+                action={
+                  <Link href="/kitchen" className="text-[13px] font-medium text-ink-3 hover:text-ink">
+                    Kitchen
+                  </Link>
+                }
+              >
                 Running low
               </SectionTitle>
               {d.runningLow.length === 0 ? (
-                <QuietCard>{allClear ? "Nothing's about to run out. Plenty is keeping an eye on things." : "Nothing's about to run out."}</QuietCard>
+                <QuietCard>
+                  {allClear ? "Nothing's about to run out. Plenty is keeping an eye on things." : "Nothing's about to run out."}
+                </QuietCard>
               ) : (
                 <Card className="divide-y divide-line">
                   {d.runningLow.map((item) => (
-                    <div key={item.productId} className="flex items-center gap-3 px-4 py-3.5">
+                    <div key={`${item.productId}|${item.scope}`} className="flex items-center gap-3 px-4 py-3.5">
                       <span
                         className={cn(
                           "size-2.5 shrink-0 rounded-full",
@@ -89,14 +109,34 @@ export default async function HomePage() {
                         aria-hidden
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[15px] font-semibold">{item.name}</p>
+                        <p className="truncate text-[15px] font-semibold">
+                          {item.name}
+                          {item.ownerName && (
+                            <PersonChip
+                              name={item.ownerIsYou ? "You" : item.ownerName}
+                              color={colorOf(scopeOwner(item.scope))}
+                              isPrivate={isPrivateScope(item.scope)}
+                              className="ml-2 align-middle"
+                            />
+                          )}
+                        </p>
                         <p className="text-[13px] text-ink-3">
-                          {remainingPhrase(item.label)}
-                          <span className="mx-1.5 text-ink-4">·</span>
-                          <BasisLabel basis={item.basis} confidence={item.confidence} className="align-middle text-[12px]" />
+                          {item.source === "level" ? item.reason : remainingPhrase(item.label)}
+                          {item.source === "prediction" && (
+                            <>
+                              <span className="mx-1.5 text-ink-4">·</span>
+                              <BasisLabel basis={item.basis} confidence={item.confidence} className="align-middle text-[12px]" />
+                            </>
+                          )}
                         </p>
                       </div>
-                      <AddToListButton name={item.name} onList={item.onList} />
+                      <AddToListButton
+                        name={item.name}
+                        onList={item.onList}
+                        ownerMemberId={scopeOwner(item.scope)}
+                        visibility={isPrivateScope(item.scope) ? "private" : "household"}
+                        request={restricted}
+                      />
                     </div>
                   ))}
                 </Card>
@@ -117,7 +157,11 @@ export default async function HomePage() {
                 </SectionTitle>
                 <Card className="divide-y divide-line">
                   {d.useSoon.map((item) => (
-                    <Link key={item.itemId} href={`/kitchen/${item.itemId}`} className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-subtle/60">
+                    <Link
+                      key={item.itemId}
+                      href={`/kitchen/${item.itemId}`}
+                      className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-subtle/60"
+                    >
                       <span
                         className={cn(
                           "flex size-8 shrink-0 items-center justify-center rounded-full",
@@ -129,9 +173,12 @@ export default async function HomePage() {
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[15px] font-semibold">
                           {item.name}
+                          {item.ownerName && <PersonChip name={item.ownerName} className="ml-2 align-middle" />}
                           {item.count > 1 && <span className="ml-1.5 text-[13px] font-medium text-ink-3">×{item.count}</span>}
                         </p>
-                        <p className="text-[13px] text-ink-3">{item.count > 1 ? `Oldest: ${item.label.charAt(0).toLowerCase()}${item.label.slice(1)}` : item.label}</p>
+                        <p className="text-[13px] text-ink-3">
+                          {item.count > 1 ? `Oldest: ${item.label.charAt(0).toLowerCase()}${item.label.slice(1)}` : item.label}
+                        </p>
                       </div>
                     </Link>
                   ))}
@@ -140,7 +187,14 @@ export default async function HomePage() {
             )}
 
             <section aria-labelledby="tonight">
-              <SectionTitle id="tonight" action={<Link href="/meals" className="text-[13px] font-medium text-ink-3 hover:text-ink">Meal plan</Link>}>
+              <SectionTitle
+                id="tonight"
+                action={
+                  <Link href="/meals" className="text-[13px] font-medium text-ink-3 hover:text-ink">
+                    Meal plan
+                  </Link>
+                }
+              >
                 Tonight
               </SectionTitle>
               {tonight && tonight.status === "planned" ? (
@@ -160,24 +214,30 @@ export default async function HomePage() {
                       {tonight.reason && <p className="mt-1 text-[13px] text-fresh">{tonight.reason}</p>}
                     </div>
                   </div>
-                  <div className="mt-4">
-                    <TonightActions planItemId={tonight.id} mealId={tonight.meal.id} />
-                  </div>
+                  {canPlanMeals && (
+                    <div className="mt-4">
+                      <TonightActions planItemId={tonight.id} mealId={tonight.meal.id} />
+                    </div>
+                  )}
                 </Card>
               ) : tonight && tonight.status === "cooked" ? (
-                <QuietCard>
-                  You made {tonight.meal.name.toLowerCase()} tonight. Plenty took the ingredients out of your kitchen.
-                </QuietCard>
+                <QuietCard>You made {tonight.meal.name.toLowerCase()} tonight. Plenty took the ingredients out of your kitchen.</QuietCard>
               ) : (
                 <Card className="p-5">
                   <p className="text-[15px] font-semibold">Nothing planned for tonight</p>
-                  <p className="mt-1 text-[14px] text-ink-3">Plenty will pick something that uses what you already have.</p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <PlanTonightButton />
-                    <Button asChild size="sm" variant="secondary">
-                      <Link href="/meals/cook">What can I make?</Link>
-                    </Button>
-                  </div>
+                  {canPlanMeals ? (
+                    <>
+                      <p className="mt-1 text-[14px] text-ink-3">Plenty will pick something that uses what you already have.</p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <PlanTonightButton />
+                        <Button asChild size="sm" variant="secondary">
+                          <Link href="/meals/cook">What can I make?</Link>
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="mt-1 text-[14px] text-ink-3">An adult will sort dinner out.</p>
+                  )}
                 </Card>
               )}
               {upcoming.length > 0 && (
@@ -210,7 +270,9 @@ export default async function HomePage() {
                       {d.nextShop.itemCount === 0 ? "Nothing needed yet" : pluralize(d.nextShop.itemCount, "item")}
                     </p>
                     <p className="text-[13px] text-ink-3">
-                      {d.nextShop.dateLabel && d.nextShop.basis !== "default" ? `Probably ${d.nextShop.dateLabel.toLowerCase()}` : "Your smart list"}
+                      {d.nextShop.dateLabel && d.nextShop.basis !== "default"
+                        ? `Probably ${d.nextShop.dateLabel.toLowerCase()}`
+                        : "Your smart list"}
                       {d.nextShop.checkedCount > 0 && ` · ${d.nextShop.checkedCount} in the trolley`}
                     </p>
                   </div>
@@ -219,39 +281,52 @@ export default async function HomePage() {
               </Link>
             </section>
 
-            <section aria-labelledby="recent-receipt">
-              <SectionTitle id="recent-receipt" action={<Link href="/receipts" className="text-[13px] font-medium text-ink-3 hover:text-ink">All receipts</Link>}>
-                Recent receipt
-              </SectionTitle>
-              {d.recentReceipt ? (
-                <Link href={`/receipts/${d.recentReceipt.id}`} className="group block">
-                  <Card className="flex items-center gap-4 p-4 transition group-hover:border-line-strong">
-                    <span className="flex size-11 items-center justify-center rounded-2xl bg-subtle text-ink-2">
-                      <ReceiptText className="size-5" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[15px] font-semibold">{d.recentReceipt.store ?? "Receipt"}</p>
-                      <p className="text-[13px] text-ink-3">
-                        {[d.recentReceipt.dateLabel, pluralize(d.recentReceipt.itemCount, "item"), formatMoney(d.recentReceipt.total, d.recentReceipt.currency ?? ctx.household.currency)]
-                          .filter(Boolean)
-                          .join(" · ")}
-                      </p>
-                    </div>
-                  </Card>
-                </Link>
-              ) : (
-                <Card className="p-4">
-                  <p className="text-[14px] text-ink-2">Scan your next receipt and Plenty will fill in your kitchen for you.</p>
-                  <Button asChild variant="brand" size="sm" className="mt-3">
-                    <Link href="/receipts/new">
-                      <ScanLine /> Scan a receipt
+            {canSeeReceipts && (
+              <section aria-labelledby="recent-receipt">
+                <SectionTitle
+                  id="recent-receipt"
+                  action={
+                    <Link href="/receipts" className="text-[13px] font-medium text-ink-3 hover:text-ink">
+                      All receipts
                     </Link>
-                  </Button>
-                </Card>
-              )}
-            </section>
+                  }
+                >
+                  Recent receipt
+                </SectionTitle>
+                {d.recentReceipt ? (
+                  <Link href={`/receipts/${d.recentReceipt.id}`} className="group block">
+                    <Card className="flex items-center gap-4 p-4 transition group-hover:border-line-strong">
+                      <span className="flex size-11 items-center justify-center rounded-2xl bg-subtle text-ink-2">
+                        <ReceiptText className="size-5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[15px] font-semibold">{d.recentReceipt.store ?? "Receipt"}</p>
+                        <p className="text-[13px] text-ink-3">
+                          {[
+                            d.recentReceipt.dateLabel,
+                            pluralize(d.recentReceipt.itemCount, "item"),
+                            formatMoney(d.recentReceipt.total, d.recentReceipt.currency ?? ctx.household.currency),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      </div>
+                    </Card>
+                  </Link>
+                ) : (
+                  <Card className="p-4">
+                    <p className="text-[14px] text-ink-2">Scan your next receipt and Plenty will fill in your kitchen for you.</p>
+                    <Button asChild variant="brand" size="sm" className="mt-3">
+                      <Link href="/receipts/new">
+                        <ScanLine /> Scan a receipt
+                      </Link>
+                    </Button>
+                  </Card>
+                )}
+              </section>
+            )}
 
-            {d.insights.length > 0 && (
+            {!restricted && d.insights.length > 0 && (
               <section aria-labelledby="insights">
                 <SectionTitle
                   id="insights"
@@ -274,17 +349,19 @@ export default async function HomePage() {
               </section>
             )}
 
-            <Link
-              href="/meals/cook"
-              className="group flex items-center gap-4 rounded-2xl bg-primary p-5 text-on-primary shadow-raised transition hover:bg-primary-hover"
-            >
-              <ChefHat className="size-6 shrink-0 opacity-80" />
-              <div className="flex-1">
-                <p className="text-[15px] font-semibold">What can I make right now?</p>
-                <p className="text-[13px] opacity-70">Meals from what&apos;s already in your kitchen.</p>
-              </div>
-              <ArrowRight className="size-4 opacity-70 transition group-hover:translate-x-0.5" />
-            </Link>
+            {canPlanMeals && (
+              <Link
+                href="/meals/cook"
+                className="group flex items-center gap-4 rounded-2xl bg-primary p-5 text-on-primary shadow-raised transition hover:bg-primary-hover"
+              >
+                <ChefHat className="size-6 shrink-0 opacity-80" />
+                <div className="flex-1">
+                  <p className="text-[15px] font-semibold">What can I make right now?</p>
+                  <p className="text-[13px] opacity-70">Meals from what&apos;s already in your kitchen.</p>
+                </div>
+                <ArrowRight className="size-4 opacity-70 transition group-hover:translate-x-0.5" />
+              </Link>
+            )}
           </aside>
         </div>
       )}
@@ -305,8 +382,7 @@ function WelcomeCard() {
           Scan your latest receipt and Plenty will do the rest.
         </h2>
         <p className="mt-3 max-w-md text-[15px] leading-relaxed text-ink-3">
-          It reads the receipt, tidies up the names, works out where things live and when they&apos;ll likely run out. You just
-          confirm.
+          It reads the receipt, tidies up the names, works out where things live and when they&apos;ll likely run out. You just confirm.
         </p>
         <div className="mt-6 flex flex-wrap gap-2">
           <Button asChild variant="brand" size="lg">

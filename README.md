@@ -50,6 +50,10 @@ Sign up to start your own household, or click **Explore the demo household** on 
 | `CRON_SECRET` | no | Protects the scheduled notifications endpoint. |
 | `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of Plenty that append to `X-Forwarded-For` (default `1`). Used to find the real client IP for rate limiting. |
 | `DEMO_MODE` | no | Shows the demo-household button on the sign-in page. |
+| `BILLING_ACCOUNT_SECRET` | no | 32+ random characters. Makes the token that tags App Store / Google Play purchases with their household unforgeable. Required for store purchases to find their household. |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `STRIPE_PRICES` | no | Web subscriptions through Stripe Checkout. `STRIPE_PRICES` is `plus.monthly=price_…,plus.annual=price_…,family.monthly=price_…,family.annual=price_…`. Without them the web option isn't shown. See [docs/billing.md](docs/billing.md). |
+| `APPLE_BUNDLE_ID` / `APPLE_APP_ID` / `APPLE_ROOT_CERTS` / `APPLE_PRODUCTS` | no | App Store subscriptions (notifications and restore). `APPLE_ROOT_CERTS` lists Apple root certificate files (or base64 DER). `APPLE_PRODUCTS` overrides product ids (default `app.plenty.<plan>.<period>`). |
+| `GOOGLE_PLAY_PACKAGE_NAME` / `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` / `GOOGLE_PUBSUB_SERVICE_ACCOUNT` / `GOOGLE_PUBSUB_AUDIENCE` / `GOOGLE_PRODUCTS` | no | Google Play subscriptions (notifications and restore). The audience defaults to `APP_URL/api/billing/webhooks/google`. |
 
 ### Scripts
 

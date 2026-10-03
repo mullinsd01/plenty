@@ -40,11 +40,25 @@ const money = (name: string) => numeric(name, { precision: 10, scale: 2, mode: "
 
 // ─── Enums ───────────────────────────────────────────────────────────────────
 
-export const householdRole = pgEnum("household_role", ["owner", "member"]);
+/** owner: manages everything; member: full day-to-day use; child: restricted (can request, can't see money or manage). */
+export const householdRole = pgEnum("household_role", ["owner", "member", "child"]);
+/** Who can see an item beyond its owner: everyone in the household, or only the owner. */
+export const itemVisibility = pgEnum("item_visibility", ["household", "private"]);
+export const billingProvider = pgEnum("billing_provider", ["web", "apple", "google", "manual"]);
+export const subscriptionStatus = pgEnum("subscription_status", [
+  "trialing",
+  "active",
+  "past_due",
+  "paused",
+  "canceled",
+  "expired",
+  "refunded",
+]);
 export const storageLocation = pgEnum("storage_location", [
   "fridge",
   "freezer",
   "pantry",
+  "cupboard",
   "produce",
   "drinks",
   "household",
@@ -91,7 +105,7 @@ export const baseUnit = pgEnum("base_unit", ["g", "ml", "each"]);
 export const confidenceLevel = pgEnum("confidence_level", ["low", "medium", "high"]);
 export const predictionBasis = pgEnum("prediction_basis", ["estimate", "history"]);
 export const inventoryStatus = pgEnum("inventory_status", ["active", "finished", "wasted", "expired", "removed"]);
-export const inventorySource = pgEnum("inventory_source", ["receipt", "manual", "shopping_list", "demo"]);
+export const inventorySource = pgEnum("inventory_source", ["receipt", "manual", "shopping_list", "demo", "barcode", "photo"]);
 export const inventoryEventType = pgEnum("inventory_event_type", [
   "added",
   "adjusted",
@@ -121,7 +135,7 @@ export const mealSlot = pgEnum("meal_slot", ["breakfast", "lunch", "dinner"]);
 export const mealPlanStatus = pgEnum("meal_plan_status", ["active", "archived"]);
 export const mealPlanItemStatus = pgEnum("meal_plan_item_status", ["planned", "cooked", "skipped"]);
 export const shoppingListStatus = pgEnum("shopping_list_status", ["active", "completed"]);
-export const shoppingSource = pgEnum("shopping_source", ["manual", "predicted", "meal_plan", "staple"]);
+export const shoppingSource = pgEnum("shopping_source", ["manual", "predicted", "meal_plan", "staple", "request", "recurring"]);
 export const notificationType = pgEnum("notification_type", [
   "running_low",
   "use_soon",
@@ -131,6 +145,8 @@ export const notificationType = pgEnum("notification_type", [
   "check_in",
   "insight",
   "household",
+  "request",
+  "billing",
 ]);
 export const cookingFrequency = pgEnum("cooking_frequency", ["rarely", "sometimes", "most_nights", "every_night"]);
 
@@ -160,6 +176,8 @@ export const profiles = pgTable("profiles", {
     .references(() => users.id, { onDelete: "cascade" }),
   displayName: text("display_name").notNull(),
   activeHouseholdId: uuid("active_household_id").references(() => households.id, { onDelete: "set null" }),
+  /** Product analytics are off when set. Plenty never sends analytics to third parties. */
+  analyticsOptOut: boolean("analytics_opt_out").notNull().default(false),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
@@ -244,6 +262,11 @@ export const households = pgTable(
   ],
 );
 
+/**
+ * The people in a household. Most have an account (`user_id`); others are
+ * profiles managed by an owner — a child, or someone who doesn't use the app —
+ * so food can still be assigned to them and they can still make requests.
+ */
 export const householdMembers = pgTable(
   "household_members",
   {
@@ -251,17 +274,41 @@ export const householdMembers = pgTable(
     householdId: uuid("household_id")
       .notNull()
       .references(() => households.id, { onDelete: "cascade" }),
-    userId: uuid("user_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
+    /** Null for a managed profile with no account. */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    /** Shown instead of the account's profile name; required for managed profiles. */
+    displayName: text("display_name"),
+    color: text("color"),
     role: householdRole("role").notNull().default("member"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("household_members_unique").on(t.householdId, t.userId),
     index("household_members_user_idx").on(t.userId),
+    check("household_members_identity", sql`${t.userId} is not null or char_length(coalesce(${t.displayName}, '')) between 1 and 40`),
+    check("household_members_name_len", sql`${t.displayName} is null or char_length(${t.displayName}) between 1 and 40`),
   ],
 );
+
+/**
+ * One person's own food rules (diets, allergies, dislikes). Only that person —
+ * or an owner, for a managed profile — can read them. Meal suggestions use
+ * the combined rules of everyone (see `app.household_food_rules`), so nobody
+ * learns who needs what.
+ */
+export const memberFoodRules = pgTable("member_food_rules", {
+  memberId: uuid("member_id")
+    .primaryKey()
+    .references(() => householdMembers.id, { onDelete: "cascade" }),
+  householdId: uuid("household_id")
+    .notNull()
+    .references(() => households.id, { onDelete: "cascade" }),
+  diets: text("diets").array().notNull().default(sql`'{}'::text[]`),
+  allergies: text("allergies").array().notNull().default(sql`'{}'::text[]`),
+  dislikedIngredients: text("disliked_ingredients").array().notNull().default(sql`'{}'::text[]`),
+  updatedAt: updatedAt(),
+});
 
 export const householdInvitations = pgTable(
   "household_invitations",
@@ -306,11 +353,17 @@ export const preferences = pgTable(
     usualShopDay: smallint("usual_shop_day"),
     /** Explicit shop cadence override in days. Null = learn it. */
     shopIntervalDays: smallint("shop_interval_days"),
-    allowAiProcessing: boolean("allow_ai_processing").notNull().default(true),
+    /** Photos may be sent to the third-party AI service only after someone in the household agreed (see `aiConsentAt`). */
+    allowAiProcessing: boolean("allow_ai_processing").notNull().default(false),
+    aiConsentAt: timestamp("ai_consent_at", { withTimezone: true }),
+    aiConsentBy: uuid("ai_consent_by").references(() => users.id, { onDelete: "set null" }),
+    /** How long receipt photos are kept: removed once checked (default), after 30 days, or kept until deleted. */
+    receiptImageRetention: text("receipt_image_retention").notNull().default("after_review"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
+    check("preferences_receipt_retention", sql`${t.receiptImageRetention} in ('after_review', 'days_30', 'keep')`),
     check("preferences_shop_day", sql`${t.usualShopDay} is null or ${t.usualShopDay} between 0 and 6`),
     check("preferences_budget", sql`${t.weeklyBudget} is null or ${t.weeklyBudget} >= 0`),
     check("preferences_interval", sql`${t.shopIntervalDays} is null or ${t.shopIntervalDays} between 1 and 60`),
@@ -421,6 +474,9 @@ export const receipts = pgTable(
     uploadedBy: uuid("uploaded_by").references(() => users.id, { onDelete: "set null" }),
     status: receiptStatus("status").notNull().default("uploaded"),
     imagePath: text("image_path"),
+    /** When the stored photo is due to be removed; null while it's still needed or kept on request. */
+    imageDeleteAfter: timestamp("image_delete_after", { withTimezone: true }),
+    imageDeletedAt: timestamp("image_deleted_at", { withTimezone: true }),
     imageHash: text("image_hash"),
     /** Hash of store + date + total + line prices; detects the same receipt photographed twice. */
     contentFingerprint: text("content_fingerprint"),
@@ -498,6 +554,10 @@ export const inventoryItems = pgTable(
       .notNull()
       .references(() => households.id, { onDelete: "cascade" }),
     productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+    /** Whose it is. Null = the household's. */
+    ownerMemberId: uuid("owner_member_id").references(() => householdMembers.id, { onDelete: "set null" }),
+    /** `private` hides it (and what's learned from it) from everyone but the owner. */
+    visibility: itemVisibility("visibility").notNull().default("household"),
     name: text("name").notNull(),
     location: storageLocation("location").notNull().default("pantry"),
     /** Total purchased amount in `unit` (e.g. 4 L for two 2 L bottles). */
@@ -529,6 +589,8 @@ export const inventoryItems = pgTable(
   (t) => [
     index("inventory_household_status_idx").on(t.householdId, t.status),
     index("inventory_household_product_idx").on(t.householdId, t.productId),
+    index("inventory_owner_idx").on(t.householdId, t.ownerMemberId),
+    check("inventory_private_has_owner", sql`${t.visibility} = 'household' or ${t.ownerMemberId} is not null`),
     index("inventory_household_expiry_idx").on(t.householdId, t.estimatedExpiry).where(sql`${t.status} = 'active'`),
     index("inventory_name_trgm").using("gin", sql`${t.name} gin_trgm_ops`),
     check("inventory_quantity_positive", sql`${t.quantity} > 0`),
@@ -580,6 +642,9 @@ export const consumptionEvents = pgTable(
       .references(() => households.id, { onDelete: "cascade" }),
     productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
     inventoryItemId: uuid("inventory_item_id").references(() => inventoryItems.id, { onDelete: "set null" }),
+    /** Whose pattern this is: `household`, `member:<id>` (shared) or `private:<id>` (only that member). */
+    scope: text("scope").notNull().default("household"),
+    ownerMemberId: uuid("owner_member_id").references(() => householdMembers.id, { onDelete: "cascade" }),
     outcome: consumptionOutcome("outcome").notNull(),
     /** Amount actually used (excludes the wasted portion), in base units. */
     amountUsedBase: doublePrecision("amount_used_base").notNull(),
@@ -595,6 +660,7 @@ export const consumptionEvents = pgTable(
   },
   (t) => [
     index("consumption_household_product_idx").on(t.householdId, t.productId, t.endedAt),
+    index("consumption_scope_idx").on(t.householdId, t.scope),
     check("consumption_amounts_nonneg", sql`${t.amountUsedBase} >= 0 and ${t.amountWastedBase} >= 0`),
     check("consumption_duration_positive", sql`${t.durationDays} > 0`),
   ],
@@ -611,6 +677,8 @@ export const consumptionStats = pgTable(
     productId: uuid("product_id")
       .notNull()
       .references(() => products.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull().default("household"),
+    ownerMemberId: uuid("owner_member_id").references(() => householdMembers.id, { onDelete: "cascade" }),
     baseUnit: baseUnit("base_unit").notNull(),
     observations: integer("observations").notNull().default(0),
     outliersExcluded: integer("outliers_excluded").notNull().default(0),
@@ -639,7 +707,7 @@ export const consumptionStats = pgTable(
     predictionsPaused: boolean("predictions_paused").notNull().default(false),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex("consumption_stats_unique").on(t.householdId, t.productId)],
+  (t) => [uniqueIndex("consumption_stats_unique").on(t.householdId, t.productId, t.scope)],
 );
 
 /** Current run-out predictions (one per product, or per item for uncatalogued items). */
@@ -652,6 +720,8 @@ export const predictions = pgTable(
       .references(() => households.id, { onDelete: "cascade" }),
     productId: uuid("product_id").references(() => products.id, { onDelete: "cascade" }),
     inventoryItemId: uuid("inventory_item_id").references(() => inventoryItems.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull().default("household"),
+    ownerMemberId: uuid("owner_member_id").references(() => householdMembers.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     remainingBase: doublePrecision("remaining_base").notNull(),
     baseUnit: baseUnit("base_unit").notNull(),
@@ -668,7 +738,7 @@ export const predictions = pgTable(
   },
   (t) => [
     uniqueIndex("predictions_product_unique")
-      .on(t.householdId, t.productId)
+      .on(t.householdId, t.productId, t.scope)
       .where(sql`${t.productId} is not null`),
     uniqueIndex("predictions_item_unique")
       .on(t.householdId, t.inventoryItemId)
@@ -850,6 +920,13 @@ export const shoppingListItems = pgTable(
     /** Normalised identity used to merge needs from different sources. */
     itemKey: text("item_key").notNull(),
     name: text("name").notNull(),
+    /** Whose it's for ("Pepsi Max — Dad"). Null = the household's. */
+    ownerMemberId: uuid("owner_member_id").references(() => householdMembers.id, { onDelete: "set null" }),
+    /** Who asked for it ("Mum wants yoghurt"). Set for requests. */
+    requestedByMemberId: uuid("requested_by_member_id").references(() => householdMembers.id, { onDelete: "set null" }),
+    visibility: itemVisibility("visibility").notNull().default("household"),
+    note: text("note"),
+    recurringItemId: uuid("recurring_item_id"),
     aisle: aisle("aisle").notNull().default("other"),
     /** Quantity the user asked for; overrides the computed amount when set. */
     quantity: doublePrecision("quantity"),
@@ -879,6 +956,8 @@ export const shoppingListItems = pgTable(
     index("shopping_items_household_idx").on(t.householdId),
     index("shopping_items_name_trgm").using("gin", sql`${t.name} gin_trgm_ops`),
     check("shopping_items_quantity_positive", sql`${t.quantity} is null or ${t.quantity} > 0`),
+    check("shopping_items_note_len", sql`${t.note} is null or char_length(${t.note}) <= 300`),
+    check("shopping_items_private_has_owner", sql`${t.visibility} = 'household' or ${t.ownerMemberId} is not null`),
   ],
 );
 
@@ -900,6 +979,174 @@ export const shoppingListItemSources = pgTable(
     note: text("note"),
   },
   (t) => [index("shopping_item_sources_item_idx").on(t.itemId)],
+);
+
+// ─── Recurring purchases ─────────────────────────────────────────────────────
+
+/** Things the household buys on a schedule ("milk every week"), added to the list when due. */
+export const recurringItems = pgTable(
+  "recurring_items",
+  {
+    id: id(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    aisle: aisle("aisle").notNull().default("other"),
+    quantity: doublePrecision("quantity"),
+    unit: unit("unit"),
+    ownerMemberId: uuid("owner_member_id").references(() => householdMembers.id, { onDelete: "cascade" }),
+    visibility: itemVisibility("visibility").notNull().default("household"),
+    intervalDays: smallint("interval_days").notNull(),
+    /** The next date it goes on the list. */
+    nextDueOn: date("next_due_on", { mode: "string" }).notNull(),
+    lastAddedAt: timestamp("last_added_at", { withTimezone: true }),
+    note: text("note"),
+    active: boolean("active").notNull().default(true),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    index("recurring_household_due_idx").on(t.householdId, t.nextDueOn).where(sql`${t.active}`),
+    check("recurring_interval_range", sql`${t.intervalDays} between 1 and 365`),
+    check("recurring_quantity_positive", sql`${t.quantity} is null or ${t.quantity} > 0`),
+    check("recurring_private_has_owner", sql`${t.visibility} = 'household' or ${t.ownerMemberId} is not null`),
+  ],
+);
+
+// ─── Billing ─────────────────────────────────────────────────────────────────
+// Subscriptions belong to the household, never to an individual member.
+
+export const subscriptions = pgTable(
+  "subscriptions",
+  {
+    id: id(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    /** free | plus | family | pro — defined in code (`src/lib/billing/plans.ts`). */
+    plan: text("plan").notNull().default("free"),
+    /** monthly | annual */
+    period: text("period"),
+    status: subscriptionStatus("status").notNull().default("active"),
+    provider: billingProvider("provider").notNull().default("manual"),
+    providerCustomerId: text("provider_customer_id"),
+    providerSubscriptionId: text("provider_subscription_id"),
+    /** The store's product / price identifier, for reconciling with the store. */
+    providerProductId: text("provider_product_id"),
+    /** Who bought it. For store purchases the entitlement still belongs to the household. */
+    purchaserUserId: uuid("purchaser_user_id").references(() => users.id, { onDelete: "set null" }),
+    autoRenew: boolean("auto_renew").notNull().default(true),
+    currentPeriodStart: timestamp("current_period_start", { withTimezone: true }),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+    trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+    /** Payment failed but access continues until this time while the store retries. */
+    graceEndsAt: timestamp("grace_ends_at", { withTimezone: true }),
+    canceledAt: timestamp("canceled_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    /** A scheduled change that takes effect at the next renewal (e.g. a downgrade). */
+    pendingPlan: text("pending_plan"),
+    pendingPeriod: text("pending_period"),
+    lastEventAt: timestamp("last_event_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex("subscriptions_household_unique").on(t.householdId),
+    uniqueIndex("subscriptions_provider_sub_unique")
+      .on(t.provider, t.providerSubscriptionId)
+      .where(sql`${t.providerSubscriptionId} is not null`),
+    index("subscriptions_customer_idx").on(t.provider, t.providerCustomerId),
+    check("subscriptions_plan", sql`${t.plan} in ('free', 'plus', 'family', 'pro')`),
+    check("subscriptions_period", sql`${t.period} is null or ${t.period} in ('monthly', 'annual')`),
+  ],
+);
+
+/** Every provider notification we've received, once. Makes webhook handling idempotent and auditable. */
+export const billingEvents = pgTable(
+  "billing_events",
+  {
+    id: id(),
+    provider: billingProvider("provider").notNull(),
+    /** The provider's own event / notification id. */
+    eventId: text("event_id").notNull(),
+    type: text("type").notNull(),
+    householdId: uuid("household_id").references(() => households.id, { onDelete: "set null" }),
+    /** Only the fields needed to understand what happened — never card or payment details. */
+    summary: text("summary"),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    error: text("error"),
+  },
+  (t) => [uniqueIndex("billing_events_unique").on(t.provider, t.eventId), index("billing_events_household_idx").on(t.householdId, t.receivedAt)],
+);
+
+/** Metered usage per household and month (e.g. receipt scans). */
+export const usageCounters = pgTable(
+  "usage_counters",
+  {
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    metric: text("metric").notNull(),
+    /** YYYY-MM in the household's time zone. */
+    period: text("period").notNull(),
+    count: integer("count").notNull().default(0),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.householdId, t.metric, t.period] }), check("usage_count_nonneg", sql`${t.count} >= 0`)],
+);
+
+// ─── Analytics ───────────────────────────────────────────────────────────────
+
+/**
+ * Product analytics, kept first-party and minimal: an event name, a
+ * pseudonymous household key, the plan and platform, and coarse properties.
+ * Never receipt contents, item names or anything about individuals.
+ */
+export const analyticsEvents = pgTable(
+  "analytics_events",
+  {
+    id: id(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    event: text("event").notNull(),
+    /** HMAC of the household id: groups events without being the id itself. Removed on deletion. */
+    subject: text("subject").notNull(),
+    plan: text("plan"),
+    platform: text("platform"),
+    props: text("props"),
+  },
+  (t) => [index("analytics_event_time_idx").on(t.event, t.occurredAt), index("analytics_subject_idx").on(t.subject)],
+);
+
+// ─── Barcodes ────────────────────────────────────────────────────────────────
+
+/**
+ * What a barcode is. Global rows (household_id null) cache lookups from the
+ * public product database; household rows are what someone told Plenty about
+ * a barcode it didn't know. Only the barcode ever leaves for a lookup.
+ */
+export const productBarcodes = pgTable(
+  "product_barcodes",
+  {
+    id: id(),
+    barcode: text("barcode").notNull(),
+    householdId: uuid("household_id").references(() => households.id, { onDelete: "cascade" }),
+    productId: uuid("product_id").references(() => products.id, { onDelete: "set null" }),
+    name: text("name").notNull(),
+    brand: text("brand"),
+    /** The pack size as printed ("500 g", "2 L"). */
+    sizeText: text("size_text"),
+    source: text("source").notNull(),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("product_barcodes_global_unique").on(t.barcode).where(sql`${t.householdId} is null`),
+    uniqueIndex("product_barcodes_household_unique").on(t.householdId, t.barcode).where(sql`${t.householdId} is not null`),
+    check("product_barcodes_digits", sql`${t.barcode} ~ '^[0-9]{8,14}$'`),
+  ],
 );
 
 // ─── Notifications ───────────────────────────────────────────────────────────
@@ -944,4 +1191,8 @@ export type DbMealPlanItem = typeof mealPlanItems.$inferSelect;
 export type DbShoppingListItem = typeof shoppingListItems.$inferSelect;
 export type DbNotification = typeof notifications.$inferSelect;
 export type DbConsumptionStats = typeof consumptionStats.$inferSelect;
+export type DbMember = typeof householdMembers.$inferSelect;
+export type DbMemberFoodRules = typeof memberFoodRules.$inferSelect;
+export type DbSubscription = typeof subscriptions.$inferSelect;
+export type DbRecurringItem = typeof recurringItems.$inferSelect;
 export type DbPrediction = typeof predictions.$inferSelect;

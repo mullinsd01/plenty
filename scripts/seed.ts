@@ -155,6 +155,7 @@ async function main() {
   const { syncCatalog } = await import("../src/server/services/products");
   const { syncRecipeLibrary } = await import("../src/server/services/meals");
   const { signUp } = await import("../src/server/auth/service");
+  const { buildHouseholdContext } = await import("../src/server/auth/build-context");
   const { createHousehold, updatePreferences, completeOnboarding } = await import("../src/server/services/household");
   const { loadProductIndex } = await import("../src/server/services/products");
   const { normalizeExtraction } = await import("../src/server/services/receipts");
@@ -184,8 +185,18 @@ async function main() {
   const authUser = { id: userId, email: DEMO_EMAIL, displayName: "Alex", isDemo: true, activeHouseholdId: null };
   const { householdId } = await createHousehold(authUser, { name: "The Harper household", adults: 2, children: 1, timezone: TZ, currency: "AUD" });
   await systemDb.update(schema.households).set({ isDemo: true }).where(eq(schema.households.id, householdId));
-  const household = { id: householdId, name: "The Harper household", adults: 2, children: 1, currency: "AUD", timezone: TZ, onboardedAt: null, isDemo: true };
-  const ctx = { user: { ...authUser, activeHouseholdId: householdId }, household, role: "owner" as const };
+  // The demo household is on Plenty Family so every feature can be seen. (A manual subscription, the way support would grant one.)
+  await systemDb.insert(schema.subscriptions).values({
+    householdId,
+    plan: "family",
+    period: "annual",
+    status: "active",
+    provider: "manual",
+    autoRenew: false,
+    currentPeriodEnd: new Date(now.getTime() + 365 * DAY),
+  });
+  const ctx = (await buildHouseholdContext({ ...authUser, activeHouseholdId: householdId }, householdId))!;
+  const household = ctx.household;
   await updatePreferences(ctx, {
     diets: [],
     allergies: ["peanuts"],
@@ -198,7 +209,13 @@ async function main() {
     takeawayPerWeek: 1,
   });
   await completeOnboarding(ctx);
-  console.log("✓ Household created");
+  // The rest of the family: an adult without an account and a child, so food can belong to people.
+  const { addManagedMember, updateMember } = await import("../src/server/services/members");
+  await updateMember(ctx, ctx.member.id, { color: "#3B6FA5" });
+  const { id: jordanId } = await addManagedMember(ctx, { name: "Jordan", role: "member", color: "#E0654B" });
+  const { id: ollieId } = await addManagedMember(ctx, { name: "Ollie", role: "child", color: "#4F8A5B" });
+  const alexId = ctx.member.id;
+  console.log("✓ Household created, with Jordan and Ollie");
 
   // ── Simulate the last 9 weeks ────────────────────────────────────────────
   const today = toDateString(now, TZ);
@@ -477,6 +494,59 @@ async function main() {
   });
   console.log("✓ Learned consumption patterns");
 
+  // ── Food that belongs to people: Alex and Jordan get through Pepsi Max at very different paces ──
+  await withSystem(async (tx) => {
+    const buyFor = async (memberId: string, packs: Array<{ daysAgo: number; lastedDays: number | null }>, visibility: "household" | "private" = "household") => {
+      let productId: string | null = null;
+      for (const pack of packs) {
+        const boughtAt = new Date(now.getTime() - pack.daysAgo * DAY);
+        const [item] = await addItemsTx(
+          tx,
+          household,
+          userId,
+          [{ name: "Pepsi Max", quantity: 12, unit: "can", purchasedAt: boughtAt, ownerMemberId: memberId, visibility }],
+          "manual",
+          boughtAt,
+        );
+        productId = item.productId;
+        if (pack.lastedDays !== null) {
+          await finishItemTx(tx, household, userId, item, "consumed", {
+            endedAt: new Date(boughtAt.getTime() + pack.lastedDays * DAY),
+            estimatedFraction: 0,
+            actor: "user",
+          });
+        }
+      }
+      return productId;
+    };
+    // Alex: a 12-pack lasts about 9 days. Jordan: a 12-pack lasts about 5 weeks.
+    const alexProduct = await buyFor(alexId, [
+      { daysAgo: 58, lastedDays: 10 },
+      { daysAgo: 48, lastedDays: 9 },
+      { daysAgo: 39, lastedDays: 8 },
+      { daysAgo: 31, lastedDays: 9 },
+      { daysAgo: 22, lastedDays: 9 },
+      { daysAgo: 13, lastedDays: 9 },
+      { daysAgo: 7, lastedDays: null },
+    ]);
+    const jordanProduct = await buyFor(jordanId, [
+      { daysAgo: 70, lastedDays: 35 },
+      { daysAgo: 34, lastedDays: null },
+    ]);
+    // A private treat only Alex can see: it never shows to anyone else, or in anything shared.
+    await addItemsTx(
+      tx,
+      household,
+      userId,
+      [{ name: "Protein bars", quantity: 12, unit: "each", purchasedAt: new Date(now.getTime() - 6 * DAY), ownerMemberId: alexId, visibility: "private" }],
+      "manual",
+      now,
+    );
+    const learn = [alexProduct, jordanProduct].filter((p): p is string => Boolean(p));
+    await refreshLearning(tx, household, Array.from(new Set(learn)), now);
+  });
+  console.log("✓ Per-person food and consumption patterns");
+
   // ── Meal history: favourites, a dislike and repeated rejections ──────────
   await withSystem(async (tx) => {
     const library = await tx.select().from(schema.meals).where(sql`${schema.meals.householdId} is null`);
@@ -521,8 +591,33 @@ async function main() {
     console.warn("! Meal plan skipped:", err instanceof Error ? err.message : err);
   }
   await addManualItem(ctx, { name: "Birthday candles" });
-  await addManualItem(ctx, { name: "Lemons", quantity: 3 });
+  await addManualItem(ctx, { name: "Lemons", quantity: 3, note: "Unwaxed if they have them" });
   await withUser(userId, (tx) => syncShoppingList(tx, household, now));
+  // Requests from the rest of the family land on the shared list under their names.
+  const { shoppingItemKey } = await import("../src/lib/shopping/keys");
+  const { getOrCreateActiveList } = await import("../src/server/services/shopping");
+  const list = await getOrCreateActiveList(systemDb, householdId);
+  const requests = [
+    { by: jordanId, name: "Oat milk", note: "The barista one" },
+    { by: ollieId, name: "Yoghurt pouches", note: null },
+  ];
+  for (const [i, r] of requests.entries()) {
+    await systemDb.insert(schema.shoppingListItems).values({
+      listId: list.id,
+      householdId,
+      itemKey: shoppingItemKey({ productId: null, name: r.name, scope: `member:${r.by}` }),
+      name: r.name,
+      ownerMemberId: r.by,
+      requestedByMemberId: r.by,
+      note: r.note,
+      source: "request",
+      aisle: "dairy",
+      position: 900 + i,
+    });
+  }
+  // Something that repeats on its own.
+  const { createRecurring } = await import("../src/server/services/recurring");
+  await createRecurring(ctx, { name: "Toilet paper", quantity: 1, unit: "pack", intervalDays: 28 });
   await withSystem((tx) => generateNotificationsForHousehold(tx, household, now));
 
   // ── One receipt waiting for review, read by the real OCR pipeline ────────

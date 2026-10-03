@@ -57,9 +57,9 @@ describe("assessUseSoon", () => {
     ["2026-10-01", 1, "soon", "Use by tomorrow"],
     ["2026-10-02", 2, "soon", "Use within 2 days"],
     ["2026-10-03", 3, "soon", "Use within 3 days"],
-    ["2026-10-05", 5, "ok", "Good for about 5 days"],
-    ["2026-10-08", 8, "ok", "Good for about a week"],
-    ["2026-11-02", 33, "ok", "Good for about a month"],
+    ["2026-10-05", 5, "ok", "Around 5 days to go"],
+    ["2026-10-08", 8, "ok", "Around a week to go"],
+    ["2026-11-02", 33, "ok", "Around a month to go"],
   ] as const)("expiring %s → %s", (expiresOn, days, status, label) => {
     const result = assessUseSoon({ expiresOn, today, remainingFraction: 0.5 });
     expect(result.daysUntilExpiry).toBe(days);

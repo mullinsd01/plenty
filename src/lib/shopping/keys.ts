@@ -9,6 +9,7 @@
  * Pure and deterministic.
  */
 
+import { HOUSEHOLD_SCOPE } from "@/lib/members/scope";
 import { normalizeText, singularizePhrase } from "@/lib/normalize";
 
 /** Prefix for keys of catalog/household products. */
@@ -26,8 +27,11 @@ export function normalizeItemName(name: string): string {
 
 /**
  * The list key for an item: "p:<productId>" for known products, otherwise
- * "n:<normalised singular name>".
+ * "n:<normalised singular name>". Something that's one person's ("Pepsi Max —
+ * Dad") gets its own line, so the key carries the learning scope after an "@":
+ * "p:<productId>@member:<id>". The household's own items have no suffix.
  */
-export function shoppingItemKey(item: { productId: string | null; name: string }): string {
-  return item.productId ? `${PRODUCT_KEY_PREFIX}${item.productId}` : `${NAME_KEY_PREFIX}${normalizeItemName(item.name)}`;
+export function shoppingItemKey(item: { productId: string | null; name: string; scope?: string | null }): string {
+  const base = item.productId ? `${PRODUCT_KEY_PREFIX}${item.productId}` : `${NAME_KEY_PREFIX}${normalizeItemName(item.name)}`;
+  return item.scope && item.scope !== HOUSEHOLD_SCOPE ? `${base}@${item.scope}` : base;
 }

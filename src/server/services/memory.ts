@@ -20,12 +20,18 @@ import type { HouseholdContext } from "@/server/auth/context";
 import { withUser } from "@/server/db/client";
 import { consumptionEvents, consumptionStats, mealPreferences, preferences, receiptItems, receipts } from "@/server/db/schema";
 import { notFound } from "@/server/errors";
+import { feedsHouseholdPattern, HOUSEHOLD_SCOPE, scopeOwner } from "@/lib/members/scope";
 import { computeLiveState, refreshLearning } from "./learning";
+import { memberNames } from "./members";
 import { loadPlannableMeals } from "./meal-data";
 import { loadShoppingRhythm, syncShoppingList } from "./shopping";
 
 export interface LearnedProductView {
   productId: string;
+  /** Whose pace this is (`household`, or a person's); each person's own pattern is shown separately. */
+  scope: string;
+  /** Set for a person's own pattern: "Pepsi Max — Dad". */
+  ownerName: string | null;
   name: string;
   basis: PredictionBasis;
   basisLabel: string;
@@ -79,13 +85,17 @@ export async function getHouseholdMemory(ctx: HouseholdContext, now = new Date()
     const today = toDateString(now, tz);
     const live = await computeLiveState(tx, ctx.household, now);
     const stats = await tx.select().from(consumptionStats).where(eq(consumptionStats.householdId, ctx.household.id));
+    const names = await memberNames(tx, ctx.household.id);
 
     const products: LearnedProductView[] = stats
       .filter((s) => live.index.byId.has(s.productId) && (s.purchaseCount > 0 || s.observations > 0 || s.stapleOverride !== null))
       .map((s) => {
         const product = live.index.byId.get(s.productId)!;
+        const owner = scopeOwner(s.scope);
         return {
           productId: s.productId,
+          scope: s.scope,
+          ownerName: owner ? names.get(owner) ?? null : null,
           name: product.name,
           basis: s.basis as PredictionBasis,
           basisLabel: PREDICTION_BASIS_LABELS[s.basis as PredictionBasis],
@@ -107,18 +117,28 @@ export async function getHouseholdMemory(ctx: HouseholdContext, now = new Date()
           wasteRatio: s.wasteRatio,
         };
       })
-      .sort((a, b) => b.observations - a.observations || a.name.localeCompare(b.name));
+      .sort((a, b) => b.observations - a.observations || a.name.localeCompare(b.name) || a.scope.localeCompare(b.scope));
 
+    // Waste is about the product, so people's patterns for it are pooled into one line.
+    const wasteByProduct = new Map<string, { name: string; weighted: number; events: number; purchases: number }>();
+    for (const s of stats) {
+      const product = live.index.byId.get(s.productId);
+      if (!product) continue;
+      const entry = wasteByProduct.get(s.productId) ?? { name: product.name, weighted: 0, events: 0, purchases: 0 };
+      const weight = Math.max(1, s.purchaseCount);
+      entry.weighted += s.wasteRatio * weight;
+      entry.events += s.wasteEvents;
+      entry.purchases += s.purchaseCount;
+      wasteByProduct.set(s.productId, entry);
+    }
     const waste = wasteInsights(
-      stats
-        .filter((s) => live.index.byId.has(s.productId))
-        .map((s) => ({
-          productId: s.productId,
-          name: live.index.byId.get(s.productId)!.name,
-          wasteRatio: s.wasteRatio,
-          wasteEvents: s.wasteEvents,
-          purchaseCount: s.purchaseCount,
-        })),
+      [...wasteByProduct.entries()].map(([productId, w]) => ({
+        productId,
+        name: w.name,
+        wasteRatio: w.purchases > 0 || w.events > 0 ? w.weighted / Math.max(1, w.purchases) : 0,
+        wasteEvents: w.events,
+        purchaseCount: w.purchases,
+      })),
     );
 
     const rhythm = await loadShoppingRhythm(tx, ctx.household, now);
@@ -205,14 +225,20 @@ export async function getHouseholdMemory(ctx: HouseholdContext, now = new Date()
   });
 }
 
-/** Stop (or resume) run-out predictions for one product. */
-export async function setPredictionsPaused(ctx: HouseholdContext, productId: string, paused: boolean): Promise<void> {
+/** Stop (or resume) run-out predictions for one product (for one person's pattern, or all of those you can see). */
+export async function setPredictionsPaused(ctx: HouseholdContext, productId: string, paused: boolean, scope?: string): Promise<void> {
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const updated = await tx
       .update(consumptionStats)
       .set({ predictionsPaused: paused })
-      .where(and(eq(consumptionStats.householdId, ctx.household.id), eq(consumptionStats.productId, productId)))
+      .where(
+        and(
+          eq(consumptionStats.householdId, ctx.household.id),
+          eq(consumptionStats.productId, productId),
+          ...(scope ? [eq(consumptionStats.scope, scope)] : []),
+        ),
+      )
       .returning({ id: consumptionStats.id });
     if (updated.length === 0) throw notFound("That product");
     await refreshLearning(tx, ctx.household, [], now);
@@ -220,13 +246,25 @@ export async function setPredictionsPaused(ctx: HouseholdContext, productId: str
   });
 }
 
-/** Forget everything learned about how fast the household uses a product. */
-export async function resetProductLearning(ctx: HouseholdContext, productId: string): Promise<void> {
+/**
+ * Forget everything learned about how fast the household (or one person) uses a product. Without a scope
+ * that's everything the signed-in person can see. For the household's pattern on a plan that doesn't split
+ * by person, that includes the people's shared items it was learned from.
+ */
+export async function resetProductLearning(ctx: HouseholdContext, productId: string, scope?: string): Promise<void> {
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
-    await tx
-      .delete(consumptionEvents)
+    const events = await tx
+      .select({ id: consumptionEvents.id, scope: consumptionEvents.scope })
+      .from(consumptionEvents)
       .where(and(eq(consumptionEvents.householdId, ctx.household.id), eq(consumptionEvents.productId, productId)));
+    const forgotten = events
+      .filter((e) => {
+        if (!scope) return true;
+        return scope === HOUSEHOLD_SCOPE ? feedsHouseholdPattern(e.scope, ctx.household.individualPatterns) : e.scope === scope;
+      })
+      .map((e) => e.id);
+    if (forgotten.length > 0) await tx.delete(consumptionEvents).where(inArray(consumptionEvents.id, forgotten));
     await refreshLearning(tx, ctx.household, [productId], now);
     await syncShoppingList(tx, ctx.household, now);
   });

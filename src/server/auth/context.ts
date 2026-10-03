@@ -1,37 +1,14 @@
 import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { systemDb } from "@/server/db/client";
-import { householdMembers, households, profiles } from "@/server/db/schema";
+import { profiles } from "@/server/db/schema";
 import { AppError } from "@/server/errors";
+import { buildHouseholdContext, type AuthUser, type HouseholdContext } from "./build-context";
 import { getCurrentSession } from "./session";
 
-export interface AuthUser {
-  id: string;
-  email: string;
-  displayName: string;
-  isDemo: boolean;
-  activeHouseholdId: string | null;
-}
-
-export interface HouseholdInfo {
-  id: string;
-  name: string;
-  adults: number;
-  children: number;
-  currency: string;
-  timezone: string;
-  onboardedAt: Date | null;
-  isDemo: boolean;
-}
-
-/** Everything a household-scoped request needs: who is asking, for which household. */
-export interface HouseholdContext {
-  user: AuthUser;
-  household: HouseholdInfo;
-  role: "owner" | "member";
-}
+export type { AuthUser, HouseholdContext, HouseholdInfo, MemberInfo } from "./build-context";
 
 /** The signed-in user (with profile), or null. Cached per request. */
 export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
@@ -58,26 +35,7 @@ export const getAuthUser = cache(async (): Promise<AuthUser | null> => {
 export const getHouseholdContext = cache(async (): Promise<HouseholdContext | null> => {
   const user = await getAuthUser();
   if (!user) return null;
-  const memberships = await systemDb
-    .select({
-      role: householdMembers.role,
-      id: households.id,
-      name: households.name,
-      adults: households.adults,
-      children: households.children,
-      currency: households.currency,
-      timezone: households.timezone,
-      onboardedAt: households.onboardedAt,
-      isDemo: households.isDemo,
-    })
-    .from(householdMembers)
-    .innerJoin(households, eq(households.id, householdMembers.householdId))
-    .where(and(eq(householdMembers.userId, user.id), isNull(households.deletedAt)))
-    .orderBy(asc(householdMembers.joinedAt));
-  if (memberships.length === 0) return null;
-  const active = memberships.find((m) => m.id === user.activeHouseholdId) ?? memberships[0];
-  const { role, ...household } = active;
-  return { user, household, role };
+  return buildHouseholdContext(user);
 });
 
 /** For pages: redirect to sign-in when there's no session. */

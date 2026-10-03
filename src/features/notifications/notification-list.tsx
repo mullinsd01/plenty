@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, CalendarDays, ChefHat, Clock, Leaf, ReceiptText, ShoppingBasket, Sprout, Users, X } from "lucide-react";
+import { Bell, CalendarDays, ChefHat, Clock, CreditCard, HandHeart, Leaf, ReceiptText, ShoppingBasket, Sprout, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -20,6 +20,8 @@ const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   check_in: ChefHat,
   insight: Sprout,
   household: Users,
+  request: HandHeart,
+  billing: CreditCard,
 };
 
 export function NotificationList({ items }: { items: NotificationView[] }) {

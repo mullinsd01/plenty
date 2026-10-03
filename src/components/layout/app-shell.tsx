@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Bell, ScanLine, Search, Settings } from "lucide-react";
 import { PlentyLogo, PlentyMark } from "@/components/brand/logo";
 import { cn } from "@/lib/cn";
+import { isRestricted, type Role } from "@/lib/members/permissions";
 import { NAV_ITEMS, isActive } from "./nav-items";
 import { UserMenu } from "./user-menu";
 import { CommandSearch, useCommandSearch } from "@/features/search/command-search";
@@ -23,15 +24,19 @@ export function AppShell({
   user,
   household,
   unreadCount,
+  role,
   children,
 }: {
   user: ShellUser;
   household: ShellHousehold;
   unreadCount: number;
+  role: Role;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
   const search = useCommandSearch();
+  const restricted = isRestricted(role);
+  const navItems = NAV_ITEMS.filter((i) => !restricted || i.childSafe);
 
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[252px_minmax(0,1fr)]">
@@ -40,15 +45,17 @@ export function AppShell({
         <Link href="/home" className="mb-7 px-2" aria-label="Plenty home">
           <PlentyLogo className="h-[26px]" />
         </Link>
-        <Link
-          href="/receipts/new"
-          className="mb-5 flex h-11 items-center justify-center gap-2 rounded-xl bg-brand text-[14px] font-semibold text-white shadow-[0_1px_2px_rgb(0_0_0/0.12)] transition hover:bg-brand-strong active:scale-[0.98]"
-        >
-          <ScanLine className="size-[18px]" />
-          Scan a receipt
-        </Link>
-        <nav aria-label="Main" className="flex flex-col gap-0.5">
-          {NAV_ITEMS.map((item) => {
+        {!restricted && (
+          <Link
+            href="/receipts/new"
+            className="mb-5 flex h-11 items-center justify-center gap-2 rounded-xl bg-brand text-[14px] font-semibold text-white shadow-[0_1px_2px_rgb(0_0_0/0.12)] transition hover:bg-brand-strong active:scale-[0.98]"
+          >
+            <ScanLine className="size-[18px]" />
+            Scan a receipt
+          </Link>
+        )}
+        <nav aria-label="Main" className={cn("flex flex-col gap-0.5", restricted && "mt-2")}>
+          {navItems.map((item) => {
             const active = isActive(pathname, item.href);
             return (
               <Link
@@ -129,23 +136,33 @@ export function AppShell({
         aria-label="Main"
         className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/92 backdrop-blur-md lg:hidden"
       >
-        <div className="mx-auto grid h-16 max-w-md grid-cols-5 items-center px-2">
-          {NAV_ITEMS.filter((i) => i.tab)
-            .slice(0, 2)
+        <div className={cn("mx-auto grid h-16 max-w-md items-center px-2", restricted ? "grid-cols-3" : "grid-cols-5")}>
+          {navItems
+            .filter((i) => i.tab)
+            .slice(0, restricted ? 3 : 2)
             .map((item) => (
-              <TabLink key={item.href} href={item.href} label={item.label} icon={item.icon} active={isActive(pathname, item.href)} />
+              <TabLink
+                key={item.href}
+                href={item.href}
+                label={item.href === "/list" ? "List" : item.label}
+                icon={item.icon}
+                active={isActive(pathname, item.href)}
+              />
             ))}
-          <div className="flex justify-center">
-            <Link
-              href="/receipts/new"
-              aria-label="Scan a receipt"
-              className="-mt-5 flex size-14 items-center justify-center rounded-full bg-brand text-white shadow-[0_6px_16px_-4px_color-mix(in_srgb,var(--brand)_60%,transparent)] ring-4 ring-canvas transition active:scale-95"
-            >
-              <ScanLine className="size-6" />
-            </Link>
-          </div>
-          {NAV_ITEMS.filter((i) => i.tab)
-            .slice(2, 4)
+          {!restricted && (
+            <div className="flex justify-center">
+              <Link
+                href="/receipts/new"
+                aria-label="Scan a receipt"
+                className="-mt-5 flex size-14 items-center justify-center rounded-full bg-brand text-white shadow-[0_6px_16px_-4px_color-mix(in_srgb,var(--brand)_60%,transparent)] ring-4 ring-canvas transition active:scale-95"
+              >
+                <ScanLine className="size-6" />
+              </Link>
+            </div>
+          )}
+          {navItems
+            .filter((i) => i.tab)
+            .slice(restricted ? 3 : 2, 4)
             .map((item) => (
               <TabLink
                 key={item.href}

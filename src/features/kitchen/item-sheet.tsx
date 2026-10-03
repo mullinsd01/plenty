@@ -9,8 +9,11 @@ import { BasisLabel } from "@/components/food/confidence";
 import { Button } from "@/components/ui/button";
 import { Stepper } from "@/components/ui/controls";
 import { Field, Input, NativeSelect } from "@/components/ui/field";
+import { PersonChip } from "@/components/ui/person-chip";
 import { Sheet } from "@/components/ui/sheet";
 import { useAction } from "@/components/hooks/use-action";
+import { OwnerPicker, type OwnerValue } from "@/features/members/owner-picker";
+import { usePeople } from "@/features/members/people-context";
 import { STORAGE_LOCATIONS, STORAGE_LOCATION_LABELS, type StorageLocation } from "@/lib/domain";
 import type { InventoryItemView } from "@/server/services/inventory";
 import { finishItemAction, removeItemAction, restoreItemAction, setLevelAction, updateItemAction } from "./actions";
@@ -55,8 +58,12 @@ export function ItemSheet({
   const remove = useAction();
   const undo = useAction();
   const { finish, pending: finishing } = useUndoableFinish();
+  const people = usePeople();
 
   if (!item) return null;
+  // A child can look at what the household shares but only change their own things (the database enforces it too).
+  const readOnly = people.restricted && !item.isMine;
+  const owner = item.ownerMemberId ? people.members.find((m) => m.id === item.ownerMemberId) : null;
   const close = () => {
     setEditing(false);
     onOpenChange(false);
@@ -86,7 +93,14 @@ export function ItemSheet({
       title={item.name}
       description={`${item.quantityLabel} · ${STORAGE_LOCATION_LABELS[item.location]}`}
     >
-      {editing ? (
+      {readOnly ? (
+        <div className="space-y-4">
+          {item.ownerName && <PersonChip name={item.ownerName} color={owner?.color} />}
+          <p className="text-[14px] text-ink-2">
+            {item.levelLabel}. This one isn&apos;t yours, so only an adult can change it. You can ask for more from the shopping list.
+          </p>
+        </div>
+      ) : editing ? (
         <EditForm
           item={item}
           pending={save.pending}
@@ -95,6 +109,12 @@ export function ItemSheet({
         />
       ) : (
         <div className="space-y-6">
+          {item.ownerName && (
+            <p className="flex items-center gap-2 text-[13px] text-ink-3">
+              Belongs to <PersonChip name={item.ownerName} color={owner?.color} isPrivate={item.visibility === "private"} />
+              {item.visibility === "private" && <span>Only they can see it.</span>}
+            </p>
+          )}
           {item.prediction && (
             <div className="rounded-xl bg-subtle px-3.5 py-3">
               <p className="text-[14px] font-medium">{remainingPhrase(item.prediction.label)}</p>
@@ -174,13 +194,26 @@ function EditForm({
   item: InventoryItemView;
   pending: boolean;
   onCancel: () => void;
-  onSave: (patch: { name: string; location: StorageLocation; quantity: number; actualExpiry: string | null; notes: string | null }) => void;
+  onSave: (patch: {
+    name: string;
+    location: StorageLocation;
+    quantity: number;
+    actualExpiry: string | null;
+    notes: string | null;
+    ownerMemberId?: string | null;
+    visibility?: "household" | "private";
+  }) => void;
 }) {
+  const people = usePeople();
   const [name, setName] = useState(item.name);
   const [location, setLocation] = useState<StorageLocation>(item.location);
   const [quantity, setQuantity] = useState(String(item.quantity));
   const [expiry, setExpiry] = useState(item.expiryIsActual ? item.expiresOn ?? "" : "");
   const [notes, setNotes] = useState(item.notes ?? "");
+  const [owner, setOwner] = useState<OwnerValue>({ ownerMemberId: item.ownerMemberId, visibility: item.visibility });
+  const ownerChanged = owner.ownerMemberId !== item.ownerMemberId || owner.visibility !== item.visibility;
+  // Someone else's private item isn't visible to anyone else, so what's here is always shared or yours.
+  const canChangeOwner = !people.restricted && people.members.length > 1;
   const qty = Number(quantity);
   const invalid = !name.trim() || !(qty > 0);
   return (
@@ -189,7 +222,14 @@ function EditForm({
       onSubmit={(e) => {
         e.preventDefault();
         if (invalid) return;
-        onSave({ name: name.trim(), location, quantity: qty, actualExpiry: expiry || null, notes: notes.trim() || null });
+        onSave({
+          name: name.trim(),
+          location,
+          quantity: qty,
+          actualExpiry: expiry || null,
+          notes: notes.trim() || null,
+          ...(canChangeOwner && ownerChanged ? { ownerMemberId: owner.ownerMemberId, visibility: owner.visibility } : {}),
+        });
       }}
     >
       <Field label="Name" htmlFor="item-name">
@@ -220,6 +260,16 @@ function EditForm({
       <Field label="Notes" htmlFor="item-notes" optional>
         <Input id="item-notes" value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={500} />
       </Field>
+      {canChangeOwner && (
+        <OwnerPicker
+          id="item-owner"
+          members={people.members}
+          value={owner}
+          onChange={setOwner}
+          canPrivate={people.canPrivate}
+          hint="Plenty learns how fast each person gets through their own things, so Dad's Pepsi Max and Mum's are tracked separately."
+        />
+      )}
       <div className="flex gap-2 pt-2">
         <Button type="button" variant="secondary" onClick={onCancel} className="flex-1">
           Cancel

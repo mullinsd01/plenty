@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useAction } from "@/components/hooks/use-action";
 import { Card } from "@/components/ui/card";
 import { answerCheckInAction, clearOutItemsAction } from "@/features/kitchen/actions";
-import { addListItemAction } from "@/features/list/actions";
+import { addListItemAction, addRequestAction } from "@/features/list/actions";
 import { cookPlanItemAction, generatePlanAction, replacePlanItemAction } from "@/features/meals/actions";
 import { cn } from "@/lib/cn";
 
@@ -15,17 +15,21 @@ import { cn } from "@/lib/cn";
  * "Did you finish the milk?" — one-tap confirmations instead of asking for
  * quantities. Several questions share one quiet card.
  */
-export function CheckInList({ items }: { items: Array<{ productId: string; name: string }> }) {
+export function CheckInList({
+  items,
+}: {
+  items: Array<{ productId: string; scope: string; ownerName: string | null; ownerIsYou: boolean; name: string }>;
+}) {
   return (
     <Card className="divide-y divide-line">
       {items.map((c) => (
-        <CheckInRow key={c.productId} productId={c.productId} name={c.name} />
+        <CheckInRow key={`${c.productId}|${c.scope}`} productId={c.productId} scope={c.scope} name={c.name} who={c.ownerIsYou ? null : c.ownerName} />
       ))}
     </Card>
   );
 }
 
-function CheckInRow({ productId, name }: { productId: string; name: string }) {
+function CheckInRow({ productId, scope, name, who }: { productId: string; scope: string; name: string; who: string | null }) {
   const { pending, run } = useAction();
   const [answered, setAnswered] = useState<null | "yes" | "no">(null);
   if (answered) {
@@ -39,18 +43,20 @@ function CheckInRow({ productId, name }: { productId: string; name: string }) {
   return (
     <div className="px-4 py-3.5 sm:flex sm:items-center sm:justify-between sm:gap-4">
       <div className="min-w-0">
-        <p className="text-[15px] font-semibold">Did you finish the {name.toLowerCase()}?</p>
+        <p className="text-[15px] font-semibold">
+          {who ? `Did ${who} finish the ${name.toLowerCase()}?` : `Did you finish the ${name.toLowerCase()}?`}
+        </p>
         <p className="mt-0.5 text-[13px] text-ink-3">By Plenty&apos;s estimate it should be about gone.</p>
       </div>
       <div className="mt-3 flex shrink-0 gap-2 sm:mt-0">
-        <Button size="sm" loading={pending} onClick={() => run(() => answerCheckInAction(productId, true), { onSuccess: () => setAnswered("yes") })}>
+        <Button size="sm" loading={pending} onClick={() => run(() => answerCheckInAction(productId, true, scope), { onSuccess: () => setAnswered("yes") })}>
           Yes, it&apos;s finished
         </Button>
         <Button
           size="sm"
           variant="secondary"
           disabled={pending}
-          onClick={() => run(() => answerCheckInAction(productId, false), { onSuccess: () => setAnswered("no") })}
+          onClick={() => run(() => answerCheckInAction(productId, false, scope), { onSuccess: () => setAnswered("no") })}
         >
           Still some left
         </Button>
@@ -93,7 +99,21 @@ export function PastDateCard({ itemIds, summary }: { itemIds: string[]; summary:
   );
 }
 
-export function AddToListButton({ name, onList }: { name: string; onList: boolean }) {
+export function AddToListButton({
+  name,
+  onList,
+  ownerMemberId = null,
+  visibility = "household",
+  request = false,
+}: {
+  name: string;
+  onList: boolean;
+  /** Whose it is, so the list line is theirs ("Pepsi Max — Dad"). */
+  ownerMemberId?: string | null;
+  visibility?: "household" | "private";
+  /** Child accounts ask rather than add. */
+  request?: boolean;
+}) {
   const { pending, run } = useAction();
   const [added, setAdded] = useState(onList);
   if (added) {
@@ -107,11 +127,15 @@ export function AddToListButton({ name, onList }: { name: string; onList: boolea
     <button
       type="button"
       disabled={pending}
-      onClick={() => run(() => addListItemAction({ name }), { onSuccess: () => setAdded(true) })}
+      onClick={() =>
+        request
+          ? run(() => addRequestAction({ name }), { onSuccess: () => setAdded(true) })
+          : run(() => addListItemAction({ name, ownerMemberId, visibility }), { onSuccess: () => setAdded(true) })
+      }
       className="inline-flex h-8 items-center gap-1 rounded-full border border-line-strong px-2.5 text-[12px] font-medium text-ink-2 transition hover:bg-subtle hover:text-ink disabled:opacity-50"
-      aria-label={`Add ${name} to your shopping list`}
+      aria-label={request ? `Ask for ${name}` : `Add ${name} to your shopping list`}
     >
-      <Plus className="size-3.5" /> List
+      <Plus className="size-3.5" /> {request ? "Ask" : "List"}
     </button>
   );
 }

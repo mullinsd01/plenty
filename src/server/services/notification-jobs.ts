@@ -3,13 +3,16 @@ import { and, count, eq, gte, isNull, lte, or, sql } from "drizzle-orm";
 import { hourInTimeZone, toDateString, weekdayOf, zonedDateTimeToInstant } from "@/lib/dates";
 import type { NotificationType } from "@/lib/domain";
 import { wasteInsights } from "@/lib/insights";
+import { planFlags } from "@/lib/billing/plans";
+import { isPrivateScope, learningKey, scopeOwner } from "@/lib/members/scope";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
+import { resolveHouseholdPlan, type HouseholdPlan } from "@/server/billing/entitlements";
 import { systemDb, withSystem, type Queryable } from "@/server/db/client";
-import { householdMembers, households, notificationSettings, notifications, shoppingListItems, users } from "@/server/db/schema";
+import { householdMembers, households, notificationSettings, notifications, profiles, shoppingListItems, users } from "@/server/db/schema";
 import { emailButton, emailLayout, escapeHtml, sendEmail } from "@/server/email/mailer";
 import { env } from "@/server/env";
 import { toItemView } from "./inventory";
-import { computeLiveState } from "./learning";
+import { computeLiveState, itemScope } from "./learning";
 import { getOrCreateActiveList, loadShoppingRhythm } from "./shopping";
 
 /**
@@ -26,39 +29,90 @@ interface Candidate {
   /** Lower is more important. */
   priority: number;
   setting: "runningLow" | "useSoon" | "mealPlanReady" | "shoppingReminder" | "checkIns" | "insights";
+  /** Who should see it: one member (a private or personal item), or null for the household's adults. */
+  audienceMemberId: string | null;
 }
 
 type HouseholdRow = Pick<HouseholdInfo, "id" | "name" | "adults" | "children" | "timezone" | "currency">;
 
+interface Person {
+  userId: string | null;
+  role: string;
+  name: string;
+}
+
+/** Everyone in the household, by member id. */
+async function loadPeople(db: Queryable, householdId: string): Promise<Map<string, Person>> {
+  const rows = await db
+    .select({
+      id: householdMembers.id,
+      userId: householdMembers.userId,
+      role: householdMembers.role,
+      displayName: householdMembers.displayName,
+      profileName: profiles.displayName,
+    })
+    .from(householdMembers)
+    .leftJoin(profiles, eq(profiles.userId, householdMembers.userId))
+    .where(eq(householdMembers.householdId, householdId));
+  return new Map(rows.map((r) => [r.id, { userId: r.userId, role: r.role, name: r.displayName ?? r.profileName ?? "Someone" }]));
+}
+
+/**
+ * Who a nudge about a scope is for. A private item is the owner's alone; a person's shared item goes to them
+ * (or, when they have no account, to the household's adults); everything else is the household's.
+ */
+function audienceFor(scope: string, people: Map<string, Person>): string | null {
+  const owner = scopeOwner(scope);
+  if (!owner) return null;
+  if (isPrivateScope(scope)) return owner;
+  return people.get(owner)?.userId ? owner : null;
+}
+
 /** Work out which nudges are genuinely useful for this household right now. Pure reads. */
-async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date): Promise<Candidate[]> {
+async function candidatesFor(db: Queryable, household: HouseholdRow, plan: HouseholdPlan, now: Date): Promise<Candidate[]> {
   const out: Candidate[] = [];
   const today = toDateString(now, household.timezone);
-  const live = await computeLiveState(db, household, now);
+  const learning = {
+    ...household,
+    ...planFlags(plan.entitlements),
+  };
+  const live = await computeLiveState(db, learning, now);
+  const people = await loadPeople(db, household.id);
 
-  for (const p of live.predictions.values()) {
+  // Predictions (and so smart low-stock alerts) are part of the paid plans; expiry reminders are for everyone.
+  for (const p of plan.entitlements.consumption_predictions ? live.predictions.values() : []) {
     if (p.paused) continue;
-    const name = p.product.name.toLowerCase();
+    const audience = audienceFor(p.scope, people);
+    const owner = p.ownerMemberId ? people.get(p.ownerMemberId) : undefined;
+    // Said to the owner it's "you"; said to the household about a profile without an account it's their name.
+    const name = audience === null && owner ? `${owner.name}'s ${p.product.name.toLowerCase()}` : p.product.name.toLowerCase();
+    const key = learningKey(p.productId, p.scope);
     const snoozed = p.items.some((i) => i.checkInSnoozedUntil && i.checkInSnoozedUntil > now);
     if (p.prediction.needsCheckIn && !snoozed) {
       out.push({
         type: "check_in",
-        title: `Did you finish the ${name}?`,
+        title: audience === null && owner ? `Did ${owner.name} finish the ${p.product.name.toLowerCase()}?` : `Did you finish the ${name}?`,
         body: "One tap on your home screen keeps Plenty's predictions accurate.",
         link: "/home",
-        dedupeKey: `check_in:${p.productId}:${today}`,
+        dedupeKey: `check_in:${key}:${today}`,
         priority: 0,
         setting: "checkIns",
+        audienceMemberId: audience,
       });
-    } else if (p.prediction.daysRemaining <= 1.5 && (p.prediction.basis === "history" || p.prediction.confidence !== "low")) {
+    } else if (
+      plan.entitlements.smart_replenishment &&
+      p.prediction.daysRemaining <= 1.5 &&
+      (p.prediction.basis === "history" || p.prediction.confidence !== "low")
+    ) {
       out.push({
         type: "running_low",
-        title: `You're probably running low on ${name}.`,
+        title: audience === null && owner ? `${name.charAt(0).toUpperCase()}${name.slice(1)} is probably running low.` : `You're probably running low on ${name}.`,
         body: `${p.prediction.label.charAt(0).toUpperCase()}${p.prediction.label.slice(1)} left. ${p.prediction.reason}`,
         link: "/list",
-        dedupeKey: `running_low:${p.productId}:${toDateString(p.prediction.runOutAt, household.timezone)}`,
+        dedupeKey: `running_low:${key}:${toDateString(p.prediction.runOutAt, household.timezone)}`,
         priority: 1,
         setting: "runningLow",
+        audienceMemberId: audience,
       });
     }
   }
@@ -70,7 +124,9 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date):
     if (view.estimatedFraction < 0.1 || !view.perishable) continue;
     const s = view.useSoon;
     if ((s.status === "today" || (s.status === "soon" && (s.daysUntilExpiry ?? 9) <= 1)) && s.atRiskOfWaste) {
-      const key = item.productId ? `p:${item.productId}` : `n:${view.name.toLowerCase()}`;
+      const scope = itemScope(live, item);
+      const audience = audienceFor(scope, people);
+      const key = `${item.productId ? `p:${item.productId}` : `n:${view.name.toLowerCase()}`}@${scope}`;
       const urgent = s.status === "today";
       const seen = useSoon.get(key);
       if (seen && (seen.urgent || !urgent)) continue;
@@ -84,6 +140,7 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date):
           dedupeKey: `use_soon:${key}:${view.expiresOn ?? today}`,
           priority: 2,
           setting: "useSoon",
+          audienceMemberId: audience,
         },
       });
     }
@@ -101,6 +158,8 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date):
           eq(shoppingListItems.listId, list.id),
           isNull(shoppingListItems.checkedAt),
           isNull(shoppingListItems.purchasedAt),
+          // Only what everyone can see: someone's private items aren't the household's business.
+          eq(shoppingListItems.visibility, "household"),
           // Only what's showing on the list: items the household dismissed don't count.
           or(isNull(shoppingListItems.dismissedUntil), lte(shoppingListItems.dismissedUntil, now)),
         ),
@@ -115,14 +174,16 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date):
         dedupeKey: `shopping:${today}`,
         priority: 3,
         setting: "shoppingReminder",
+        audienceMemberId: null,
       });
     }
   }
 
-  if (weekdayOf(today) === 1) {
+  if (weekdayOf(today) === 1 && plan.entitlements.household_analytics) {
     const insights = wasteInsights(
       [...live.statsRows.values()]
-        .filter((s) => live.index.byId.has(s.productId))
+        // The household's patterns only: nothing learned from someone's private items.
+        .filter((s) => !isPrivateScope(s.scope) && live.index.byId.has(s.productId))
         .map((s) => ({
           productId: s.productId,
           name: live.index.byId.get(s.productId)!.name,
@@ -141,6 +202,7 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, now: Date):
         dedupeKey: `insight:waste:${top.productId}:${today}`,
         priority: 4,
         setting: "insights",
+        audienceMemberId: null,
       });
     }
   }
@@ -157,10 +219,11 @@ export async function generateNotificationsForHousehold(db: Queryable, household
   // job can overlap): otherwise two runs both count what's been sent today and both fill
   // the daily limit. Held until the calling transaction ends.
   await db.execute(sql`select pg_advisory_xact_lock(hashtext(${`notifications:${household.id}`}))`);
-  const candidates = await candidatesFor(db, household, now);
+  const plan = await resolveHouseholdPlan(household.id, now, db);
+  const candidates = await candidatesFor(db, household, plan, now);
   if (candidates.length === 0) return 0;
   const members = await db
-    .select({ userId: householdMembers.userId, email: users.email, settings: notificationSettings })
+    .select({ memberId: householdMembers.id, role: householdMembers.role, userId: users.id, email: users.email, settings: notificationSettings })
     .from(householdMembers)
     .innerJoin(users, eq(users.id, householdMembers.userId))
     .leftJoin(
@@ -173,6 +236,8 @@ export async function generateNotificationsForHousehold(db: Queryable, household
   const startOfDay = zonedDateTimeToInstant(toDateString(now, household.timezone), 0, household.timezone);
   let created = 0;
   for (const member of members) {
+    // Restricted members don't get household nudges (they'd mention shopping, money and receipts).
+    if (member.role === "child") continue;
     const s = member.settings;
     // Defaults only apply without a settings row; a cleared hour means "No quiet hours".
     const quietStart = s ? s.quietStartHour : 21;
@@ -197,6 +262,7 @@ export async function generateNotificationsForHousehold(db: Queryable, household
     let remaining = limit - Number(sent?.n ?? 0);
     for (const c of candidates) {
       if (remaining <= 0) break;
+      if (c.audienceMemberId !== null && c.audienceMemberId !== member.memberId) continue;
       if (s && s[c.setting] === false) continue;
       const inserted = await db
         .insert(notifications)
@@ -214,7 +280,7 @@ export async function generateNotificationsForHousehold(db: Queryable, household
       if (inserted.length > 0) {
         remaining -= 1;
         created += 1;
-        if (s?.emailDigest) {
+        if (s?.emailDigest && plan.entitlements.advanced_notifications) {
           await sendEmail({
             to: member.email,
             subject: c.title,

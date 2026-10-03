@@ -8,9 +8,10 @@ import { resetProductLearning, setPredictionsPaused } from "@/server/services/me
 import { setStapleOverride } from "@/server/services/shopping";
 
 const id = z.uuid({ error: "That couldn't be found." });
+const scopeSchema = z.string().regex(/^(household|(member|private):[0-9a-f-]{36})$/, "That isn't a valid pattern.").optional();
 
-export async function setPredictionsPausedAction(productId: string, paused: boolean) {
-  return householdAction("insights.pause", async (ctx) => setPredictionsPaused(ctx, parseInput(id, productId), Boolean(paused)), {
+export async function setPredictionsPausedAction(productId: string, paused: boolean, scope?: string) {
+  return householdAction("insights.pause", async (ctx) => setPredictionsPaused(ctx, parseInput(id, productId), Boolean(paused), parseInput(scopeSchema, scope)), {
     message: paused ? "Plenty will stop predicting this" : "Predictions turned back on",
   });
 }
@@ -21,8 +22,8 @@ export async function setStapleOverrideAction(productId: string, value: boolean 
   });
 }
 
-export async function resetLearningAction(productId: string) {
-  return householdAction("insights.reset", async (ctx) => resetProductLearning(ctx, parseInput(id, productId)), {
+export async function resetLearningAction(productId: string, scope?: string) {
+  return householdAction("insights.reset", async (ctx) => resetProductLearning(ctx, parseInput(id, productId), parseInput(scopeSchema, scope)), {
     message: "Plenty will learn this one from scratch",
   });
 }

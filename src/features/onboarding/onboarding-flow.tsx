@@ -178,7 +178,7 @@ export function OnboardingFlow({ initial }: { initial: OnboardingInitial }) {
         )}
 
         {step === "avoid" && (
-          <Screen title="Anything Plenty should always avoid?" body="Allergies are treated as hard rules — Plenty will never suggest a meal that contains them.">
+          <Screen title="Anything Plenty should always avoid?" body="Plenty leaves meals containing these out of its suggestions. It's a helpful filter, not a guarantee, so always check labels and ingredients yourself.">
             <div className="space-y-7">
               <div>
                 <p className="mb-3 text-[13px] font-semibold text-ink-2">Allergies</p>

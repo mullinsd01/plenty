@@ -3,8 +3,9 @@
  * the household already has, without undoing anything a person did.
  *
  * Rules, in order of precedence:
- *   - Manual items are never removed and their quantity is never touched;
- *     a matching need only adds its reason and sources.
+ *   - Things a person asked for (added, requested or set to repeat) are never
+ *     removed and their quantity is never touched; a matching need only adds
+ *     its reason and sources.
  *   - Checked or purchased items are left exactly as they are.
  *   - An item dismissed until later suppresses needs for its key.
  *   - Plenty's own (auto) items are refreshed when still needed and removed
@@ -13,6 +14,7 @@
  * Pure and deterministic.
  */
 
+import { isComputedSource } from "@/lib/domain";
 import type { ExistingListItem, ReconcileResult, ShoppingNeed } from "@/lib/meals/types";
 
 type ListUpdate = ReconcileResult["update"][number];
@@ -27,18 +29,18 @@ function isSettled(item: ExistingListItem): boolean {
 
 function isRemovable(item: ExistingListItem, now: Date): boolean {
   // Dismissed rows stay so the dismissal is remembered until it lapses.
-  return item.source !== "manual" && !isSettled(item) && !item.userEdited && !isDismissed(item, now);
+  return isComputedSource(item.source) && !isSettled(item) && !item.userEdited && !isDismissed(item, now);
 }
 
 function updateFor(item: ExistingListItem, need: ShoppingNeed): ListUpdate {
-  const manual = item.source === "manual";
+  const manual = !isComputedSource(item.source);
   return {
     id: item.id,
     // Manual items keep what the person asked for; auto items take the new suggestion
     // (a user-edited quantity lives in `quantity`, which reconciliation never writes).
     suggestedQuantity: manual ? item.suggestedQuantity : need.quantity,
     suggestedUnit: manual ? item.suggestedUnit : need.unit,
-    source: manual ? "manual" : need.primarySource,
+    source: manual ? item.source : need.primarySource,
     reason: need.reason,
     advice: need.advice ?? null,
     sources: need.sources,

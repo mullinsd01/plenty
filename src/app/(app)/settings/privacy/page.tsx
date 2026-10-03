@@ -3,7 +3,8 @@ import { PageHeader } from "@/components/ui/page-header";
 import { AiProcessingToggle, DangerZone, ExportButton, SettingsCard } from "@/features/settings/forms";
 import { aiStatus } from "@/server/ai";
 import { requireHousehold } from "@/server/auth/context";
-import { getPreferences, listMembers } from "@/server/services/household";
+import { getPreferences } from "@/server/services/household";
+import { listMembers } from "@/server/services/members";
 
 export const metadata: Metadata = { title: "Privacy & data" };
 

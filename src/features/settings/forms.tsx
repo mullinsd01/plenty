@@ -415,7 +415,7 @@ export function FoodPreferencesForm({
   };
   return (
     <div className="space-y-6">
-      <SettingsCard title="Allergies" description="Hard rules. Plenty never suggests meals containing these.">
+      <SettingsCard title="Allergies" description="Plenty leaves meals with these out of its suggestions. It's a filter to help, not a guarantee — always check labels and ingredients yourself.">
         <ChipGroup ariaLabel="Allergies" value={allergies} onChange={setAllergies} options={ALLERGENS.map((a) => ({ value: a, label: ALLERGEN_LABELS[a] }))} />
       </SettingsCard>
       <SettingsCard title="Dietary requirements">

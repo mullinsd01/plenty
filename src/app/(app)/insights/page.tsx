@@ -1,23 +1,34 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Leaf, Pencil, Sprout } from "lucide-react";
 import { BasisLabel } from "@/components/food/confidence";
 import { Card, SectionTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
+import { PersonChip } from "@/components/ui/person-chip";
 import { Pill } from "@/components/ui/pill";
+import { UpgradeNote } from "@/components/ui/upgrade-note";
 import { ForgetMealButton, ProductControls } from "@/features/insights/insight-controls";
 import { cn } from "@/lib/cn";
 import { formatShortDate } from "@/lib/dates";
 import { formatMoney, pluralize } from "@/lib/format";
+import { isRestricted } from "@/lib/members/permissions";
+import { isPrivateScope, scopeOwner } from "@/lib/members/scope";
 import { requireHousehold } from "@/server/auth/context";
 import { getHouseholdMemory } from "@/server/services/memory";
+import { listMemberOptions } from "@/server/services/members";
 
 export const metadata: Metadata = { title: "What Plenty knows" };
 
 export default async function InsightsPage() {
   const ctx = await requireHousehold();
-  const m = await getHouseholdMemory(ctx);
+  // What Plenty has learned includes spending and receipts, which child accounts don't see.
+  if (isRestricted(ctx.role)) redirect("/home");
+  const [m, members] = await Promise.all([getHouseholdMemory(ctx), listMemberOptions(ctx)]);
+  const colorOf = (scope: string) => members.find((x) => x.id === scopeOwner(scope))?.color;
+  const predictive = ctx.household.predictive;
+  const analytics = ctx.plan.entitlements.household_analytics;
   const learned = m.products.filter((p) => p.basis === "history");
   const estimates = m.products.filter((p) => p.basis === "estimate");
   const maxWeek = Math.max(1, ...m.spend.weeks.map((w) => w.total), m.preferences.weeklyBudget ?? 0);
@@ -74,7 +85,17 @@ export default async function InsightsPage() {
         </Card>
       </section>
 
-      {m.spend.weeks.some((w) => w.total > 0) && (
+      {!analytics && (m.spend.weeks.some((w) => w.total > 0) || m.waste.length > 0) && (
+        <section className="mb-10">
+          <SectionTitle>Spending and waste</SectionTitle>
+          <UpgradeNote plan="family">
+            Weekly spending and waste analytics are part of Plenty Family. Your receipts are kept, and Plenty still uses what it has learned to suggest
+            smaller amounts of things you tend to throw out.
+          </UpgradeNote>
+        </section>
+      )}
+
+      {analytics && m.spend.weeks.some((w) => w.total > 0) && (
         <section className="mb-10">
           <SectionTitle>Spending</SectionTitle>
           <Card className="p-5">
@@ -128,7 +149,7 @@ export default async function InsightsPage() {
         </section>
       )}
 
-      {m.waste.length > 0 && (
+      {analytics && m.waste.length > 0 && (
         <section className="mb-10">
           <SectionTitle>Food that tends to go to waste</SectionTitle>
           <Card className="divide-y divide-line">
@@ -147,7 +168,12 @@ export default async function InsightsPage() {
 
       <section className="mb-10">
         <SectionTitle>How fast things go</SectionTitle>
-        {m.products.length === 0 ? (
+        {!predictive ? (
+          <UpgradeNote plan="plus">
+            Run-out predictions and learned paces are part of Plenty Plus. Plenty keeps recording what you finish and buy — {m.summary.observations}{" "}
+            so far — so they&apos;re ready to go the moment you upgrade. Nothing is lost.
+          </UpgradeNote>
+        ) : m.products.length === 0 ? (
           <Card>
             <EmptyState icon={<Sprout />} title="Nothing learned yet" compact>
               Each time you mark something finished — or buy it again — Plenty learns how fast your household gets through it.
@@ -156,10 +182,11 @@ export default async function InsightsPage() {
         ) : (
           <Card className="divide-y divide-line">
             {[...learned, ...estimates].map((p) => (
-              <div key={p.productId} className="flex items-center gap-3 px-4 py-3.5">
+              <div key={`${p.productId}|${p.scope}`} className="flex items-center gap-3 px-4 py-3.5">
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-2 text-[15px] font-semibold">
                     {p.name}
+                    {p.ownerName && <PersonChip name={p.ownerName} color={colorOf(p.scope)} isPrivate={isPrivateScope(p.scope)} />}
                     {p.isStaple && (
                       <Pill size="sm" tone="fresh">
                         Staple
@@ -177,7 +204,7 @@ export default async function InsightsPage() {
                     {p.observations > 0 && <span className="text-[12px] text-ink-4">· {pluralize(p.observations, "observation")}</span>}
                   </div>
                 </div>
-                <ProductControls productId={p.productId} name={p.name} isStaple={p.isStaple} stapleOverride={p.stapleOverride} paused={p.paused} />
+                <ProductControls productId={p.productId} scope={p.scope} name={p.name} isStaple={p.isStaple} stapleOverride={p.stapleOverride} paused={p.paused} />
               </div>
             ))}
           </Card>

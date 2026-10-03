@@ -1,17 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowRight, ReceiptText, ScanLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Pill } from "@/components/ui/pill";
+import { UpgradeNote } from "@/components/ui/upgrade-note";
+import { isRestricted } from "@/lib/members/permissions";
 import { formatShortDate } from "@/lib/dates";
 import { formatMoney, pluralize, timeAgo } from "@/lib/format";
 import { requireHousehold } from "@/server/auth/context";
 import { listReceipts } from "@/server/services/receipts";
 
 export const metadata: Metadata = { title: "Receipts" };
+
+/** How far back the free plan shows receipts. */
+const HISTORY_FREE_DAYS = 30;
 
 const STATUS: Record<string, { label: string; tone: "brand" | "neutral" | "alert" | "fresh" }> = {
   processing: { label: "Reading…", tone: "neutral" },
@@ -23,7 +29,16 @@ const STATUS: Record<string, { label: string; tone: "brand" | "neutral" | "alert
 
 export default async function ReceiptsPage() {
   const ctx = await requireHousehold();
-  const receipts = await listReceipts(ctx);
+  // Receipts carry prices and store details, which child accounts don't see.
+  if (isRestricted(ctx.role)) redirect("/home");
+  const all = await listReceipts(ctx);
+  // Browsing older receipts is "purchase history", part of the paid plans. Nothing is deleted: the receipts are
+  // kept, and anything still being read or checked always shows.
+  const cutoff = Date.now() - HISTORY_FREE_DAYS * 24 * 3600_000;
+  const receipts = ctx.plan.entitlements.purchase_history
+    ? all
+    : all.filter((r) => new Date(r.createdAt).getTime() >= cutoff || r.status === "needs_review" || r.status === "processing" || r.status === "uploaded");
+  const hidden = all.length - receipts.length;
   return (
     <div className="animate-fade-in">
       <PageHeader
@@ -37,6 +52,12 @@ export default async function ReceiptsPage() {
           </Button>
         }
       />
+      {hidden > 0 && (
+        <UpgradeNote plan="plus" className="mb-5">
+          {hidden === 1 ? "1 older receipt is" : `${hidden} older receipts are`} kept safe. Browsing purchase history beyond the last {HISTORY_FREE_DAYS} days is part of Plenty
+          Plus.
+        </UpgradeNote>
+      )}
       {receipts.length === 0 ? (
         <Card>
           <EmptyState

@@ -13,6 +13,7 @@ const STATUS: Record<string, number> = {
   not_found: 404,
   conflict: 409,
   rate_limited: 429,
+  plan_limit: 402,
   ai_unavailable: 503,
 };
 

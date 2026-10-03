@@ -12,6 +12,7 @@ export type AppErrorCode =
   | "ai_unavailable"
   | "receipt_invalid"
   | "storage"
+  | "plan_limit"
   | "internal";
 
 /** An error whose message is safe to show to users. */

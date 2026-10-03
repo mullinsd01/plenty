@@ -1,5 +1,18 @@
 import "server-only";
 import { z } from "zod";
+import { parseProductMap } from "@/lib/billing/product-ids";
+
+/** `plan.period=product-id` pairs (see src/lib/billing/product-ids.ts), validated when the environment is read. */
+function productMapSetting() {
+  return z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      const { map, problems } = parseProductMap(v);
+      for (const problem of problems) ctx.addIssue({ code: "custom", message: problem });
+      return map;
+    });
+}
 
 /**
  * Server-side environment, validated once. Never import this from client
@@ -21,6 +34,47 @@ const schema = z.object({
     .transform((v) => v === "true" || v === "1"),
   STORAGE_DIR: z.string().default(".data/uploads"),
   CRON_SECRET: z.string().optional().transform((v) => (v ? v : undefined)),
+  /**
+   * Treat every household without a paid subscription as being on this plan.
+   * For self-hosting and development, where there's no billing; leave unset in production.
+   */
+  PLAN_OVERRIDE: z.enum(["free", "plus", "family", "pro"]).optional(),
+  // ─── Billing (all optional: a provider with missing settings is simply not offered) ───
+  /** Secret that makes the per-household purchase tokens given to the store apps unforgeable (32+ characters). */
+  BILLING_ACCOUNT_SECRET: z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      if (!v) return undefined;
+      if (v.length < 32) ctx.addIssue({ code: "custom", message: "must be at least 32 characters" });
+      return v;
+    }),
+  STRIPE_SECRET_KEY: z.string().optional().transform((v) => (v ? v : undefined)),
+  STRIPE_WEBHOOK_SECRET: z.string().optional().transform((v) => (v ? v : undefined)),
+  /** `plus.monthly=price_…,plus.annual=price_…,family.monthly=price_…,family.annual=price_…` */
+  STRIPE_PRICES: productMapSetting(),
+  APPLE_BUNDLE_ID: z.string().optional().transform((v) => (v ? v : undefined)),
+  /** The app's numeric Apple ID (App Store Connect → App Information). Needed to accept production notifications. */
+  APPLE_APP_ID: z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      if (!v) return undefined;
+      const n = Number(v);
+      if (!Number.isInteger(n) || n <= 0) ctx.addIssue({ code: "custom", message: "must be the app's numeric Apple ID" });
+      return n;
+    }),
+  /** Apple root certificates: comma-separated file paths or base64 DER. */
+  APPLE_ROOT_CERTS: z.string().optional().transform((v) => (v ? v : undefined)),
+  APPLE_PRODUCTS: productMapSetting(),
+  GOOGLE_PLAY_PACKAGE_NAME: z.string().optional().transform((v) => (v ? v : undefined)),
+  /** A Google service account key (JSON, or base64 of it) allowed to read subscriptions in Play Console. */
+  GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: z.string().optional().transform((v) => (v ? v : undefined)),
+  /** The Pub/Sub push endpoint URL (the OIDC token's audience). Defaults to APP_URL + /api/billing/webhooks/google. */
+  GOOGLE_PUBSUB_AUDIENCE: z.string().optional().transform((v) => (v ? v : undefined)),
+  /** The service account the Pub/Sub push subscription signs its token as. */
+  GOOGLE_PUBSUB_SERVICE_ACCOUNT: z.string().optional().transform((v) => (v ? v : undefined)),
+  GOOGLE_PRODUCTS: productMapSetting(),
   /**
    * How many reverse proxies you run in front of Plenty that append to
    * X-Forwarded-For. The client IP used for rate limiting is read that many

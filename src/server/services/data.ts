@@ -26,7 +26,7 @@ import {
   shoppingListItems,
   shoppingLists,
 } from "@/server/db/schema";
-import { listMembers } from "./household";
+import { listMembers } from "./members";
 
 /**
  * A complete, human-readable export of the household's data. Everything is
@@ -44,7 +44,7 @@ export async function exportHouseholdData(ctx: HouseholdContext) {
       exportedAt: new Date().toISOString(),
       format: "plenty-export/1",
       household,
-      members: members.map((m) => ({ name: m.displayName, email: m.email, role: m.role, joinedAt: m.joinedAt })),
+      members: members.map((m) => ({ name: m.name, email: m.email, role: m.role, hasAccount: m.hasAccount, joinedAt: m.joinedAt })),
       preferences: prefs ?? null,
       inventory: await tx.select().from(inventoryItems).where(eq(inventoryItems.householdId, hid)),
       inventoryEvents: await tx.select().from(inventoryEvents).where(eq(inventoryEvents.householdId, hid)),

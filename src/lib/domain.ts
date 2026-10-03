@@ -9,6 +9,7 @@ export const STORAGE_LOCATIONS = [
   "fridge",
   "freezer",
   "pantry",
+  "cupboard",
   "produce",
   "drinks",
   "household",
@@ -20,6 +21,7 @@ export const STORAGE_LOCATION_LABELS: Record<StorageLocation, string> = {
   fridge: "Fridge",
   freezer: "Freezer",
   pantry: "Pantry",
+  cupboard: "Cupboards",
   produce: "Fruit & vegetables",
   drinks: "Drinks",
   household: "Household staples",
@@ -298,7 +300,7 @@ export const COOKING_FREQUENCY_NIGHTS: Record<CookingFrequency, number> = {
 
 // ─── Shopping list ───────────────────────────────────────────────────────────
 
-export const SHOPPING_SOURCES = ["manual", "predicted", "meal_plan", "staple"] as const;
+export const SHOPPING_SOURCES = ["manual", "predicted", "meal_plan", "staple", "request", "recurring"] as const;
 export type ShoppingSource = (typeof SHOPPING_SOURCES)[number];
 
 export const SHOPPING_SOURCE_LABELS: Record<ShoppingSource, string> = {
@@ -306,7 +308,17 @@ export const SHOPPING_SOURCE_LABELS: Record<ShoppingSource, string> = {
   predicted: "Running low",
   meal_plan: "For your meal plan",
   staple: "Household staple",
+  request: "Requested",
+  recurring: "Regular purchase",
 };
+
+/** The sources Plenty works out for itself; the rest are things a person asked for, so Plenty never removes or rewrites them. */
+export const COMPUTED_SHOPPING_SOURCES = ["predicted", "meal_plan", "staple"] as const;
+export type ComputedShoppingSource = (typeof COMPUTED_SHOPPING_SOURCES)[number];
+
+export function isComputedSource(source: ShoppingSource): source is ComputedShoppingSource {
+  return (COMPUTED_SHOPPING_SOURCES as readonly string[]).includes(source);
+}
 
 // ─── Notifications ───────────────────────────────────────────────────────────
 
@@ -319,6 +331,8 @@ export const NOTIFICATION_TYPES = [
   "check_in",
   "insight",
   "household",
+  "request",
+  "billing",
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

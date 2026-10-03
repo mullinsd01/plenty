@@ -1,22 +1,23 @@
 import "server-only";
 import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
-import { withSystem, withUser, type Tx } from "@/server/db/client";
+import { withSystem, withUser } from "@/server/db/client";
 import {
   consumptionStats,
   householdInvitations,
   householdMembers,
   households,
-  notifications,
   notificationSettings,
   preferences,
   profiles,
   shoppingLists,
-  users,
 } from "@/server/db/schema";
 import type { AuthUser, HouseholdContext } from "@/server/auth/context";
 import { generateCode } from "@/server/auth/crypto";
+import { planFlags } from "@/lib/billing/plans";
+import { countMembers, resolveHouseholdPlan } from "@/server/billing/entitlements";
 import { AppError } from "@/server/errors";
 import { refreshLearning } from "@/server/services/learning";
+import { detachMember } from "@/server/services/members";
 import type { NotificationSettingsInput, PreferencesInput } from "@/validation/household";
 
 const INVITE_DAYS = 14;
@@ -88,7 +89,7 @@ export async function updateHouseholdBasics(
         .select({ productId: consumptionStats.productId })
         .from(consumptionStats)
         .where(eq(consumptionStats.householdId, ctx.household.id));
-      await refreshLearning(tx, updated, learned.map((r) => r.productId), new Date());
+      await refreshLearning(tx, { ...updated, ...planFlags(ctx.plan.entitlements) }, learned.map((r) => r.productId), new Date());
     }
   });
 }
@@ -158,42 +159,7 @@ export async function updateDisplayName(user: AuthUser, displayName: string): Pr
   });
 }
 
-// ─── Members & sharing ──────────────────────────────────────────────────────
-
-export interface HouseholdMemberView {
-  userId: string;
-  displayName: string;
-  email: string;
-  role: "owner" | "member";
-  joinedAt: Date;
-  isYou: boolean;
-}
-
-export async function listMembers(ctx: HouseholdContext): Promise<HouseholdMemberView[]> {
-  return withUser(ctx.user.id, async (tx) => {
-    const rows = await tx
-      .select({
-        userId: householdMembers.userId,
-        role: householdMembers.role,
-        joinedAt: householdMembers.joinedAt,
-        displayName: profiles.displayName,
-        email: users.email,
-      })
-      .from(householdMembers)
-      .innerJoin(users, eq(users.id, householdMembers.userId))
-      .leftJoin(profiles, eq(profiles.userId, householdMembers.userId))
-      .where(eq(householdMembers.householdId, ctx.household.id))
-      .orderBy(asc(householdMembers.joinedAt));
-    return rows.map((r) => ({
-      userId: r.userId,
-      role: r.role,
-      joinedAt: r.joinedAt,
-      displayName: r.displayName ?? r.email.split("@")[0],
-      email: r.email,
-      isYou: r.userId === ctx.user.id,
-    }));
-  });
-}
+// ─── Sharing ────────────────────────────────────────────────────────────────
 
 export async function getActiveInvitation(ctx: HouseholdContext) {
   return withUser(ctx.user.id, async (tx) => {
@@ -288,6 +254,22 @@ export async function acceptInvitation(user: AuthUser, code: string): Promise<{ 
       .limit(1);
     if (!household) throw new AppError("not_found", "That household no longer exists.");
 
+    // Someone already in the household can open the link again without taking another place.
+    const [already] = await tx
+      .select({ id: householdMembers.id })
+      .from(householdMembers)
+      .where(and(eq(householdMembers.householdId, household.id), eq(householdMembers.userId, user.id)))
+      .limit(1);
+    if (!already) {
+      const plan = await resolveHouseholdPlan(household.id, new Date(), tx);
+      const max = plan.entitlements.max_household_members;
+      if (max !== null && (await countMembers(household.id, tx)) >= max) {
+        throw new AppError(
+          "plan_limit",
+          "This household is full on its current plan, so you can't join yet. Ask an owner of the household to make room or change the plan.",
+        );
+      }
+    }
     await tx
       .insert(householdMembers)
       .values({ householdId: household.id, userId: user.id, role: invite.role })
@@ -308,42 +290,6 @@ export async function acceptInvitation(user: AuthUser, code: string): Promise<{ 
   });
 }
 
-export async function removeMember(ctx: HouseholdContext, memberUserId: string): Promise<void> {
-  if (memberUserId === ctx.user.id) return leaveHousehold(ctx);
-  if (ctx.role !== "owner") throw new AppError("forbidden", "Only the household owner can remove people.");
-  await withSystem(async (tx) => {
-    const [removed] = await tx
-      .delete(householdMembers)
-      .where(and(eq(householdMembers.householdId, ctx.household.id), eq(householdMembers.userId, memberUserId)))
-      .returning({ id: householdMembers.id });
-    if (!removed) return;
-    // Anyone who's been removed must not be able to walk back in with the old link.
-    await tx
-      .update(householdInvitations)
-      .set({ revokedAt: new Date() })
-      .where(
-        and(
-          eq(householdInvitations.householdId, ctx.household.id),
-          isNull(householdInvitations.acceptedAt),
-          isNull(householdInvitations.revokedAt),
-        ),
-      );
-    await forgetMemberData(tx, ctx.household.id, memberUserId);
-  });
-}
-
-/** Personal per-household rows that shouldn't outlive a membership. */
-async function forgetMemberData(tx: Tx, householdId: string, userId: string): Promise<void> {
-  await tx.delete(notifications).where(and(eq(notifications.householdId, householdId), eq(notifications.userId, userId)));
-  await tx
-    .delete(notificationSettings)
-    .where(and(eq(notificationSettings.householdId, householdId), eq(notificationSettings.userId, userId)));
-  await tx
-    .update(profiles)
-    .set({ activeHouseholdId: null })
-    .where(and(eq(profiles.userId, userId), eq(profiles.activeHouseholdId, householdId)));
-}
-
 export async function leaveHousehold(ctx: HouseholdContext): Promise<void> {
   await withSystem(async (tx) => {
     // Serialise membership changes so two people leaving at once can't strand the household.
@@ -353,17 +299,19 @@ export async function leaveHousehold(ctx: HouseholdContext): Promise<void> {
       .from(householdMembers)
       .where(eq(householdMembers.householdId, ctx.household.id))
       .orderBy(asc(householdMembers.joinedAt));
-    const others = members.filter((m) => m.userId !== ctx.user.id);
+    const me = members.find((m) => m.userId === ctx.user.id);
+    if (!me) return;
+    // Someone with an account has to be left to run it: a profile can't sign in.
+    const others = members.filter((m) => m.id !== me.id && m.userId !== null);
     if (others.length === 0) {
-      throw new AppError("conflict", "You're the only member. Delete the household instead if you want to remove it.");
+      throw new AppError("conflict", "You're the only person with an account here. Delete the household instead if you want to remove it.");
     }
-    if (ctx.role === "owner" && !others.some((m) => m.role === "owner")) {
-      await tx.update(householdMembers).set({ role: "owner" }).where(eq(householdMembers.id, others[0].id));
+    if (me.role === "owner" && !others.some((m) => m.role === "owner")) {
+      const successor = others.find((m) => m.role === "member") ?? others[0];
+      await tx.update(householdMembers).set({ role: "owner" }).where(eq(householdMembers.id, successor.id));
     }
-    await tx
-      .delete(householdMembers)
-      .where(and(eq(householdMembers.householdId, ctx.household.id), eq(householdMembers.userId, ctx.user.id)));
-    await forgetMemberData(tx, ctx.household.id, ctx.user.id);
+    await detachMember(tx, ctx.household.id, me.id, ctx.user.id);
+    await tx.delete(householdMembers).where(eq(householdMembers.id, me.id));
   });
 }
 

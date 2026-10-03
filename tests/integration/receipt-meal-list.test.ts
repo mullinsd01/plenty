@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { and, eq, inArray } from "drizzle-orm";
@@ -16,6 +17,9 @@ import { addManualItem, getShoppingList, removeShoppingItem, syncShoppingList } 
 import { makeHousehold } from "../helpers/db";
 
 const FIXTURES = path.join(process.cwd(), "tests/fixtures/receipts");
+const shopDate: string = (JSON.parse(readFileSync(path.join(FIXTURES, "manifest.json"), "utf8")) as Record<string, { expected: { purchasedOn: string } }>)[
+  "woolworths-weekly"
+].expected.purchasedOn;
 const DAY = 86_400_000;
 
 describe("receipt → kitchen → meal plan → shopping list", () => {
@@ -25,11 +29,13 @@ describe("receipt → kitchen → meal plan → shopping list", () => {
 
   beforeAll(async () => {
     ctx = await makeHousehold({ adults: 2, children: 1 });
-    // Milk bought a few days ago that's probably nearly gone.
+    // Milk bought a few days before the receipt's shop, so it's probably nearly gone. (Dated from the
+    // fixture's own shop date, not from today, so the test doesn't age.)
+    const boughtBefore = new Date(`${shopDate}T00:00:00Z`).getTime() - 5 * DAY;
     [oldMilkId] = await addItems(ctx, [{ name: "Full cream milk" }]);
     await systemDb
       .update(inventoryItems)
-      .set({ purchasedAt: new Date(Date.now() - 5 * DAY), levelUpdatedAt: new Date(Date.now() - 5 * DAY) })
+      .set({ purchasedAt: new Date(boughtBefore), levelUpdatedAt: new Date(boughtBefore) })
       .where(eq(inventoryItems.id, oldMilkId));
     await addManualItem(ctx, { name: "Milk" });
   });

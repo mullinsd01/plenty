@@ -10,7 +10,9 @@ import { Card } from "@/components/ui/card";
 import { Segmented } from "@/components/ui/controls";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/field";
+import { PersonChip } from "@/components/ui/person-chip";
 import { useAction } from "@/components/hooks/use-action";
+import { usePeople } from "@/features/members/people-context";
 import { cn } from "@/lib/cn";
 import { levelLabel, STORAGE_LOCATIONS, STORAGE_LOCATION_LABELS, type StorageLocation } from "@/lib/domain";
 import { formatQuantity, type Unit } from "@/lib/units";
@@ -53,7 +55,9 @@ export function KitchenView({ items, finished }: { items: InventoryItemView[]; f
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState<StorageLocation | "all">("all");
   const [sort, setSort] = useState<SortKey>("urgent");
+  const [who, setWho] = useState<"all" | "household" | string>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const people = usePeople();
   const [adding, setAdding] = useState(params.get("add") === "1");
   const restore = useAction();
 
@@ -80,13 +84,18 @@ export function KitchenView({ items, finished }: { items: InventoryItemView[]; f
   const totalThings = useMemo(() => batchGroups(optimistic).length, [optimistic]);
 
   const visible = useMemo(() => {
-    const filtered = optimistic.filter((i) => (location === "all" || i.location === location) && (!query.trim() || matches(i.name, query)));
+    const filtered = optimistic.filter(
+      (i) =>
+        (location === "all" || i.location === location) &&
+        (who === "all" || (who === "household" ? i.ownerMemberId === null : i.ownerMemberId === who)) &&
+        (!query.trim() || matches(i.name, query)),
+    );
     return [...filtered].sort((a, b) => {
       if (sort === "name") return a.name.localeCompare(b.name);
       if (sort === "recent") return b.purchasedAt.localeCompare(a.purchasedAt);
       return urgency(a) - urgency(b) || a.name.localeCompare(b.name);
     });
-  }, [optimistic, location, query, sort]);
+  }, [optimistic, location, query, sort, who]);
 
   const groups = useMemo(() => {
     if (sort !== "name" || location !== "all") return [{ key: "all", label: null as string | null, items: visible }];
@@ -96,6 +105,11 @@ export function KitchenView({ items, finished }: { items: InventoryItemView[]; f
   }, [visible, sort, location]);
 
   const selected = optimistic.find((i) => i.id === selectedId) ?? null;
+  // Only offer a "whose" filter once someone actually has something of their own.
+  const owners = useMemo(() => {
+    const ids = new Set(optimistic.map((i) => i.ownerMemberId).filter(Boolean) as string[]);
+    return people.members.filter((m) => ids.has(m.id));
+  }, [optimistic, people.members]);
 
   const openAdd = (open: boolean) => {
     setAdding(open);
@@ -166,6 +180,16 @@ export function KitchenView({ items, finished }: { items: InventoryItemView[]; f
             <FilterChip key={l} active={location === l} onClick={() => setLocation(l)} label={STORAGE_LOCATION_LABELS[l]} count={counts.get(l) ?? 0} />
           ))}
         </div>
+        {owners.length > 0 && (
+          <div className="scrollbar-none -mx-4 flex items-center gap-2 overflow-x-auto px-4 sm:mx-0 sm:px-0" role="tablist" aria-label="Filter by whose it is">
+            <span className="shrink-0 text-[12px] font-medium text-ink-3">Whose:</span>
+            <FilterChip active={who === "all"} onClick={() => setWho("all")} label="Everyone's" size="sm" />
+            <FilterChip active={who === "household"} onClick={() => setWho("household")} label="Household" size="sm" />
+            {owners.map((m) => (
+              <FilterChip key={m.id} active={who === m.id} onClick={() => setWho(m.id)} label={m.isYou ? "Mine" : m.name} size="sm" />
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="mb-3 mt-2 flex items-center justify-between">
@@ -223,7 +247,19 @@ export function KitchenView({ items, finished }: { items: InventoryItemView[]; f
   );
 }
 
-function FilterChip({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
+function FilterChip({
+  active,
+  onClick,
+  label,
+  count,
+  size = "md",
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count?: number;
+  size?: "sm" | "md";
+}) {
   return (
     <button
       type="button"
@@ -231,12 +267,13 @@ function FilterChip({ active, onClick, label, count }: { active: boolean; onClic
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3.5 text-[13px] font-medium transition",
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full border font-medium transition",
+        size === "sm" ? "h-7 px-3 text-[12px]" : "h-9 px-3.5 text-[13px]",
         active ? "border-primary bg-primary text-on-primary" : "border-line-strong bg-surface text-ink-2 hover:border-ink-4",
       )}
     >
       {label}
-      <span className={cn("tabular text-[12px]", active ? "opacity-70" : "text-ink-4")}>{count}</span>
+      {count !== undefined && <span className={cn("tabular text-[12px]", active ? "opacity-70" : "text-ink-4")}>{count}</span>}
     </button>
   );
 }
@@ -245,7 +282,8 @@ function FilterChip({ active, onClick, label, count }: { active: boolean; onClic
 export function batchGroups(items: InventoryItemView[]): Array<{ key: string; items: InventoryItemView[] }> {
   const groups = new Map<string, InventoryItemView[]>();
   for (const item of items) {
-    const key = `${item.productId ?? normalize(item.name)}|${item.location}`;
+    // Dad's Pepsi Max and Mum's are different things, so they're kept apart.
+    const key = `${item.productId ?? normalize(item.name)}|${item.location}|${item.ownerMemberId ?? "household"}|${item.visibility}`;
     groups.set(key, [...(groups.get(key) ?? []), item]);
   }
   return [...groups.entries()].map(([key, grouped]) => ({ key, items: grouped }));
@@ -284,6 +322,7 @@ function BatchGroupRow({ items, onOpen }: { items: InventoryItemView[]; onOpen: 
         <div className="min-w-0 flex-1">
           <p className="truncate text-[15px] font-semibold">
             {lead.name}
+            <OwnerChip item={lead} />
             <span className="ml-1.5 text-[12px] font-medium text-ink-3">{items.length} lots</span>
             {items.some((i) => i.needsCheckIn) && <span className="ml-2 align-middle text-[11px] font-medium text-brand-ink">Finished?</span>}
           </p>
@@ -312,6 +351,14 @@ function BatchGroupRow({ items, onOpen }: { items: InventoryItemView[]; onOpen: 
   );
 }
 
+/** Whose it is, as a small chip beside the name ("Pepsi Max — Dad"). Nothing for the household's own things. */
+function OwnerChip({ item }: { item: Pick<InventoryItemView, "ownerMemberId" | "ownerName" | "visibility"> }) {
+  const people = usePeople();
+  if (!item.ownerName) return null;
+  const color = people.members.find((m) => m.id === item.ownerMemberId)?.color;
+  return <PersonChip name={item.ownerName} color={color} isPrivate={item.visibility === "private"} className="ml-2 align-middle" />;
+}
+
 function ItemRow({ item, onOpen, nested = false }: { item: InventoryItemView; onOpen: () => void; nested?: boolean }) {
   const soon = item.useSoon.status === "today" || item.useSoon.status === "soon";
   const expired = item.useSoon.status === "expired";
@@ -322,6 +369,7 @@ function ItemRow({ item, onOpen, nested = false }: { item: InventoryItemView; on
       <div className="min-w-0 flex-1">
         <p className="truncate text-[15px] font-semibold">
           {item.name}
+          {!nested && <OwnerChip item={item} />}
           {item.needsCheckIn && <span className="ml-2 align-middle text-[11px] font-medium text-brand-ink">Finished?</span>}
         </p>
         <p className={cn("truncate text-[13px]", expired ? "text-alert" : soon ? "text-soon" : "text-ink-3")}>

@@ -20,10 +20,11 @@
 
 import type { ProductInfo } from "@/lib/catalog/types";
 import { daysBetween } from "@/lib/dates";
-import { AISLE_ORDER, type Aisle, type ShoppingSource } from "@/lib/domain";
+import { AISLE_ORDER, type Aisle, type ComputedShoppingSource } from "@/lib/domain";
 import { convertForProduct, roundQuantity } from "@/lib/meals/matching";
 import { purchaseIncrement, roundUpToPurchase } from "@/lib/meals/requirements";
 import type { MissingIngredient, PredictionInput, ShoppingNeed, ShoppingNeedSource, StapleInput } from "@/lib/meals/types";
+import { HOUSEHOLD_SCOPE, learningKey, type ItemVisibility } from "@/lib/members/scope";
 import { OUT_NOW_MAX_DAYS, TODAY_MAX_DAYS, formatDaysRemaining } from "@/lib/prediction/labels";
 import { shoppingItemKey } from "@/lib/shopping/keys";
 import { convert, unitDimension, type Unit } from "@/lib/units";
@@ -44,7 +45,7 @@ export const WASTE_ADVICE_SMALLEST = "You often throw some of this out — the s
 /** Shown when a predicted amount was limited to what keeps (12 bananas for a fortnight would go brown). */
 export const FRESHNESS_ADVICE = "Just what you'll use while it's fresh — top up later if you run low.";
 
-type NeedSource = Exclude<ShoppingSource, "manual">;
+type NeedSource = ComputedShoppingSource;
 
 /** Lower comes first: a meal-plan need outranks a prediction, which outranks a staple. */
 const SOURCE_PRIORITY: Record<NeedSource, number> = { meal_plan: 0, predicted: 1, staple: 2 };
@@ -64,7 +65,7 @@ export interface ShoppingNeedsInput {
   planMissing: readonly MissingIngredient[];
   staples: readonly StapleInput[];
   products: ReadonlyMap<string, ProductInfo>;
-  /** Waste history keyed by productId. */
+  /** Waste history keyed by productId, and by `learningKey(productId, scope)` for a person's own. */
   waste: ReadonlyMap<string, WasteStats>;
   /** Days until the shop after next: anything running out within it is bought now. */
   horizonDays: number;
@@ -78,6 +79,10 @@ interface Contribution {
   name: string;
   aisle: Aisle;
   source: NeedSource;
+  /** Whose pace it is, and so whose line it lands on. */
+  scope: string;
+  ownerMemberId: string | null;
+  visibility: ItemVisibility;
   /** Amount wanted before package rounding, in `unit`; null = "one of the usual". */
   amount: number | null;
   unit: Unit | null;
@@ -138,8 +143,11 @@ function standalonePurchase(amount: number | null, unit: Unit | null, product: P
 
 /** The prediction's own item key, falling back to the standard one. */
 function predictionKey(prediction: PredictionInput): string {
-  return prediction.itemKey || shoppingItemKey({ productId: prediction.productId, name: prediction.name });
+  return prediction.itemKey || shoppingItemKey({ productId: prediction.productId, name: prediction.name, scope: prediction.scope });
 }
+
+/** Everything that isn't a person's own prediction belongs to the household. */
+const SHARED = { scope: HOUSEHOLD_SCOPE, ownerMemberId: null, visibility: "household" } as const;
 
 /**
  * How many days of use a purchase can sensibly cover: all of `coverDays`,
@@ -153,6 +161,7 @@ function freshCoverDays(product: ProductInfo | null, coverDays: number): number 
 }
 
 function predictedContribution(prediction: PredictionInput, product: ProductInfo | null, horizonDays: number): Contribution | null {
+  const scope = prediction.scope ?? HOUSEHOLD_SCOPE;
   // Enough at home to last past the shop after next: not needed.
   if (!(prediction.daysRemaining <= horizonDays)) return null;
   const coverDays = Math.max(0, horizonDays - Math.max(0, prediction.daysRemaining));
@@ -165,6 +174,9 @@ function predictedContribution(prediction: PredictionInput, product: ProductInfo
     name: prediction.name,
     aisle: prediction.aisle,
     source: "predicted",
+    scope,
+    ownerMemberId: prediction.ownerMemberId ?? null,
+    visibility: scope.startsWith("private:") ? "private" : "household",
     amount,
     unit,
     wasteAdjustable: true,
@@ -179,16 +191,24 @@ function isStapleDue(staple: StapleInput, now: Date): boolean {
   return daysBetween(staple.lastPurchasedAt, now) >= STAPLE_DUE_INTERVAL_SHARE * staple.typicalIntervalDays;
 }
 
+function stapleKey(staple: StapleInput): string {
+  return shoppingItemKey({ productId: staple.productId, name: staple.name, scope: staple.scope });
+}
+
 function stapleContribution(staple: StapleInput, product: ProductInfo | null, now: Date): Contribution | null {
   if (staple.hasActiveStock || !isStapleDue(staple, now)) return null;
+  const scope = staple.scope ?? HOUSEHOLD_SCOPE;
   const { amount, unit } = fromBase(staple.typicalPurchaseAmount, staple.baseUnit, product);
   const reason = stapleReason(staple.typicalIntervalDays);
   return {
-    itemKey: shoppingItemKey({ productId: staple.productId, name: staple.name }),
+    itemKey: stapleKey(staple),
     productId: staple.productId,
     name: staple.name,
     aisle: staple.aisle,
     source: "staple",
+    scope,
+    ownerMemberId: staple.ownerMemberId ?? null,
+    visibility: scope.startsWith("private:") ? "private" : "household",
     amount,
     unit,
     wasteAdjustable: true,
@@ -213,6 +233,7 @@ function mealPlanContribution(missing: MissingIngredient, product: ProductInfo |
     name: missing.name,
     aisle: missing.aisle,
     source: "meal_plan",
+    ...SHARED,
     amount,
     unit,
     wasteAdjustable: false,
@@ -290,7 +311,9 @@ function mergeGroup(
   const lead = ordered[0];
   const productId = ordered.find((c) => c.productId !== null)?.productId ?? null;
   const product = lookupProduct(products, productId);
-  const wasteFactor = productId ? wasteFactorFor(waste.get(productId)) : null;
+  // A person's waste history is theirs; fall back to the product's overall record.
+  const wasteStats = productId ? waste.get(learningKey(productId, lead.scope)) ?? waste.get(productId) : undefined;
+  const wasteFactor = wasteFactorFor(wasteStats);
   const merged = product ? mergeKnownProduct(ordered, product, wasteFactor) : mergeFreeText(ordered, wasteFactor);
   const advice = merged.advice ?? (ordered.some((c) => c.freshnessLimited) ? FRESHNESS_ADVICE : undefined);
   return {
@@ -304,6 +327,8 @@ function mergeGroup(
     primarySource: lead.source,
     reason: [...new Set(ordered.map((c) => c.reason))].join(" · "),
     ...(advice ? { advice } : {}),
+    ownerMemberId: lead.ownerMemberId,
+    visibility: lead.visibility,
   };
 }
 
@@ -352,7 +377,7 @@ export function computeShoppingNeeds(input: ShoppingNeedsInput): ShoppingNeed[] 
     if (contribution) contributions.push(contribution);
   }
   for (const staple of input.staples) {
-    if (predicted.has(shoppingItemKey({ productId: staple.productId, name: staple.name }))) continue;
+    if (predicted.has(stapleKey(staple))) continue;
     const contribution = stapleContribution(staple, lookupProduct(input.products, staple.productId), input.now);
     if (contribution) contributions.push(contribution);
   }

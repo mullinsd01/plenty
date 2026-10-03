@@ -1,6 +1,7 @@
 import type {
   Aisle,
   Allergen,
+  ComputedShoppingSource,
   Confidence,
   ContainsFlag,
   Cuisine,
@@ -10,6 +11,7 @@ import type {
   ShoppingSource,
   StorageLocation,
 } from "@/lib/domain";
+import type { ItemVisibility } from "@/lib/members/scope";
 import type { BaseUnit, Unit } from "@/lib/units";
 
 /** One active inventory item as seen by the meal and shopping engines. */
@@ -161,6 +163,9 @@ export interface ScoredMeal {
 export interface PredictionInput {
   productId: string | null;
   itemKey: string;
+  /** Whose pace this is (see `src/lib/members/scope.ts`). Absent = the household's. */
+  scope?: string;
+  ownerMemberId?: string | null;
   name: string;
   aisle: Aisle;
   daysRemaining: number;
@@ -177,6 +182,9 @@ export interface StapleInput {
   productId: string;
   name: string;
   aisle: Aisle;
+  /** Whose regular buy this is (see `src/lib/members/scope.ts`). Absent = the household's. */
+  scope?: string;
+  ownerMemberId?: string | null;
   /** Typical amount bought each time, in base units. */
   typicalPurchaseAmount: number | null;
   baseUnit: BaseUnit;
@@ -186,7 +194,7 @@ export interface StapleInput {
 }
 
 export interface ShoppingNeedSource {
-  source: Exclude<ShoppingSource, "manual">;
+  source: ComputedShoppingSource;
   quantity: number | null;
   unit: Unit | null;
   note: string;
@@ -201,9 +209,12 @@ export interface ShoppingNeed {
   quantity: number | null;
   unit: Unit | null;
   sources: ShoppingNeedSource[];
-  primarySource: Exclude<ShoppingSource, "manual">;
+  primarySource: ComputedShoppingSource;
   reason: string;
   advice?: string;
+  /** Whose it's for. Absent or null = the household's. */
+  ownerMemberId?: string | null;
+  visibility?: ItemVisibility;
 }
 
 export interface ExistingListItem {
@@ -217,6 +228,7 @@ export interface ExistingListItem {
   suggestedQuantity: number | null;
   suggestedUnit: Unit | null;
   source: ShoppingSource;
+  ownerMemberId?: string | null;
   userEdited: boolean;
   checkedAt: Date | null;
   dismissedUntil: Date | null;

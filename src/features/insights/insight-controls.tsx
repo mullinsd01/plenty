@@ -10,12 +10,15 @@ import { forgetMealAction, resetLearningAction, setPredictionsPausedAction, setS
 /** Per-product controls: staple on/off, pause predictions, forget what was learned. */
 export function ProductControls({
   productId,
+  scope,
   name,
   isStaple,
   stapleOverride,
   paused,
 }: {
   productId: string;
+  /** Whose pace this is (`household`, or one person's). */
+  scope: string;
   name: string;
   isStaple: boolean;
   stapleOverride: boolean | null;
@@ -52,11 +55,11 @@ export function ProductControls({
             </MenuItem>
           )}
           {paused ? (
-            <MenuItem onSelect={() => run(() => setPredictionsPausedAction(productId, false))}>
+            <MenuItem onSelect={() => run(() => setPredictionsPausedAction(productId, false, scope))}>
               <Play /> Predict when it runs out
             </MenuItem>
           ) : (
-            <MenuItem onSelect={() => run(() => setPredictionsPausedAction(productId, true))}>
+            <MenuItem onSelect={() => run(() => setPredictionsPausedAction(productId, true, scope))}>
               <Pause /> Stop predicting this
             </MenuItem>
           )}
@@ -73,7 +76,7 @@ export function ProductControls({
         confirmLabel="Forget it"
         destructive
         loading={pending}
-        onConfirm={() => run(() => resetLearningAction(productId), { onSuccess: () => setConfirmForget(false) })}
+        onConfirm={() => run(() => resetLearningAction(productId, scope), { onSuccess: () => setConfirmForget(false) })}
       />
     </>
   );

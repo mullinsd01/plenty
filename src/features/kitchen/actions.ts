@@ -20,6 +20,9 @@ const addItemSchema = z.object({
   actualExpiry: dateString.nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
   remainingFraction: z.number().min(0).max(1).nullable().optional(),
+  /** Whose it is (a member id); null or absent = the household's. */
+  ownerMemberId: id.nullable().optional(),
+  visibility: z.enum(["household", "private"]).optional(),
 });
 
 export async function addItemsAction(items: Array<z.input<typeof addItemSchema>>) {
@@ -40,6 +43,8 @@ const updateSchema = z.object({
   unit: z.enum(UNITS).optional(),
   actualExpiry: dateString.nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
+  ownerMemberId: id.nullable().optional(),
+  visibility: z.enum(["household", "private"]).optional(),
 });
 
 export async function updateItemAction(itemId: string, patch: z.input<typeof updateSchema>) {
@@ -80,8 +85,11 @@ export async function clearOutItemsAction(itemIds: string[]) {
   );
 }
 
-export async function answerCheckInAction(productId: string, finished: boolean) {
+/** `scope` says whose pace the question was about (`household`, `member:<id>` or `private:<id>`). */
+const scopeSchema = z.string().regex(/^(household|(member|private):[0-9a-f-]{36})$/, "That isn't a valid pattern.");
+
+export async function answerCheckInAction(productId: string, finished: boolean, scope: string = "household") {
   return householdAction("kitchen.checkIn", async (ctx) => {
-    await inventory.answerCheckIn(ctx, parseInput(id, productId), Boolean(finished));
+    await inventory.answerCheckIn(ctx, parseInput(id, productId), Boolean(finished), parseInput(scopeSchema, scope));
   });
 }
