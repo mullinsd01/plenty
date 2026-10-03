@@ -1,6 +1,8 @@
 import "server-only";
+import { sql } from "drizzle-orm";
 import { cheapestPlanWith, PLANS, type Entitlements, type PlanId } from "@/lib/billing/plans";
 import type { HouseholdContext } from "@/server/auth/context";
+import type { Tx } from "@/server/db/client";
 import { AppError } from "@/server/errors";
 import {
   addUsage,
@@ -41,11 +43,7 @@ export function requireEntitlement(ctx: HouseholdContext, key: BooleanEntitlemen
   );
 }
 
-/** Whether there's room to add `adding` more items to the kitchen. */
-export async function checkRoomForItems(ctx: HouseholdContext, adding = 1): Promise<{ ok: true } | { ok: false; message: string }> {
-  const max = ctx.plan.entitlements.max_inventory_items;
-  if (max === null) return { ok: true };
-  const current = await countActiveItems(ctx.household.id);
+function roomVerdict(max: number, current: number, adding: number): { ok: true } | { ok: false; message: string } {
   if (current + adding <= max) return { ok: true };
   const next = cheapestPlanWith((e) => e.max_inventory_items === null || (e.max_inventory_items ?? 0) > max);
   const room = Math.max(0, max - current);
@@ -58,8 +56,23 @@ export async function checkRoomForItems(ctx: HouseholdContext, adding = 1): Prom
   };
 }
 
-export async function assertRoomForItems(ctx: HouseholdContext, adding = 1): Promise<void> {
-  const room = await checkRoomForItems(ctx, adding);
+/** Whether there's room to add `adding` more items to the kitchen. A quick read for showing the limit; adding goes through `assertRoomForItemsIn`. */
+export async function checkRoomForItems(ctx: HouseholdContext, adding = 1): Promise<{ ok: true } | { ok: false; message: string }> {
+  const max = ctx.plan.entitlements.max_inventory_items;
+  if (max === null) return { ok: true };
+  return roomVerdict(max, await countActiveItems(ctx.household.id), adding);
+}
+
+/**
+ * Check the kitchen limit inside the transaction that adds the items. A per-household lock makes two people adding at
+ * once take turns, and the count is taken after the lock, so both can't squeeze past the last free place.
+ */
+export async function assertRoomForItemsIn(tx: Tx, ctx: HouseholdContext, adding = 1): Promise<void> {
+  const max = ctx.plan.entitlements.max_inventory_items;
+  if (max === null) return;
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`kitchen:${ctx.household.id}`}, 0))`);
+  const result = await tx.execute<{ n: number }>(sql`select app.household_item_count(${ctx.household.id}::uuid) as n`);
+  const room = roomVerdict(max, Number(result.rows[0]?.n ?? 0), adding);
   if (!room.ok) throw planLimitError(room.message);
 }
 

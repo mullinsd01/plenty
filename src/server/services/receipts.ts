@@ -28,7 +28,7 @@ import { deleteFile, readStoredFile, receiptImageKey, saveFile } from "@/server/
 import { MAX_STORED_EDGE_PX, prepareReceiptImage, ReceiptImageError } from "@/server/receipts/image";
 import { scopeOf, type ItemVisibility } from "@/lib/members/scope";
 import { addUsage, usagePeriod, USAGE_RECEIPT_SCANS } from "@/server/billing/entitlements";
-import { assertReceiptScanAvailable, assertRoomForItems } from "@/server/billing/limits";
+import { assertReceiptScanAvailable, assertRoomForItemsIn } from "@/server/billing/limits";
 import { requireCapability } from "@/server/permissions";
 import { addItemsTx, finishItemTx, inferEndTime, resolveOwnership } from "./inventory";
 import { computeLiveState, predictionFor, refreshLearning } from "./learning";
@@ -766,7 +766,7 @@ export async function confirmReceipt(
     // The kitchen's size on the plan counts here too: a receipt is the quickest way to add a lot at once.
     // Lines that fold into a batch already there, or replace one that's finished, don't make it bigger.
     const adding = accepted.filter((i) => i.existingDecision !== "merge" && i.existingDecision !== "replace").length;
-    if (adding > 0) await assertRoomForItems(ctx, adding);
+    if (adding > 0) await assertRoomForItemsIn(tx, ctx, adding);
     const touchedProducts: Array<string | null> = [];
     // The receipt is the household's, and other adults can open it. A line someone filed as private keeps only its
     // place on the receipt: no name, product, price or link to the item it became.

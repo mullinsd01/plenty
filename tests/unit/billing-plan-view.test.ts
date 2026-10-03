@@ -103,6 +103,15 @@ describe("paywall features", () => {
     expect(paywallPlanFor("analytics")).toBe("family");
     for (const f of PAYWALL_FEATURES) expect(["plus", "family"]).toContain(paywallPlanFor(f));
   });
+
+  it("names the next plan up for a limit, from the plan the household is on now", () => {
+    // Free is full on people: Plus (6) is the answer. Plus is full on people: only Family (12) lifts it.
+    expect(paywallPlanFor("members")).toBe("plus");
+    expect(paywallPlanFor("members", "free")).toBe("plus");
+    expect(paywallPlanFor("members", "plus")).toBe("family");
+    expect(paywallPlanFor("items", "free")).toBe("plus");
+    expect(paywallPlanFor("receipts", "free")).toBe("plus");
+  });
 });
 
 describe("usage", () => {

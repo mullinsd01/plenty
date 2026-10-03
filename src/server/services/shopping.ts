@@ -13,7 +13,7 @@ import { reconcileShoppingList } from "@/lib/shopping/reconcile";
 import { normalizeItemName, shoppingItemKey } from "@/lib/shopping/keys";
 import { convert, formatQuantity, isUnit, type Unit } from "@/lib/units";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
-import { assertRoomForItems } from "@/server/billing/limits";
+import { assertRoomForItemsIn } from "@/server/billing/limits";
 import { withUser, type Queryable, type Tx } from "@/server/db/client";
 import {
   consumptionStats,
@@ -864,7 +864,7 @@ export async function completeShop(ctx: HouseholdContext, addToKitchen: boolean)
       .where(and(eq(shoppingListItems.listId, list.id), isNotNull(shoppingListItems.checkedAt), isNull(shoppingListItems.purchasedAt)));
     if (checked.length === 0) return { moved: 0 };
     if (addToKitchen) {
-      await assertRoomForItems(ctx, checked.length);
+      await assertRoomForItemsIn(tx, ctx, checked.length);
       const created = await addItemsTx(
         tx,
         ctx.household,

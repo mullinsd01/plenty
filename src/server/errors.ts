@@ -58,7 +58,7 @@ function isPgError(err: unknown): err is { code: string; message: string } {
  * Convert any thrown error into a user-safe message. Unknown errors are logged
  * with full detail on the server and shown generically — never a stack trace.
  */
-export function toUserError(err: unknown, context: string): { ok: false; error: string; fieldErrors?: Record<string, string>; code?: string } {
+export function toUserError(err: unknown, context: string): ReturnType<typeof fail> {
   if (err instanceof AppError) {
     return fail(err.message, { fieldErrors: err.fieldErrors, code: err.code });
   }

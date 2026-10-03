@@ -6,7 +6,7 @@
 
 import { ANALYTICS_PROPS } from "@/lib/analytics-events";
 import { BILLING_PATH } from "./management";
-import { cheapestPlanWith, type Entitlements, type PlanId } from "./plans";
+import { cheapestPlanWith, entitlementsFor, type Entitlements, type PlanId } from "./plans";
 
 export type PaywallFeature = (typeof ANALYTICS_PROPS.paywall_viewed.feature)[number];
 export const PAYWALL_FEATURES: readonly PaywallFeature[] = ANALYTICS_PROPS.paywall_viewed.feature;
@@ -26,10 +26,14 @@ export function planPageHref(feature?: PaywallFeature | null): string {
   return feature ? `${BILLING_PATH}?from=${feature}` : BILLING_PATH;
 }
 
-const GRANTS: Record<PaywallFeature, (e: Entitlements) => boolean> = {
-  items: (e) => e.max_inventory_items === null,
-  members: (e) => e.max_household_members !== null && e.max_household_members > 2,
-  receipts: (e) => e.receipt_scans_per_month === null,
+/** Whether a limit (null = no limit) is higher than the one the household has now. */
+const higher = (next: number | null, now: number | null): boolean => (next === null ? now !== null : now !== null && next > now);
+
+/** What would lift the thing in the way, given what the household has now. */
+const GRANTS: Record<PaywallFeature, (e: Entitlements, now: Entitlements) => boolean> = {
+  items: (e, now) => higher(e.max_inventory_items, now.max_inventory_items),
+  members: (e, now) => higher(e.max_household_members, now.max_household_members),
+  receipts: (e, now) => higher(e.receipt_scans_per_month, now.receipt_scans_per_month),
   barcode: (e) => e.barcode_scanning,
   photo: (e) => e.photo_recognition,
   predictions: (e) => e.consumption_predictions,
@@ -41,8 +45,13 @@ const GRANTS: Record<PaywallFeature, (e: Entitlements) => boolean> = {
   plans: (e) => e.max_inventory_items === null,
 };
 
-/** The cheapest plan that includes a feature, as the `plan` of a `paywall_viewed` event. Never free or Pro. */
-export function paywallPlanFor(feature: PaywallFeature): Extract<PlanId, "plus" | "family"> {
-  const plan = cheapestPlanWith(GRANTS[feature]);
+/**
+ * The cheapest plan that lifts what was in the way, as the `plan` of a `paywall_viewed` event: for a limit, the
+ * next plan up from the household's current one (a Plus household that's full on people needs Family, not Plus).
+ * Never free or Pro.
+ */
+export function paywallPlanFor(feature: PaywallFeature, current: PlanId = "free"): Extract<PlanId, "plus" | "family"> {
+  const now = entitlementsFor(current);
+  const plan = cheapestPlanWith((e) => GRANTS[feature](e, now));
   return plan === "family" ? "family" : "plus";
 }

@@ -37,7 +37,7 @@ export default defineConfig({
       // The test walks the whole loop (predictions, weekly plans, per-person ownership), which is what the paid plans include.
       PLAN_OVERRIDE: "family",
       DEMO_MODE: "true",
-      CRON_SECRET: "e2e-secret",
+      CRON_SECRET: "e2e-only-secret-not-for-real-use-0123456789",
       STORAGE_DIR: ".data/e2e-uploads",
       NODE_ENV: "production",
       SMTP_URL: "",

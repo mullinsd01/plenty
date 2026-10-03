@@ -3,6 +3,8 @@
  * products and receipts, reporting an AI-written recipe, and secrets the app's database role must not read.
  */
 import { afterAll, describe, expect, it } from "vitest";
+import { entitlementsFor } from "@/lib/billing/plans";
+import { countActiveItems } from "@/server/billing/entitlements";
 import { and, eq } from "drizzle-orm";
 import { pool, systemDb, withUser } from "@/server/db/client";
 import {
@@ -18,7 +20,7 @@ import {
 } from "@/server/db/schema";
 import { buildHouseholdContext, type HouseholdContext } from "@/server/auth/build-context";
 import { acceptInvitation, createInvitation } from "@/server/services/household";
-import { addItems, addItemsTx, updateItem } from "@/server/services/inventory";
+import { addItems, addItemsTx, finishItem, restoreItem, updateItem } from "@/server/services/inventory";
 import { updateMember } from "@/server/services/members";
 import { reportRecipe } from "@/server/services/meals";
 import { confirmReceipt } from "@/server/services/receipts";
@@ -203,5 +205,45 @@ describe("scanned items aren't fuzzy-matched to the wrong catalogue entry", () =
     const [product] = await systemDb.select().from(products).where(eq(products.id, item.productId!));
     expect(product.slug).not.toBe("muesli-bars");
     expect(product.name).toBe("Protein bars");
+  });
+});
+
+describe("the kitchen's size limit holds when people add at the same moment", () => {
+  const limit = entitlementsFor("free").max_inventory_items!;
+
+  async function fillToOneShort() {
+    const ctx = await makeHousehold({ name: "Racing", plan: "free" });
+    const jordan = await joinHousehold(ctx);
+    const jordanFree = { ...jordan, plan: ctx.plan };
+    // Half of the full kitchen is the owner's private items, which the other person can't see but which still count.
+    const privateCount = Math.floor((limit - 1) / 2);
+    await systemDb
+      .insert(inventoryItems)
+      .values(Array.from({ length: privateCount }, (_, n) => ({ householdId: ctx.household.id, name: `Private staple ${n}`, quantity: 1, ownerMemberId: ctx.member.id, visibility: "private" as const })));
+    await addItems(ctx, Array.from({ length: limit - 1 - privateCount }, (_, n) => ({ name: `Staple number ${n}` })));
+    return { ctx, jordan: jordanFree };
+  }
+
+  it("lets exactly one of several simultaneous adds take the last place, private items included in the count", async () => {
+    const { ctx, jordan } = await fillToOneShort();
+    const attempts = await Promise.allSettled([
+      addItems(ctx, [{ name: "Race one" }]),
+      addItems(jordan, [{ name: "Race two" }]),
+      addItems(ctx, [{ name: "Race three" }]),
+      addItems(jordan, [{ name: "Race four" }]),
+    ]);
+    expect(attempts.filter((a) => a.status === "fulfilled")).toHaveLength(1);
+    expect(attempts.filter((a) => a.status === "rejected").every((a) => /full|room/i.test(String((a as PromiseRejectedResult).reason?.message)))).toBe(true);
+    expect(await countActiveItems(ctx.household.id)).toBe(limit);
+  });
+
+  it("won't let something be brought back into a full kitchen", async () => {
+    const { ctx } = await fillToOneShort();
+    const [gone] = await addItems(ctx, [{ name: "Finished thing" }]);
+    await finishItem(ctx, gone, "consumed");
+    await addItems(ctx, [{ name: "Took its place" }]);
+    expect(await countActiveItems(ctx.household.id)).toBe(limit);
+    await expect(restoreItem(ctx, gone)).rejects.toThrow(/full/i);
+    expect(await countActiveItems(ctx.household.id)).toBe(limit);
   });
 });

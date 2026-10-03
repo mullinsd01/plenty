@@ -25,6 +25,11 @@ function FormError({ state }: { state: State }) {
   );
 }
 
+/** What was typed before an error, put back (React clears a form's fields once its action finishes). */
+function kept(state: State, name: string): string | undefined {
+  return state && !state.ok ? state.values?.[name] : undefined;
+}
+
 function fieldError(state: State, name: string): string | null {
   if (!state || state.ok) return null;
   return state.fieldErrors?.[name] ?? null;
@@ -56,7 +61,7 @@ export function SignInForm({ next, demo }: { next?: string; demo: boolean }) {
         <input type="hidden" name="next" value={next ?? ""} />
         <FormError state={state} />
         <Field label="Email" htmlFor="email" error={fieldError(state, "email")}>
-          <Input id="email" name="email" type="email" autoComplete="email" inputMode="email" required autoFocus />
+          <Input id="email" name="email" type="email" autoComplete="email" inputMode="email" required autoFocus defaultValue={kept(state, "email")} />
         </Field>
         <Field
           label="Password"
@@ -98,10 +103,10 @@ export function SignUpForm({ next }: { next?: string }) {
       <input type="hidden" name="next" value={next ?? ""} />
       <FormError state={state} />
       <Field label="Your first name" htmlFor="name" error={fieldError(state, "name")}>
-        <Input id="name" name="name" autoComplete="given-name" required autoFocus />
+        <Input id="name" name="name" autoComplete="given-name" required autoFocus defaultValue={kept(state, "name")} />
       </Field>
       <Field label="Email" htmlFor="email" error={fieldError(state, "email")}>
-        <Input id="email" name="email" type="email" autoComplete="email" inputMode="email" required />
+        <Input id="email" name="email" type="email" autoComplete="email" inputMode="email" required defaultValue={kept(state, "email")} />
       </Field>
       <Field label="Password" htmlFor="password" hint="At least 8 characters." error={fieldError(state, "password")}>
         <PasswordInput id="password" name="password" autoComplete="new-password" required minLength={8} />
@@ -112,6 +117,7 @@ export function SignUpForm({ next }: { next?: string }) {
             type="checkbox"
             name="terms"
             required
+            defaultChecked={kept(state, "terms") === "on"}
             aria-invalid={fieldError(state, "terms") ? true : undefined}
             aria-describedby={fieldError(state, "terms") ? "terms-error" : undefined}
             className="mt-0.5 size-4 shrink-0 accent-[var(--brand)]"
@@ -156,7 +162,7 @@ export function ForgotPasswordForm() {
     <form action={action} className="space-y-4" noValidate>
       <FormError state={state} />
       <Field label="Email" htmlFor="email" error={fieldError(state, "email")}>
-        <Input id="email" name="email" type="email" autoComplete="email" required autoFocus />
+        <Input id="email" name="email" type="email" autoComplete="email" required autoFocus defaultValue={kept(state, "email")} />
       </Field>
       <Button type="submit" size="lg" block loading={pending}>
         Send reset link

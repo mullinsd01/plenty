@@ -22,3 +22,43 @@ describe("receipt redaction: who bought it", () => {
     expect(redactReceiptText(once)).toBe(once);
   });
 });
+
+/** From the privacy review: names that aren't introduced by a label at the start of a line. */
+describe("receipt redaction: names without a leading label", () => {
+  it.each([
+    ["You were served by Sam Rivera today", /Sam|Rivera/],
+    ["Thank you for shopping. Served by Sam", /Sam/],
+    ["Sam served you today", /\bSam\b/],
+    ["Order for: Jane Citizen", /Jane|Citizen/],
+    ["Order for Jane Citizen", /Jane|Citizen/],
+    ["Pick-up for Jane Citizen", /Jane|Citizen/],
+    ["Delivery for Jane", /Jane/],
+    ["Prepared for Jane Citizen", /Jane|Citizen/],
+    ["Hi, Jane!", /Jane/],
+    ["Thanks, Jane!", /Jane/],
+    ["Thank you Jane Citizen", /Jane|Citizen/],
+    ["VISA DEBIT CITIZEN/JANE MR", /CITIZEN|JANE/],
+    ["Cardholder JANE CITIZEN", /JANE|CITIZEN/],
+  ])("removes the name in %j", (line, name) => {
+    const out = redactReceiptText(line);
+    expect(out).not.toMatch(name);
+    expect(out).toContain("▪▪▪");
+    // Safe to run again.
+    expect(redactReceiptText(out)).toBe(out);
+  });
+
+  it.each([
+    "Thank you for shopping with us",
+    "Thank you, come again!",
+    "Thanks for visiting",
+    "Order for delivery within 3 days",
+    "Order for the week 24.50",
+    "Staff served you today",
+    "Please see staff at the service desk",
+    "MILK 2L 3.50",
+    "CHIPS/DIP 2 FOR 5.00",
+    "Rewards points earned 12",
+  ])("leaves %j alone", (line) => {
+    expect(redactReceiptText(line)).toBe(line);
+  });
+});

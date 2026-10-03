@@ -51,7 +51,15 @@ const schema = z.object({
    * discloses the barcode number (and nothing else) to openfoodfacts.org. Unset: on, except in tests.
    */
   BARCODE_LOOKUP: z.enum(["off", "openfoodfacts"]).optional(),
-  CRON_SECRET: z.string().optional().transform((v) => (v ? v : undefined)),
+  /** Bearer token for the scheduled-jobs endpoint. In production it must be long enough not to be guessed (24+ characters). */
+  CRON_SECRET: z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      if (!v) return undefined;
+      if (process.env.NODE_ENV === "production" && v.length < 24) ctx.addIssue({ code: "custom", message: "must be at least 24 characters in production" });
+      return v;
+    }),
   /**
    * Treat every household without a paid subscription as being on this plan.
    * For self-hosting and development, where there's no billing; leave unset in production.

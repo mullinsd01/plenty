@@ -39,7 +39,7 @@ export default async function PlanPage({ searchParams }: PageProps<"/settings/pl
         title="Plan & billing"
         subtitle={`${ctx.household.name} · ${overview.planName}`}
       />
-      {from && <TrackPaywallView feature={from} plan={paywallPlanFor(from)} />}
+      {from && <TrackPaywallView feature={from} plan={paywallPlanFor(from, ctx.plan.plan)} />}
       {checkout && <CheckoutReturnNotice checkout={checkout} />}
       <CurrentPlanCard overview={overview} />
       <UsageCard overview={overview} />

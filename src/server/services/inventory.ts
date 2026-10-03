@@ -18,7 +18,7 @@ import { formatPackQuantity, isUnit, unitDimension, type Unit } from "@/lib/unit
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
 import { can, refusalMessage } from "@/lib/members/permissions";
 import { trackFor } from "@/server/analytics";
-import { assertRoomForItems } from "@/server/billing/limits";
+import { assertRoomForItemsIn } from "@/server/billing/limits";
 import { withUser, type Queryable, type Tx } from "@/server/db/client";
 import { consumptionEvents, inventoryEvents, inventoryItems, type DbInventoryItem } from "@/server/db/schema";
 import { AppError, notFound } from "@/server/errors";
@@ -475,9 +475,9 @@ export function resolveOwnership(ctx: HouseholdContext, input: { ownerMemberId?:
 
 export async function addItems(ctx: HouseholdContext, inputs: AddItemInput[], source: InventorySource = "manual"): Promise<string[]> {
   const now = new Date();
-  await assertRoomForItems(ctx, inputs.length);
   const owned = inputs.map((input) => ({ ...input, ...resolveOwnership(ctx, input) }));
   return withUser(ctx.user.id, async (tx) => {
+    await assertRoomForItemsIn(tx, ctx, inputs.length);
     const created = await addItemsTx(tx, ctx.household, ctx.user.id, owned, source, now);
     await refreshLearning(tx, ctx.household, created.map((c) => c.productId), now);
     return created.map((c) => c.id);
@@ -734,6 +734,8 @@ export async function restoreItem(ctx: HouseholdContext, id: string): Promise<vo
     if (!item) throw notFound("That item");
     assertCanChange(ctx, item);
     if (item.status === "active") return;
+    // Bringing something back puts it in the kitchen again, so it needs a free place like anything new.
+    await assertRoomForItemsIn(tx, ctx, 1);
     const [last] = await tx
       .select()
       .from(inventoryEvents)

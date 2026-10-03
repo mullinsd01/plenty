@@ -96,3 +96,23 @@ GRANT SELECT (
   id, household_id, plan, period, status, provider, purchaser_user_id, auto_renew, current_period_start, current_period_end,
   trial_ends_at, grace_ends_at, canceled_at, ended_at, pending_plan, pending_period, last_event_at, created_at, updated_at
 ) ON public.subscriptions TO plenty_app;
+
+--> statement-breakpoint
+
+-- ─── Counting a household's kitchen under a lock ────────────────────────────
+-- The kitchen's size limit has to count everyone's items, private ones included, inside the same
+-- transaction that adds the new ones. The app role can't see other people's private items, so it
+-- asks this function, which only answers for a household the caller belongs to and returns a number.
+
+CREATE OR REPLACE FUNCTION app.household_item_count(hid uuid) RETURNS integer
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+  SELECT CASE WHEN app.is_member(hid)
+    THEN (SELECT count(*)::int FROM public.inventory_items i
+          WHERE i.household_id = hid AND i.status::text = 'active' AND i.deleted_at IS NULL)
+    ELSE 0 END
+$$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION app.household_item_count(uuid) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION app.household_item_count(uuid) TO plenty_app;

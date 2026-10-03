@@ -48,7 +48,7 @@ Sign up to start your own household, or click **Explore the demo household** on 
 | `SMTP_URL` / `EMAIL_FROM` | no | Real email delivery. Without SMTP, emails go to the dev outbox at `/dev/outbox` (disabled in production). |
 | `BARCODE_LOOKUP` | no | `openfoodfacts` (default) or `off`. When a scanned barcode isn't one the household has already told Plenty about, Plenty can ask [Open Food Facts](https://world.openfoodfacts.org), a public product database, what it is. **That discloses the barcode number (and nothing else) to openfoodfacts.org.** Set `off` to never do that; Plenty then asks the person to name the product and remembers it. Barcode scanning is a Plus feature. |
 | `STORAGE_DIR` | no | Where receipt photos are stored (private; served only to household members). |
-| `CRON_SECRET` | no | Protects the scheduled notifications endpoint. |
+| `CRON_SECRET` | no | Protects the scheduled notifications endpoint. In production it must be at least 24 characters. |
 | `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of Plenty that append to `X-Forwarded-For` (default `1`). Used to find the real client IP for rate limiting. |
 | `DEMO_MODE` | no | Shows the demo-household button on the sign-in page. |
 | `PLAN_OVERRIDE` | no | `free`, `plus`, `family` or `pro`: gives every household on this server at least that plan. For self-hosting without billing, development and demos. If you sell plans, leave it unset: it would give everyone the plan for free. |

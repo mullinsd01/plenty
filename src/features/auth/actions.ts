@@ -16,6 +16,19 @@ import { forgotPasswordSchema, resetPasswordSchema, signInSchema, signUpFormSche
 
 type FormState = ActionResult<undefined> | null;
 
+/**
+ * An error for a form, carrying back what was typed (never a password) so the form can put it back:
+ * React clears a form's fields after its action runs, which would otherwise wipe a name and email over one typo.
+ */
+function formError(err: unknown, context: string, formData: FormData, keep: string[]): ReturnType<typeof toUserError> {
+  const values: Record<string, string> = {};
+  for (const key of keep) {
+    const value = formData.get(key);
+    if (typeof value === "string") values[key] = value.slice(0, 254);
+  }
+  return { ...toUserError(err, context), values };
+}
+
 const clientKey = clientIp;
 
 /** Only allow same-site relative redirects. */
@@ -43,7 +56,7 @@ export async function signUpAction(_prev: FormState, formData: FormData): Promis
     await startSession(userId);
     next = safeNext(formData.get("next"), "/onboarding");
   } catch (err) {
-    return toUserError(err, "signUp");
+    return formError(err, "signUp", formData, ["name", "email", "terms"]);
   }
   redirect(next);
 }
@@ -58,7 +71,7 @@ export async function signInAction(_prev: FormState, formData: FormData): Promis
     await startSession(userId);
     next = safeNext(formData.get("next"), "/home");
   } catch (err) {
-    return toUserError(err, "signIn");
+    return formError(err, "signIn", formData, ["email"]);
   }
   redirect(next);
 }
@@ -96,7 +109,7 @@ export async function forgotPasswordAction(_prev: FormState, formData: FormData)
     await auth.requestPasswordReset(email);
     return { ok: true, data: undefined, message: "If an account exists for that email, a reset link is on its way." };
   } catch (err) {
-    return toUserError(err, "forgotPassword");
+    return formError(err, "forgotPassword", formData, ["email"]);
   }
 }
 
