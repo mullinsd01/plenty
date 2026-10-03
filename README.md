@@ -51,7 +51,7 @@ Sign up to start your own household, or click **Explore the demo household** on 
 | `CRON_SECRET` | no | Protects the scheduled notifications endpoint. |
 | `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of Plenty that append to `X-Forwarded-For` (default `1`). Used to find the real client IP for rate limiting. |
 | `DEMO_MODE` | no | Shows the demo-household button on the sign-in page. |
-| `PLAN_OVERRIDE` | no | `free`, `plus`, `family` or `pro`: gives every household on this server at least that plan. For development and demos only — leave it unset in production. |
+| `PLAN_OVERRIDE` | no | `free`, `plus`, `family` or `pro`: gives every household on this server at least that plan. For self-hosting without billing, development and demos. If you sell plans, leave it unset: it would give everyone the plan for free. |
 | `LEGAL_ENTITY_NAME` / `SUPPORT_EMAIL` / `PRIVACY_CONTACT_EMAIL` | no | Named on the public `/privacy`, `/terms` and `/support` pages. Plenty never invents these: an unset one is left out (and shown as a placeholder in development). Set them for production. |
 | `ANALYTICS_SECRET` | no | 16+ random characters; keys the pseudonymous household id in first-party analytics. In production nothing is recorded until it's set. |
 | `BILLING_ACCOUNT_SECRET` | no | 32+ random characters. Makes the token that tags App Store / Google Play purchases with their household unforgeable. Required for store purchases to find their household. |

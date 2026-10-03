@@ -34,6 +34,8 @@ export default defineConfig({
       DATABASE_URL,
       APP_URL: `http://localhost:${PORT}`,
       AI_PROVIDER: "local",
+      // The test walks the whole loop (predictions, weekly plans, per-person ownership), which is what the paid plans include.
+      PLAN_OVERRIDE: "family",
       DEMO_MODE: "true",
       CRON_SECRET: "e2e-secret",
       STORAGE_DIR: ".data/e2e-uploads",

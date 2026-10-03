@@ -7,7 +7,7 @@ import { signUp } from "@/server/auth/service";
 import { buildHouseholdContext } from "@/server/auth/build-context";
 import type { HouseholdContext } from "@/server/auth/build-context";
 import { systemDb } from "@/server/db/client";
-import { households, subscriptions } from "@/server/db/schema";
+import { subscriptions } from "@/server/db/schema";
 import type { PlanId } from "@/lib/billing/plans";
 import { completeOnboarding, createHousehold } from "@/server/services/household";
 import { syncCatalog } from "@/server/services/products";

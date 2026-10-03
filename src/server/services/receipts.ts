@@ -1083,3 +1083,16 @@ export async function resumeStalledReceipts(now = new Date(), limit = 5): Promis
   for (const r of results) if (r.status === "rejected") console.error("[receipts] restarting a stalled receipt failed:", r.reason);
   return { restarted: results.filter((r) => r.status === "fulfilled").length, failed };
 }
+
+/** How far back the free plan shows receipts. The receipts themselves are kept. */
+export const FREE_HISTORY_DAYS = 30;
+
+/**
+ * What the Receipts list shows: all of it on plans with purchase history, otherwise the last month plus anything
+ * still being read or checked. Nothing is deleted or hidden from the household; older receipts simply aren't listed.
+ */
+export function visibleReceiptHistory(ctx: HouseholdContext, all: ReceiptSummary[], now = new Date()): ReceiptSummary[] {
+  if (ctx.plan.entitlements.purchase_history) return all;
+  const cutoff = now.getTime() - FREE_HISTORY_DAYS * 24 * 3600_000;
+  return all.filter((r) => new Date(r.createdAt).getTime() >= cutoff || r.status === "needs_review" || r.status === "processing" || r.status === "uploaded");
+}
