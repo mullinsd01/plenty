@@ -16,6 +16,8 @@ import { HOUSEHOLD_SCOPE, learningKey, type ItemVisibility } from "@/lib/members
 import { assessUseSoon, estimateExpiry, type UseSoonAssessment } from "@/lib/prediction/expiry";
 import { formatPackQuantity, isUnit, unitDimension, type Unit } from "@/lib/units";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
+import { refusalMessage } from "@/lib/members/permissions";
+import { trackFor } from "@/server/analytics";
 import { assertRoomForItems } from "@/server/billing/limits";
 import { withUser, type Queryable, type Tx } from "@/server/db/client";
 import { consumptionEvents, inventoryEvents, inventoryItems, type DbInventoryItem } from "@/server/db/schema";
@@ -464,10 +466,26 @@ export async function addItems(ctx: HouseholdContext, inputs: AddItemInput[], so
     const created = await addItemsTx(tx, ctx.household, ctx.user.id, owned, source, now);
     await refreshLearning(tx, ctx.household, created.map((c) => c.productId), now);
     return created.map((c) => c.id);
+  }).then(async (ids) => {
+    const kind = (o: { ownerMemberId: string | null; visibility: ItemVisibility }) => (o.ownerMemberId === null ? "household" : o.visibility === "private" ? "private" : "member");
+    for (const group of new Set(owned.map(kind))) {
+      await trackFor(ctx, "item_added", { source, owned: group, count: owned.filter((o) => kind(o) === group).length });
+    }
+    return ids;
   });
 }
 
 // ─── Updating ───────────────────────────────────────────────────────────────
+
+/**
+ * A child account can look at what the household shares but only change its own things. The database
+ * enforces this too; refusing here says so in plain words instead of quietly changing nothing.
+ */
+function assertCanChange(ctx: HouseholdContext, item: Pick<DbInventoryItem, "ownerMemberId">): void {
+  if (ctx.role === "child" && item.ownerMemberId !== ctx.member.id) {
+    throw new AppError("forbidden", refusalMessage("edit_household_items"));
+  }
+}
 
 async function loadItem(tx: Tx, householdId: string, id: string): Promise<DbInventoryItem> {
   const [row] = await tx
@@ -495,6 +513,7 @@ export async function updateItem(ctx: HouseholdContext, id: string, patch: Updat
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const item = await loadItem(tx, ctx.household.id, id);
+    assertCanChange(ctx, item);
     const changes: Partial<typeof inventoryItems.$inferInsert> = {};
     if (patch.name !== undefined) changes.name = patch.name.trim().slice(0, 120) || item.name;
     if (patch.quantity !== undefined) {
@@ -564,6 +583,7 @@ export async function setLevel(ctx: HouseholdContext, id: string, fraction: numb
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const item = await loadItem(tx, ctx.household.id, id);
+    assertCanChange(ctx, item);
     if (item.status !== "active") throw new AppError("conflict", "That item has already been used up.");
     await tx
       .update(inventoryItems)
@@ -641,12 +661,14 @@ export async function finishItem(ctx: HouseholdContext, id: string, outcome: Con
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const item = await loadItem(tx, ctx.household.id, id);
+    assertCanChange(ctx, item);
     if (item.status !== "active") return;
     const live = await computeLiveState(tx, ctx.household, now);
     const estimated = live.itemFractions.get(item.id) ?? item.remainingFraction;
     await finishItemTx(tx, ctx.household, ctx.user.id, item, outcome, { endedAt: now, estimatedFraction: estimated });
     await refreshLearning(tx, ctx.household, [item.productId], now);
   });
+  await trackFor(ctx, "item_consumed", { outcome });
 }
 
 /** Remove an item added by mistake. Not a consumption event — nothing is learned from it. */
@@ -654,6 +676,7 @@ export async function removeItem(ctx: HouseholdContext, id: string): Promise<voi
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const item = await loadItem(tx, ctx.household.id, id);
+    assertCanChange(ctx, item);
     await tx
       .update(inventoryItems)
       .set({ status: "removed", statusChangedAt: now, deletedAt: now })
@@ -681,6 +704,7 @@ export async function restoreItem(ctx: HouseholdContext, id: string): Promise<vo
       .where(and(eq(inventoryItems.id, id), eq(inventoryItems.householdId, ctx.household.id)))
       .limit(1);
     if (!item) throw notFound("That item");
+    assertCanChange(ctx, item);
     if (item.status === "active") return;
     const [last] = await tx
       .select()
@@ -714,11 +738,13 @@ export async function restoreItem(ctx: HouseholdContext, id: string): Promise<vo
  */
 export async function answerCheckIn(ctx: HouseholdContext, productId: string, finished: boolean, scope: string = HOUSEHOLD_SCOPE): Promise<void> {
   const now = new Date();
+  let basis: "estimate" | "history" | null = null;
   await withUser(ctx.user.id, async (tx) => {
     const live = await computeLiveState(tx, ctx.household, now);
     // A check-in is about one person's (or the household's) stock of a product; the database already
     // hides what this person isn't allowed to see, so a made-up scope simply finds nothing.
     const p = live.predictions.get(learningKey(productId, scope));
+    basis = p?.prediction.basis ?? null;
     const items = live.activeItems.filter((i) => i.productId === productId && itemScope(live, i) === scope);
     if (items.length === 0) return;
     if (finished) {
@@ -761,6 +787,8 @@ export async function answerCheckIn(ctx: HouseholdContext, productId: string, fi
     }
     await refreshLearning(tx, ctx.household, [productId], now);
   });
+  // Whether Plenty's "it should be about gone" was right is the one honest measure of the predictions.
+  if (basis) await trackFor(ctx, finished ? "prediction_accepted" : "prediction_rejected", { basis });
 }
 
 /**
@@ -777,6 +805,7 @@ export async function clearOutItems(ctx: HouseholdContext, ids: string[]): Promi
     let cleared = 0;
     for (const item of live.activeItems) {
       if (!wanted.has(item.id)) continue;
+      assertCanChange(ctx, item);
       const expiry = item.actualExpiry ?? item.estimatedExpiry;
       const wentOff = expiry ? zonedDateTimeToInstant(addDays(expiry, 1), 0, ctx.household.timezone) : null;
       const done = await finishItemTx(tx, ctx.household, ctx.user.id, item, "expired", {

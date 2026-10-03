@@ -53,6 +53,15 @@ export async function track(event: AnalyticsEvent, ctx: AnalyticsContext, props?
   }
 }
 
+/** `track` for the signed-in person's household: who it was and what plan they were on come from their context. */
+export async function trackFor(
+  ctx: { user: { id: string }; household: { id: string }; plan: { plan: PlanId } },
+  event: AnalyticsEvent,
+  props?: AnalyticsProps,
+): Promise<void> {
+  await track(event, { householdId: ctx.household.id, userId: ctx.user.id, plan: ctx.plan.plan }, props);
+}
+
 /** Remove everything recorded for a household (used when the household is deleted). */
 export async function deleteAnalyticsFor(householdId: string): Promise<void> {
   const subject = analyticsSubject(householdId);

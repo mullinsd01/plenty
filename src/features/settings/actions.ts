@@ -11,7 +11,10 @@ import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { AppError, parseInput, toUserError } from "@/server/errors";
 import * as households from "@/server/services/household";
 import * as members from "@/server/services/members";
-import { deleteHouseholdFiles } from "@/server/storage/files";
+import * as privacy from "@/server/services/privacy";
+import { RETENTION_POLICIES } from "@/server/services/receipt-privacy";
+import { planAccountDeletion } from "@/server/services/account-deletion";
+import { DELETE_CONFIRMATION } from "@/lib/privacy";
 import { changePasswordSchema, emailSchema, nameSchema } from "@/validation/auth";
 import { householdBasicsSchema, notificationSettingsSchema, preferencesSchema, type PreferencesInput } from "@/validation/household";
 
@@ -113,26 +116,31 @@ export async function deleteHouseholdAction(confirmName: string): Promise<Action
       throw new AppError("validation", "Type the household name exactly to confirm.", { confirm: "Type the household name exactly." });
     }
     await households.deleteHousehold(ctx);
-    await deleteHouseholdFiles(ctx.household.id);
   } catch (err) {
     return toUserError(err, "settings.deleteHousehold");
   }
   redirect("/onboarding");
 }
 
-export async function deleteAccountAction(password: string): Promise<ActionResult<undefined>> {
+export async function deleteAccountAction(input: { password: string; confirm: string }): Promise<ActionResult<undefined>> {
+  let notice = "";
   try {
     const user = await userForAction();
     if (user.isDemo) throw new AppError("forbidden", "The demo account can't be deleted.");
+    // Typed confirmation as well as the password: this can't be undone.
+    if (String(input?.confirm ?? "").trim().toUpperCase() !== DELETE_CONFIRMATION) {
+      throw new AppError("validation", `Type ${DELETE_CONFIRMATION} to confirm.`, { confirm: `Type ${DELETE_CONFIRMATION} to confirm.` });
+    }
     await enforceRateLimit(`delete-account:${user.id}`, 5, 900, "deleting your account");
-    const { deletedHouseholdIds } = await deleteAccount(user.id, String(password ?? ""));
-    // Only households that went with the account lose their photos; shared ones carry on.
-    await Promise.all(deletedHouseholdIds.map((id) => deleteHouseholdFiles(id).catch(() => undefined)));
+    // Read before deleting: afterwards there's nothing left to say which subscriptions to cancel.
+    const plan = await planAccountDeletion(user.id);
+    await deleteAccount(user.id, String(input?.password ?? ""));
+    notice = [...new Set(plan.households.map((h) => h.subscription?.provider).filter(Boolean))].join(",");
     await clearSessionCookie();
   } catch (err) {
     return toUserError(err, "settings.deleteAccount");
   }
-  redirect("/");
+  redirect(`/account-deleted${notice ? `?cancel=${notice}` : ""}`);
 }
 
 export async function signOutEverywhereAction(): Promise<ActionResult<undefined>> {
@@ -157,4 +165,29 @@ export async function switchHouseholdAction(householdId: string): Promise<Action
     return toUserError(err, "settings.switchHousehold");
   }
   redirect("/home");
+}
+
+// ─── Privacy choices ────────────────────────────────────────────────────────
+
+/** Say yes or no to sending household data to the outside AI service. Recorded with who and when. */
+export async function setAiConsentAction(granted: boolean) {
+  return householdAction("settings.aiConsent", async (ctx) => privacy.setAiConsent(ctx, parseInput(z.boolean(), granted)), {
+    message: (_d) => (granted ? "AI-assisted features turned on" : "AI-assisted features turned off. Nothing more will be sent."),
+  });
+}
+
+export async function setReceiptRetentionAction(policy: string) {
+  return householdAction("settings.receiptRetention", async (ctx) => privacy.setReceiptImageRetention(ctx, parseInput(z.enum(RETENTION_POLICIES), policy)), {
+    message: "Saved",
+  });
+}
+
+export async function setAnalyticsOptOutAction(optOut: boolean): Promise<ActionResult<undefined>> {
+  try {
+    const user = await userForAction();
+    await privacy.setAnalyticsOptOut(user, parseInput(z.boolean(), optOut));
+    return ok(undefined, optOut ? "Analytics turned off" : "Analytics turned on");
+  } catch (err) {
+    return toUserError(err, "settings.analytics");
+  }
 }

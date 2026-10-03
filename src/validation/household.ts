@@ -37,7 +37,6 @@ export const preferencesSchema = z.object({
   takeawayPerWeek: z.coerce.number().int().min(0).max(21).nullable().optional(),
   usualShopDay: z.coerce.number().int().min(0).max(6).nullable().optional(),
   shopIntervalDays: z.coerce.number().int().min(1).max(60).nullable().optional(),
-  allowAiProcessing: z.boolean().optional(),
 });
 
 export type PreferencesInput = z.infer<typeof preferencesSchema>;

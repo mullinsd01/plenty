@@ -140,7 +140,7 @@ export function AddToListButton({
   );
 }
 
-export function TonightActions({ planItemId, mealId }: { planItemId: string; mealId: string }) {
+export function TonightActions({ planItemId, mealId, canSwap = true }: { planItemId: string; mealId: string; canSwap?: boolean }) {
   const cook = useAction();
   const swap = useAction();
   return (
@@ -153,9 +153,11 @@ export function TonightActions({ planItemId, mealId }: { planItemId: string; mea
       <Button size="sm" variant="secondary" loading={cook.pending} disabled={swap.pending} onClick={() => cook.run(() => cookPlanItemAction(planItemId))}>
         <Check /> We made it
       </Button>
-      <Button size="sm" variant="ghost" loading={swap.pending} disabled={cook.pending} onClick={() => swap.run(() => replacePlanItemAction(planItemId))}>
-        <RefreshCw /> Swap
-      </Button>
+      {canSwap && (
+        <Button size="sm" variant="ghost" loading={swap.pending} disabled={cook.pending} onClick={() => swap.run(() => replacePlanItemAction(planItemId))}>
+          <RefreshCw /> Swap
+        </Button>
+      )}
     </div>
   );
 }

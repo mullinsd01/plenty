@@ -14,6 +14,19 @@ function productMapSetting() {
     });
 }
 
+/** An optional email address; blank means not set. */
+function optionalEmail() {
+  return z
+    .string()
+    .trim()
+    .optional()
+    .transform((v, ctx) => {
+      if (!v) return undefined;
+      if (!z.email().safeParse(v).success) ctx.addIssue({ code: "custom", message: "must be an email address" });
+      return v;
+    });
+}
+
 /**
  * Server-side environment, validated once. Never import this from client
  * components — secrets must stay on the server.
@@ -85,6 +98,25 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => v === "true" || v === "1"),
+  // ─── Legal, support and analytics (all optional) ───
+  /** Who operates this Plenty, as the public Privacy and Terms pages name them. Never invented: unset means the line is left out. */
+  LEGAL_ENTITY_NAME: z.string().trim().max(200).optional().transform((v) => (v ? v : undefined)),
+  /** Where people get help; shown on /support and in the app. */
+  SUPPORT_EMAIL: optionalEmail(),
+  /** Where privacy requests (access, correction, deletion) go; falls back to SUPPORT_EMAIL. */
+  PRIVACY_CONTACT_EMAIL: optionalEmail(),
+  /**
+   * Keys the pseudonymous household id used in first-party analytics (16+ characters).
+   * In production, analytics records nothing until this is set.
+   */
+  ANALYTICS_SECRET: z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      if (!v) return undefined;
+      if (v.length < 16) ctx.addIssue({ code: "custom", message: "must be at least 16 characters" });
+      return v;
+    }),
 });
 
 export type Env = z.infer<typeof schema>;

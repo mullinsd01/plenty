@@ -442,7 +442,9 @@ export function normalizeGoogleSubscription(args: {
       pendingPeriod: mapped.pending?.period ?? null,
     };
   }
-  return { ...base, event, acknowledge: mapped.needsAcknowledgement ? { purchaseToken, productId: mapped.productId } : null };
+  // A revoked purchase is never acknowledged: there is nothing to keep.
+  const acknowledge = mapped.needsAcknowledgement && event.type !== "revoked" ? { purchaseToken, productId: mapped.productId } : null;
+  return { ...base, event, acknowledge };
 }
 
 /** A refund or chargeback of a subscription order. Only a full refund of the latest order ends access. Pure. */

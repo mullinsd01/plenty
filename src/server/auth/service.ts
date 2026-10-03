@@ -1,10 +1,11 @@
 import "server-only";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { systemDb, withSystem } from "@/server/db/client";
-import { householdMembers, households, passwordResetTokens, profiles, users } from "@/server/db/schema";
+import { passwordResetTokens, profiles, users } from "@/server/db/schema";
 import { emailButton, emailLayout, sendEmail } from "@/server/email/mailer";
 import { env } from "@/server/env";
 import { AppError } from "@/server/errors";
+import { deleteUserAndData } from "@/server/services/account-deletion";
 import { generateToken, hashPassword, sha256, verifyPassword } from "./crypto";
 import { invalidateAllSessions } from "./session";
 
@@ -129,35 +130,18 @@ export async function updateEmail(userId: string, email: string, password: strin
 }
 
 /**
- * Permanently delete a user's account. Households where they're the only
- * member are deleted with all their data; shared households are handed to
- * the longest-standing remaining member.
+ * Permanently delete a user's account after checking their password.
+ * Households where they're the only person with an account are deleted with
+ * everything in them; in shared ones they leave, and if they're the only owner
+ * the deletion is refused until someone else is made an owner (nothing is
+ * handed over silently). See `services/account-deletion.ts` for the details.
  */
-export async function deleteAccount(userId: string, password: string): Promise<{ deletedHouseholdIds: string[] }> {
+export async function deleteAccount(userId: string, password: string): Promise<{ deletedHouseholdIds: string[]; leftHouseholdIds: string[] }> {
   const [user] = await systemDb.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!user) return { deletedHouseholdIds: [] };
-  if (!user.isDemo && !(await verifyPassword(user.passwordHash, password))) {
+  if (!user) return { deletedHouseholdIds: [], leftHouseholdIds: [] };
+  if (user.isDemo) throw new AppError("forbidden", "The demo account can't be deleted.");
+  if (!(await verifyPassword(user.passwordHash, password))) {
     throw new AppError("validation", "Your password isn't right.", { password: "Your password isn't right." });
   }
-  return withSystem(async (tx) => {
-    const deletedHouseholdIds: string[] = [];
-    const memberships = await tx.select().from(householdMembers).where(eq(householdMembers.userId, userId));
-    for (const m of memberships) {
-      // Lock the household so a housemate leaving at the same moment can't strand it.
-      await tx.select({ id: households.id }).from(households).where(eq(households.id, m.householdId)).for("update");
-      const others = await tx
-        .select()
-        .from(householdMembers)
-        .where(and(eq(householdMembers.householdId, m.householdId), sql`${householdMembers.userId} <> ${userId}`))
-        .orderBy(householdMembers.joinedAt);
-      if (others.length === 0) {
-        await tx.delete(households).where(eq(households.id, m.householdId));
-        deletedHouseholdIds.push(m.householdId);
-      } else if (m.role === "owner" && !others.some((o) => o.role === "owner")) {
-        await tx.update(householdMembers).set({ role: "owner" }).where(eq(householdMembers.id, others[0].id));
-      }
-    }
-    await tx.delete(users).where(eq(users.id, userId));
-    return { deletedHouseholdIds };
-  });
+  return deleteUserAndData(userId);
 }

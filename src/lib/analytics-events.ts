@@ -25,7 +25,7 @@ export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[number];
 
 /** Allowed property names per event, each with the values it may take. A number means "any non-negative integer up to a cap". */
 export const ANALYTICS_PROPS = {
-  item_added: { source: ["manual", "receipt", "barcode", "photo", "shopping_list"], owned: ["household", "member", "private"] },
+  item_added: { source: ["manual", "receipt", "barcode", "photo", "shopping_list"], owned: ["household", "member", "private"], count: 500 },
   receipt_scanned: { provider: ["local", "anthropic"], outcome: ["read", "failed", "duplicate"] },
   receipt_confirmed: { lines: 500, corrected: 500 },
   item_consumed: { outcome: ["consumed", "wasted", "expired"] },

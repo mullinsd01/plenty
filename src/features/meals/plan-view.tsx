@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CalendarDays, Check, ChefHat, MoreHorizontal, RefreshCw, Sparkles, ThumbsDown, Trash2, Users } from "lucide-react";
 import { MealArt } from "@/components/food/meal-art";
 import { Button } from "@/components/ui/button";
+import { UpgradeNote } from "@/components/ui/upgrade-note";
 import { Stepper } from "@/components/ui/controls";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "@/components/ui/menu";
 import { Sheet } from "@/components/ui/sheet";
@@ -23,15 +24,42 @@ import {
 } from "./actions";
 import { AvailabilityLine } from "./meal-card";
 
-export function PlanView({ plan, aiAvailable }: { plan: MealPlanView; aiAvailable: boolean }) {
+export function PlanView({
+  plan,
+  aiAvailable,
+  canPlan = true,
+  canPlanWeek = true,
+}: {
+  plan: MealPlanView;
+  aiAvailable: boolean;
+  /** The person may plan meals at all (child accounts only look). */
+  canPlan?: boolean;
+  /** The plan includes weekly plans, swapping and regenerating. */
+  canPlanWeek?: boolean;
+}) {
   const generate = useAction();
   const ideas = useAction();
   const planned = plan.days.filter((d) => d.item).length;
 
   return (
     <div>
-      <div className="mb-6 flex flex-wrap items-center gap-2">
-        {planned === 0 ? (
+      {!canPlanWeek && canPlan && (
+        <UpgradeNote plan="plus" className="mb-4">
+          Planning the whole week, swapping meals and turning a plan into your shopping list are part of Plenty Plus. You can plan a night at a time, and &ldquo;What can I
+          make?&rdquo; always works.
+        </UpgradeNote>
+      )}
+      <div className={canPlan ? "mb-6 flex flex-wrap items-center gap-2" : "hidden"}>
+        {!canPlanWeek ? (
+          <>
+            <Button loading={generate.pending} onClick={() => generate.run(() => generatePlanAction("tonight"))}>
+              <CalendarDays /> Plan tonight
+            </Button>
+            <Button variant="secondary" disabled={generate.pending} onClick={() => generate.run(() => generatePlanAction("tomorrow"))}>
+              Plan tomorrow
+            </Button>
+          </>
+        ) : planned === 0 ? (
           <>
             <Button loading={generate.pending} onClick={() => generate.run(() => generatePlanAction("week"))}>
               <CalendarDays /> Plan my week
@@ -75,9 +103,15 @@ export function PlanView({ plan, aiAvailable }: { plan: MealPlanView; aiAvailabl
         {plan.days.map((day) => (
           <li key={day.date}>
             {day.item ? (
-              <PlanDay item={day.item} label={day.label} dates={plan.days.map((d) => ({ date: d.date, label: d.label }))} />
+              <PlanDay
+                item={day.item}
+                label={day.label}
+                dates={plan.days.map((d) => ({ date: d.date, label: d.label }))}
+                canPlan={canPlan}
+                canSwap={canPlanWeek}
+              />
             ) : (
-              <EmptyDay date={day.date} label={day.label} isToday={day.date === plan.today} />
+              <EmptyDay date={day.date} label={day.label} isToday={day.date === plan.today} canPlan={canPlan} />
             )}
           </li>
         ))}
@@ -89,14 +123,14 @@ export function PlanView({ plan, aiAvailable }: { plan: MealPlanView; aiAvailabl
   );
 }
 
-function EmptyDay({ date, label, isToday }: { date: string; label: string; isToday: boolean }) {
+function EmptyDay({ date, label, isToday, canPlan }: { date: string; label: string; isToday: boolean; canPlan: boolean }) {
   const { pending, run } = useAction();
   return (
     <div className="flex items-center gap-4 rounded-2xl border border-dashed border-line-strong px-4 py-3.5">
       <DayLabel label={label} />
       <p className="flex-1 text-[14px] text-ink-3">Nothing planned</p>
       {/* Plans exactly this night — even one Plenty usually leaves free for takeaway. */}
-      <Button size="sm" variant={isToday ? "secondary" : "ghost"} loading={pending} onClick={() => run(() => planDayAction(date))} aria-label={`Plan ${label}`}>
+      <Button size="sm" variant={isToday ? "secondary" : "ghost"} loading={pending} onClick={() => run(() => planDayAction(date))} aria-label={`Plan ${label}`} className={canPlan ? undefined : "hidden"}>
         Plan it
       </Button>
       <span className="sr-only">{date}</span>
@@ -108,7 +142,19 @@ function DayLabel({ label }: { label: string }) {
   return <span className="w-20 shrink-0 text-[13px] font-semibold uppercase tracking-[0.05em] text-ink-3">{label}</span>;
 }
 
-function PlanDay({ item, label, dates }: { item: PlanItemView; label: string; dates: Array<{ date: string; label: string }> }) {
+function PlanDay({
+  item,
+  label,
+  dates,
+  canPlan,
+  canSwap,
+}: {
+  item: PlanItemView;
+  label: string;
+  dates: Array<{ date: string; label: string }>;
+  canPlan: boolean;
+  canSwap: boolean;
+}) {
   const act = useAction();
   const [servingsOpen, setServingsOpen] = useState(false);
   const [servings, setServings] = useState(item.servings);
@@ -139,7 +185,7 @@ function PlanDay({ item, label, dates }: { item: PlanItemView; label: string; da
             )}
           </div>
         </Link>
-        {!cooked && (
+        {!cooked && canPlan && (
           <Menu>
             <MenuTrigger asChild>
               <button type="button" aria-label={`Options for ${item.meal.name}`} className="flex size-9 shrink-0 items-center justify-center rounded-full text-ink-3 hover:bg-subtle hover:text-ink">
@@ -150,9 +196,11 @@ function PlanDay({ item, label, dates }: { item: PlanItemView; label: string; da
               <MenuItem onSelect={() => act.run(() => cookPlanItemAction(item.id))}>
                 <ChefHat /> We made this
               </MenuItem>
-              <MenuItem onSelect={() => act.run(() => replacePlanItemAction(item.id))}>
-                <RefreshCw /> Swap for something else
-              </MenuItem>
+              {canSwap && (
+                <MenuItem onSelect={() => act.run(() => replacePlanItemAction(item.id))}>
+                  <RefreshCw /> Swap for something else
+                </MenuItem>
+              )}
               <MenuItem onSelect={() => act.run(() => replacePlanItemAction(item.id, true))}>
                 <ThumbsDown /> Don&apos;t suggest this again
               </MenuItem>

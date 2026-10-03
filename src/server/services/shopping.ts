@@ -28,6 +28,7 @@ import {
   type DbShoppingListItem,
 } from "@/server/db/schema";
 import { AppError, notFound } from "@/server/errors";
+import { trackFor } from "@/server/analytics";
 import { requireCapability } from "@/server/permissions";
 import { addItemsTx, resolveOwnership } from "./inventory";
 import { computeLiveState, itemScope, productBase, refreshLearning, type LearningHousehold, type LiveState } from "./learning";
@@ -418,6 +419,14 @@ function effectiveAmount(row: DbShoppingListItem): { quantity: number | null; un
   return { quantity: row.suggestedQuantity, unit: row.suggestedUnit as Unit | null };
 }
 
+/**
+ * Plenty's own guesses (running low, a regular buy) rather than something the household set up: a meal on the plan is
+ * theirs, so its ingredients aren't "suggested", they're simply needed.
+ */
+function isGuess(row: Pick<DbShoppingListItem, "source">): boolean {
+  return row.source === "predicted" || row.source === "staple";
+}
+
 interface Viewer {
   memberId: string;
   restricted: boolean;
@@ -443,7 +452,7 @@ function toView(row: DbShoppingListItem, sources: Array<typeof shoppingListItemS
     requestedByName: row.requestedByMemberId ? viewer.names.get(row.requestedByMemberId) ?? null : null,
     visibility: row.visibility,
     recurring: row.source === "recurring" || row.recurringItemId !== null,
-    suggested: isComputedSource(row.source as ShoppingSource) && !row.userEdited,
+    suggested: isGuess(row) && !row.userEdited,
     isMine: row.ownerMemberId === viewer.memberId || row.requestedByMemberId === viewer.memberId,
     canChange: canChangeLine(viewer, row),
     quantity,
@@ -639,10 +648,9 @@ async function upsertListLine(
 export async function addManualItem(ctx: HouseholdContext, input: AddListItemInput): Promise<string> {
   requireCapability(ctx, "edit_shopping_list");
   const owned = resolveOwnership(ctx, input);
-  return withUser(ctx.user.id, async (tx) => {
-    const { id } = await upsertListLine(tx, ctx, input, owned, { source: "manual", requestedByMemberId: null });
-    return id;
-  });
+  const line = await withUser(ctx.user.id, (tx) => upsertListLine(tx, ctx, input, owned, { source: "manual", requestedByMemberId: null }));
+  if (line.created) await trackFor(ctx, "item_added_to_shopping_list", { source: "manual" });
+  return line.id;
 }
 
 export interface RequestInput {
@@ -662,7 +670,7 @@ export interface RequestInput {
 export async function addRequest(ctx: HouseholdContext, input: RequestInput): Promise<{ id: string; alreadyOnList: boolean }> {
   requireCapability(ctx, "make_requests");
   const owned = { ownerMemberId: input.forHousehold ? null : ctx.member.id, visibility: "household" as const };
-  return withUser(ctx.user.id, async (tx) => {
+  const result = await withUser(ctx.user.id, async (tx) => {
     const line = await upsertListLine(tx, ctx, input, owned, { source: "request", requestedByMemberId: ctx.member.id });
     if (line.created) {
       const asked = input.name.trim().toLowerCase();
@@ -676,6 +684,8 @@ export async function addRequest(ctx: HouseholdContext, input: RequestInput): Pr
     }
     return { id: line.id, alreadyOnList: !line.created };
   });
+  if (!result.alreadyOnList) await trackFor(ctx, "item_added_to_shopping_list", { source: "request" });
+  return result;
 }
 
 export async function updateShoppingItem(
@@ -746,7 +756,7 @@ export async function keepSuggestion(ctx: HouseholdContext, id: string): Promise
   requireCapability(ctx, "edit_shopping_list");
   await withUser(ctx.user.id, async (tx) => {
     const row = await loadListItem(tx, ctx.household.id, id);
-    if (!isComputedSource(row.source as ShoppingSource) || row.userEdited) return;
+    if (!isGuess(row) || row.userEdited) return;
     await tx
       .update(shoppingListItems)
       .set({ userEdited: true, quantity: row.suggestedQuantity, unit: row.suggestedQuantity ? row.suggestedUnit ?? "each" : null })
@@ -844,7 +854,8 @@ export async function reorderShoppingItems(ctx: HouseholdContext, orderedIds: st
 export async function completeShop(ctx: HouseholdContext, addToKitchen: boolean): Promise<{ moved: number }> {
   requireCapability(ctx, "complete_shop");
   const now = new Date();
-  return withUser(ctx.user.id, async (tx) => {
+  const completed: ShoppingSource[] = [];
+  const result = await withUser(ctx.user.id, async (tx) => {
     const list = await getOrCreateActiveList(tx, ctx.household.id);
     const checked = await tx
       .select()
@@ -876,8 +887,11 @@ export async function completeShop(ctx: HouseholdContext, addToKitchen: boolean)
       await tx.update(shoppingListItems).set({ purchasedAt: now }).where(inArray(shoppingListItems.id, checked.map((c) => c.id)));
     }
     await syncShoppingList(tx, ctx.household, now);
+    completed.push(...checked.map((c) => c.source as ShoppingSource));
     return { moved: checked.length };
   });
+  for (const source of completed.slice(0, 50)) await trackFor(ctx, "shopping_item_completed", { source });
+  return result;
 }
 
 export async function clearChecked(ctx: HouseholdContext): Promise<void> {

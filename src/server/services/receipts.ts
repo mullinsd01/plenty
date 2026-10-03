@@ -6,9 +6,10 @@ import { formatShortDate, isDateString, toDateString, zonedDateTimeToInstant } f
 import { levelPhrase, type Aisle, type StorageLocation } from "@/lib/domain";
 import { aliasKey as toAliasKey, cleanReceiptText, normalizeReceiptLine } from "@/lib/normalize";
 import { receiptFingerprint } from "@/lib/receipts/fingerprint";
+import { redactReceiptLine, redactReceiptText, redactStoreLabel } from "@/lib/receipts/redact";
 import { assessReceiptQuality } from "@/lib/receipts/quality";
 import { formatPackQuantity, isContainerUnit, isUnit, unitDimension, type Unit } from "@/lib/units";
-import { AIUnavailableError, getLocalProvider, getProvider, RECEIPT_AI_BUDGET_MS, type ReceiptExtraction } from "@/server/ai";
+import { AIUnavailableError, getLocalProvider, providerFor, RECEIPT_AI_BUDGET_MS, type AIProvider, type ReceiptExtraction } from "@/server/ai";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
 import { systemDb, withUser } from "@/server/db/client";
 import {
@@ -29,6 +30,7 @@ import { scopeOf, type ItemVisibility } from "@/lib/members/scope";
 import { addItemsTx, finishItemTx, inferEndTime, resolveOwnership } from "./inventory";
 import { computeLiveState, predictionFor, refreshLearning } from "./learning";
 import { loadProductIndex, matchOptions, productCandidates, rememberAlias, type ProductIndex } from "./products";
+import { deleteExpiredReceiptImages, imageDeleteAfter, isRetentionPolicy, uncheckedImageDeadline } from "./receipt-privacy";
 import { markPurchasedFromReceipt, syncShoppingList } from "./shopping";
 
 export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
@@ -143,7 +145,13 @@ export async function createReceiptFromUpload(
     await saveFile(key, prepared.buffer);
     await tx
       .update(receipts)
-      .set({ imagePath: key, processingStartedAt: null, qualityWarnings: prepared.blurScore < 60 ? ["blurry"] : [] })
+      .set({
+        imagePath: key,
+        // Removed after two weeks if nobody ever checks the receipt; checking it sets the household's own choice.
+        imageDeleteAfter: uncheckedImageDeadline(new Date()),
+        processingStartedAt: null,
+        qualityWarnings: prepared.blurScore < 60 ? ["blurry"] : [],
+      })
       .where(eq(receipts.id, row.id));
     return { receiptId: row.id, duplicateOf: null };
   });
@@ -183,7 +191,8 @@ export function normalizeExtraction(extraction: ReceiptExtraction, index: Produc
   const opts = matchOptions(index);
   const out: NormalizedReceiptLine[] = [];
   extraction.lines.forEach((line, i) => {
-    const raw = line.raw.trim();
+    // What's stored (and matched, and remembered) is the line with any card, phone or email details removed.
+    const raw = redactReceiptLine(line.raw.trim()).trim();
     if (!raw) return;
     const fromRaw = normalizeReceiptLine(raw, opts);
     const fromName = line.name ? normalizeReceiptLine(line.name, opts) : null;
@@ -245,10 +254,12 @@ export function normalizeExtraction(extraction: ReceiptExtraction, index: Produc
 }
 
 async function extractWithFallback(
-  allowAi: boolean,
-  input: Parameters<ReturnType<typeof getProvider>["extractReceipt"]>[0],
+  householdId: string,
+  input: Parameters<AIProvider["extractReceipt"]>[0],
 ): Promise<{ extraction: ReceiptExtraction; fellBack: boolean }> {
-  const provider = getProvider(allowAi);
+  // The outside AI reader only when the household agreed, its plan includes it and it's set up (see src/server/ai/consent.ts);
+  // otherwise the on-device reader, which sends nothing anywhere. Decided now, so a withdrawal applies to the very next read.
+  const { provider } = await providerFor(householdId);
   try {
     return { extraction: await provider.extractReceipt(input), fellBack: false };
   } catch (err) {
@@ -302,31 +313,31 @@ export async function processReceipt(userId: string, household: ReceiptHousehold
     await withUser(userId, async (tx) => {
       await tx
         .update(receipts)
-        .set({ status: "failed", errorCode: code, errorMessage: FAILURE_MESSAGES[code], rawText: raw ?? null, processedAt: new Date() })
+        .set({ status: "failed", errorCode: code, errorMessage: FAILURE_MESSAGES[code], rawText: raw ? redactReceiptText(raw) : null, processedAt: new Date() })
         .where(stillOurs);
     });
   };
 
   try {
-    const { receipt, allowAi, stores } = await withUser(userId, async (tx) => {
+    const { receipt, stores } = await withUser(userId, async (tx) => {
       const [r] = await tx
         .select()
         .from(receipts)
         .where(and(eq(receipts.id, receiptId), eq(receipts.householdId, household.id)))
         .limit(1);
       const [p] = await tx
-        .select({ allowAi: preferences.allowAiProcessing, stores: preferences.preferredStores })
+        .select({ stores: preferences.preferredStores })
         .from(preferences)
         .where(eq(preferences.householdId, household.id))
         .limit(1);
-      return { receipt: r, allowAi: p?.allowAi ?? true, stores: p?.stores ?? [] };
+      return { receipt: r, stores: p?.stores ?? [] };
     });
     if (!receipt || receipt.status !== "processing") return;
     const image = receipt.imagePath ? await readStoredFile(receipt.imagePath) : null;
     if (!image) return fail("missing_image");
 
     const today = toDateString(now, household.timezone);
-    const { extraction, fellBack } = await extractWithFallback(allowAi, {
+    const { extraction, fellBack } = await extractWithFallback(household.id, {
       image,
       mimeType: "image/jpeg",
       today,
@@ -459,12 +470,13 @@ export async function processReceipt(userId: string, household: ReceiptHousehold
         .update(receipts)
         .set({
           status: "needs_review",
-          storeName: extraction.store?.slice(0, 80) ?? null,
+          storeName: redactStoreLabel(extraction.store)?.slice(0, 80) ?? null,
           purchasedAt: purchasedOn ? zonedDateTimeToInstant(purchasedOn, 12, household.timezone) : null,
           subtotal,
           total,
           currency: extraction.currency ?? household.currency,
-          rawText: extraction.rawText.slice(0, 20000),
+          // Card, loyalty and phone numbers, emails, street addresses and names are removed before anything is stored.
+          rawText: redactReceiptText(extraction.rawText).slice(0, 20000),
           provider: extraction.provider,
           contentFingerprint: fingerprint,
           duplicateOfId,
@@ -482,7 +494,7 @@ export async function processReceipt(userId: string, household: ReceiptHousehold
           userId: receipt.uploadedBy ?? userId,
           type: "receipt_ready",
           title: "Your receipt is ready to check",
-          body: `${lines.filter((l) => !l.ignoredByDefault).length} items found${extraction.store ? ` from ${extraction.store}` : ""}. Give them a quick look before they go in your kitchen.`,
+          body: `${lines.filter((l) => !l.ignoredByDefault).length} items found${redactStoreLabel(extraction.store) ? ` from ${redactStoreLabel(extraction.store)}` : ""}. Give them a quick look before they go in your kitchen.`,
           link: `/receipts/${receiptId}`,
           dedupeKey: `receipt_ready:${receiptId}`,
         })
@@ -558,6 +570,10 @@ export interface ReceiptReview {
   createdAt: string;
   confirmedAt: string | null;
   hasImage: boolean;
+  /** The photo was removed under the household's retention choice ("Photo deleted"). */
+  imageDeleted: boolean;
+  /** When the stored photo will be removed, if that's scheduled. */
+  imageDeleteAfter: string | null;
 }
 
 function certaintyOf(score: number, hasProduct: boolean): ReceiptReviewItem["certainty"] {
@@ -668,6 +684,8 @@ export async function getReceiptReview(ctx: HouseholdContext, receiptId: string,
       createdAt: r.createdAt.toISOString(),
       confirmedAt: r.confirmedAt?.toISOString() ?? null,
       hasImage: Boolean(r.imagePath),
+      imageDeleted: Boolean(r.imageDeletedAt) || (!r.imagePath && r.status !== "uploaded" && r.status !== "processing"),
+      imageDeleteAfter: r.imagePath ? r.imageDeleteAfter?.toISOString() ?? null : null,
     };
   });
 }
@@ -711,7 +729,7 @@ export async function confirmReceipt(
   if (input.purchasedOn && (!isDateString(input.purchasedOn) || input.purchasedOn > today)) {
     throw new AppError("validation", "The purchase date can't be in the future.");
   }
-  return withUser(ctx.user.id, async (tx) => {
+  const outcome = await withUser(ctx.user.id, async (tx) => {
     const [r] = await tx
       .select()
       .from(receipts)
@@ -722,6 +740,8 @@ export async function confirmReceipt(
     if (r.status === "confirmed") throw new AppError("conflict", "This receipt is already in your kitchen.");
     if (r.status !== "needs_review") throw new AppError("conflict", "This receipt isn't ready to confirm yet.");
 
+    const [policyRow] = await tx.select({ retention: preferences.receiptImageRetention }).from(preferences).where(eq(preferences.householdId, ctx.household.id)).limit(1);
+    const retention = isRetentionPolicy(policyRow?.retention) ? policyRow.retention : "after_review";
     const rows = await tx.select().from(receiptItems).where(eq(receiptItems.receiptId, receiptId));
     const byId = new Map(rows.map((row) => [row.id, row]));
     const index = await loadProductIndex(tx, ctx.household.id);
@@ -862,8 +882,10 @@ export async function confirmReceipt(
         status: "confirmed",
         confirmedAt: now,
         confirmedBy: ctx.user.id,
-        storeName: input.storeName?.trim().slice(0, 80) || r.storeName,
+        storeName: redactStoreLabel(input.storeName?.trim())?.slice(0, 80) || r.storeName,
         purchasedAt: effectivePurchase,
+        // The household's choice about the photo starts now: removed at once, after 30 days, or kept.
+        imageDeleteAfter: r.imagePath ? imageDeleteAfter(retention, now) : r.imageDeleteAfter,
       })
       .where(eq(receipts.id, receiptId));
 
@@ -871,8 +893,13 @@ export async function confirmReceipt(
     const tickedOff = await markPurchasedFromReceipt(tx, ctx.household.id, bought, { purchasedAt: effectivePurchase });
     await refreshLearning(tx, ctx.household, touchedProducts, now);
     await syncShoppingList(tx, ctx.household, now);
-    return { added, tickedOff };
+    return { added, tickedOff, removePhotoNow: Boolean(r.imagePath) && retention === "after_review" };
   });
+  // "Delete once checked": take the photo off the disk now rather than waiting for the scheduled sweep (which would also catch it).
+  if (outcome.removePhotoNow) {
+    await deleteExpiredReceiptImages(now, { receiptId }).catch((err) => console.error("[receipts] photo removal failed; the scheduled sweep will retry:", err));
+  }
+  return { added: outcome.added, tickedOff: outcome.tickedOff };
 }
 
 export async function discardReceipt(ctx: HouseholdContext, receiptId: string): Promise<void> {
@@ -888,7 +915,12 @@ export async function discardReceipt(ctx: HouseholdContext, receiptId: string): 
     if (r.status === "confirmed") {
       throw new AppError("conflict", "This receipt is already in your kitchen. Remove individual items from your kitchen instead.");
     }
-    await tx.update(receipts).set({ status: "discarded", deletedAt: new Date(), imagePath: null }).where(eq(receipts.id, receiptId));
+    // A receipt thrown away has no use for its photo, whatever the retention choice: it goes now.
+    const now = new Date();
+    await tx
+      .update(receipts)
+      .set({ status: "discarded", deletedAt: now, imagePath: null, imageDeleteAfter: r.imagePath ? now : r.imageDeleteAfter, imageDeletedAt: r.imagePath ? now : r.imageDeletedAt })
+      .where(eq(receipts.id, receiptId));
     return r.imagePath;
   });
   if (key) await deleteFile(key);

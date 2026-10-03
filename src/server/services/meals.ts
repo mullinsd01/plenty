@@ -23,7 +23,7 @@ import type { IngredientAvailability, MealHistory, PlannableMeal, PlannerPrefere
 import { ACCEPT_MATCH_SCORE, normalizeText } from "@/lib/normalize";
 import { RECIPES, recipeContains } from "@/lib/recipes";
 import { convert, formatQuantity, formatRecipeQuantity, isUnit, type Unit } from "@/lib/units";
-import { AIUnavailableError, getProvider, type GeneratedRecipe } from "@/server/ai";
+import { AIUnavailableError, requireExternalProvider, type GeneratedRecipe } from "@/server/ai";
 import type { HouseholdContext } from "@/server/auth/context";
 import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { systemDb, withUser, type Queryable, type Tx } from "@/server/db/client";
@@ -41,6 +41,9 @@ import { AppError, notFound } from "@/server/errors";
 import { consumeForMealTx } from "./inventory";
 import { computeLiveState, householdSizeOf, refreshLearning, type LiveState } from "./learning";
 import { loadPlannableMeals, lotsFromLive } from "./meal-data";
+import { trackFor } from "@/server/analytics";
+import { requireEntitlement } from "@/server/billing/limits";
+import { requireCapability } from "@/server/permissions";
 import { combinedFoodRules } from "./members";
 import { notifyHousemates } from "./notifications";
 import { inferContains, loadProductIndex, resolveProduct } from "./products";
@@ -103,7 +106,6 @@ interface LoadedContext {
   today: string;
   servings: number;
   nightsPerWeek: number;
-  allowAi: boolean;
 }
 
 export function defaultServings(household: { adults: number; children: number }): number {
@@ -166,7 +168,6 @@ async function loadContext(tx: Tx, ctx: HouseholdContext, now: Date, live?: Live
         7 - (prefs?.takeawayPerWeek ?? 0),
       ),
     ),
-    allowAi: prefs?.allowAiProcessing ?? true,
   };
 }
 
@@ -373,11 +374,17 @@ export async function generateMealPlan(
   range: PlanRange,
   opts: { regenerate?: boolean } = {},
 ): Promise<PlanResult> {
-  return planDinners(ctx, (today, nightsPerWeek) => planDates(range, today, nightsPerWeek), { regenerate: opts.regenerate, range });
+  requireCapability(ctx, "plan_meals");
+  // Planning tonight or tomorrow is for everyone; weekly plans and regenerating are part of the paid plans.
+  if (range === "3days" || range === "week" || opts.regenerate) requireEntitlement(ctx, "advanced_meal_planning", "Weekly meal plans");
+  const result = await planDinners(ctx, (today, nightsPerWeek) => planDates(range, today, nightsPerWeek), { regenerate: opts.regenerate, range });
+  if (result.planned > 0) await trackFor(ctx, "meal_suggested", { surface: "plan" });
+  return result;
 }
 
 /** Plan one specific night (from an empty day on the plan), whatever the usual takeaway nights are. */
 export async function planDinnerOn(ctx: HouseholdContext, date: string): Promise<PlanResult> {
+  requireCapability(ctx, "plan_meals");
   return planDinners(ctx, (today) => {
     if (date < today || date > addDays(today, 6)) throw new AppError("validation", "Pick a day in the coming week.");
     return [date];
@@ -497,6 +504,9 @@ async function loadPlanItem(tx: Tx, householdId: string, id: string): Promise<Db
 
 /** Swap one planned meal for the next best option. Counts as a (soft) rejection of the old one. */
 export async function replacePlanItem(ctx: HouseholdContext, itemId: string, opts: { dislike?: boolean } = {}): Promise<{ mealName: string }> {
+  requireCapability(ctx, "plan_meals");
+  // "Don't suggest this again" is a preference, free for everyone; a plain swap is part of the paid plans.
+  if (!opts.dislike) requireEntitlement(ctx, "advanced_meal_planning", "Swapping meals");
   const now = new Date();
   return withUser(ctx.user.id, async (tx) => {
     const item = await loadPlanItem(tx, ctx.household.id, itemId);
@@ -537,6 +547,7 @@ export async function replacePlanItem(ctx: HouseholdContext, itemId: string, opt
 }
 
 export async function removePlanItem(ctx: HouseholdContext, itemId: string): Promise<void> {
+  requireCapability(ctx, "plan_meals");
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const item = await loadPlanItem(tx, ctx.household.id, itemId);
@@ -546,6 +557,7 @@ export async function removePlanItem(ctx: HouseholdContext, itemId: string): Pro
 }
 
 export async function setPlanItemServings(ctx: HouseholdContext, itemId: string, servings: number): Promise<void> {
+  requireCapability(ctx, "plan_meals");
   if (!Number.isInteger(servings) || servings < 1 || servings > 24) throw new AppError("validation", "Servings must be between 1 and 24.");
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
@@ -557,6 +569,7 @@ export async function setPlanItemServings(ctx: HouseholdContext, itemId: string,
 
 /** Move a planned meal to another day (swapping with whatever is there). */
 export async function movePlanItem(ctx: HouseholdContext, itemId: string, date: string): Promise<void> {
+  requireCapability(ctx, "plan_meals");
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const item = await loadPlanItem(tx, ctx.household.id, itemId);
@@ -588,8 +601,9 @@ export async function movePlanItem(ctx: HouseholdContext, itemId: string, date: 
  * its name returned so the person is told); a cooked one is never overwritten.
  */
 export async function addMealToPlan(ctx: HouseholdContext, mealId: string, date: string): Promise<{ replaced: string | null }> {
+  requireCapability(ctx, "plan_meals");
   const now = new Date();
-  return withUser(ctx.user.id, async (tx) => {
+  const result = await withUser(ctx.user.id, async (tx) => {
     const today = toDateString(now, ctx.household.timezone);
     if (date < today || date > addDays(today, 13)) throw new AppError("validation", "Pick a day in the next two weeks.");
     const visible = await loadPlannableMeals(tx, ctx.household.id, [mealId]);
@@ -640,6 +654,8 @@ export async function addMealToPlan(ctx: HouseholdContext, mealId: string, date:
     await syncShoppingList(tx, ctx.household, now);
     return { replaced };
   });
+  await trackFor(ctx, "meal_selected", { surface: "plan" });
+  return result;
 }
 
 /**
@@ -647,8 +663,9 @@ export async function addMealToPlan(ctx: HouseholdContext, mealId: string, date:
  * nobody has to update quantities by hand, and remember the household made it.
  */
 export async function markPlanItemCooked(ctx: HouseholdContext, itemId: string): Promise<{ usedItems: number }> {
+  requireCapability(ctx, "plan_meals");
   const now = new Date();
-  return withUser(ctx.user.id, async (tx) => {
+  const result = await withUser(ctx.user.id, async (tx) => {
     const item = await loadPlanItem(tx, ctx.household.id, itemId);
     if (item.status === "cooked") return { usedItems: 0 };
     // Claim it before touching the kitchen: a second tap (or a housemate on another phone)
@@ -664,12 +681,15 @@ export async function markPlanItemCooked(ctx: HouseholdContext, itemId: string):
     await syncShoppingList(tx, ctx.household, now);
     return { usedItems: usage.length };
   });
+  if (result.usedItems > 0) await trackFor(ctx, "meal_selected", { surface: "plan" });
+  return result;
 }
 
 /** Cook something off-plan (from "What can I make?" or a recipe page). */
 export async function cookMealNow(ctx: HouseholdContext, mealId: string, servings?: number): Promise<{ usedItems: number }> {
+  requireCapability(ctx, "plan_meals");
   const now = new Date();
-  return withUser(ctx.user.id, async (tx) => {
+  const result = await withUser(ctx.user.id, async (tx) => {
     const loaded = await loadContext(tx, ctx, now);
     const meal = loaded.planner.meals.find((m) => m.id === mealId);
     if (!meal) throw notFound("That meal");
@@ -690,6 +710,8 @@ export async function cookMealNow(ctx: HouseholdContext, mealId: string, serving
     await syncShoppingList(tx, ctx.household, now);
     return { usedItems: usage.length };
   });
+  await trackFor(ctx, "meal_selected", { surface: "cook_now" });
+  return result;
 }
 
 /** Mark a plan item cooked unless it already is. False when someone else got there first. */
@@ -753,6 +775,7 @@ function undoDislike() {
 }
 
 export async function rateMeal(ctx: HouseholdContext, mealId: string, rating: -1 | 0 | 1): Promise<void> {
+  requireCapability(ctx, "plan_meals");
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const visible = await loadPlannableMeals(tx, ctx.household.id, [mealId]);
@@ -784,6 +807,7 @@ export async function rateMeal(ctx: HouseholdContext, mealId: string, rating: -1
 }
 
 export async function setMealSaved(ctx: HouseholdContext, mealId: string, saved: boolean): Promise<void> {
+  requireCapability(ctx, "plan_meals");
   await withUser(ctx.user.id, async (tx) => {
     const visible = await loadPlannableMeals(tx, ctx.household.id, [mealId]);
     if (!visible.has(mealId)) throw notFound("That meal");
@@ -801,6 +825,7 @@ export async function setMealSaved(ctx: HouseholdContext, mealId: string, saved:
 
 /** Forget what Plenty learned about a meal (from the memory page). */
 export async function clearMealPreference(ctx: HouseholdContext, mealId: string): Promise<void> {
+  requireCapability(ctx, "plan_meals");
   await withUser(ctx.user.id, async (tx) => {
     await tx
       .delete(mealPreferences)
@@ -883,12 +908,14 @@ export async function getMealDetail(ctx: HouseholdContext, mealId: string, servi
 
 /** "What can I make right now?" — ranked by what's in the kitchen, what needs using, then preferences. */
 export async function whatCanIMake(ctx: HouseholdContext, opts: { maxMinutes?: number } = {}, now = new Date()): Promise<MealCardView[]> {
-  return withUser(ctx.user.id, async (tx) => {
+  const result = await withUser(ctx.user.id, async (tx) => {
     const loaded = await loadContext(tx, ctx, now);
     const ranked = rankMealsForNow(loaded.planner, { limit: 18, maxMinutes: opts.maxMinutes, servings: loaded.servings });
     const desc = await descriptions(tx, ranked.map((r) => r.meal.id));
     return ranked.map((r) => toCard(r.meal, r.ingredients, loaded.planner.history.get(r.meal.id), r.primaryReason, desc.get(r.meal.id) ?? ""));
   });
+  await trackFor(ctx, "meal_suggested", { surface: "cook_now" });
+  return result;
 }
 
 export type RecipeFilter = "all" | "saved" | "favourites" | "quick" | "vegetarian" | "yours";
@@ -1003,6 +1030,7 @@ async function insertHouseholdMeal(
  * (so edits never change the shared library); future plans switch to the copy.
  */
 export async function editMeal(ctx: HouseholdContext, mealId: string, input: EditMealInput): Promise<string> {
+  requireCapability(ctx, "plan_meals");
   validateRecipeShape(input);
   const now = new Date();
   return withUser(ctx.user.id, async (tx) => {
@@ -1081,6 +1109,7 @@ export async function editMeal(ctx: HouseholdContext, mealId: string, input: Edi
  * recipe nobody can open would otherwise look empty but block planning.
  */
 export async function deleteHouseholdMeal(ctx: HouseholdContext, mealId: string): Promise<{ unplanned: number }> {
+  requireCapability(ctx, "plan_meals");
   const now = new Date();
   return withUser(ctx.user.id, async (tx) => {
     const [existing] = await tx
@@ -1130,6 +1159,7 @@ function sanitizeGenerated(r: GeneratedRecipe): EditMealInput | null {
  * allergies and diets deterministically before it can be planned.
  */
 export async function generateFreshIdeas(ctx: HouseholdContext): Promise<{ created: number; provider: string }> {
+  requireCapability(ctx, "plan_meals");
   await enforceRateLimit(`ai-recipes:${ctx.household.id}`, 6, 3600, "asking for new ideas");
   const now = new Date();
   const { loaded, input } = await withUser(ctx.user.id, async (tx) => {
@@ -1158,14 +1188,11 @@ export async function generateFreshIdeas(ctx: HouseholdContext): Promise<{ creat
       },
     };
   });
-  const provider = getProvider(loaded.allowAi);
+  // New recipe ideas have no on-device equivalent, so this never falls back to sending: without the household's
+  // permission, the plan and a configured service it stops here with a message that says what to do.
+  const { provider } = await requireExternalProvider(ctx.household.id, "recipes");
   if (!provider.generateRecipes) {
-    throw new AppError(
-      "ai_unavailable",
-      loaded.allowAi
-        ? "New recipe ideas need an AI key (ANTHROPIC_API_KEY). Plenty is using its built-in recipe collection instead."
-        : "You've turned off AI processing in Privacy settings, so Plenty is using its built-in recipes.",
-    );
+    throw new AppError("ai_unavailable", "New recipe ideas aren't available right now. Plenty is using its built-in recipe collection instead.");
   }
   let recipes: GeneratedRecipe[];
   try {

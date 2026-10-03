@@ -25,7 +25,7 @@ import {
 import { overLimitReport, type OverLimitReport } from "@/lib/billing/over-limit";
 import { isNativePlatform, storeFor, type ClientPlatform } from "@/lib/billing/platform";
 import { productIdFor } from "@/lib/billing/product-ids";
-import { describeEffectivePlan, type BillingProviderId, type EffectiveReason, type SubscriptionState } from "@/lib/billing/subscription";
+import { describeEffectivePlan, resolveEffectivePlan, type BillingProviderId, type EffectiveReason, type SubscriptionState } from "@/lib/billing/subscription";
 import { isTerminalStatus } from "@/lib/billing/events";
 import { can } from "@/lib/members/permissions";
 import { enforceRateLimit } from "@/server/auth/rate-limit";
@@ -536,7 +536,8 @@ export async function restorePurchases(ctx: HouseholdContext, providerInput: unk
     await google.acknowledge(verified.providerSubscriptionId, verified.providerProductId, googleConfig);
   }
 
-  const already = sameSubscription && result.outcome !== "applied";
+  // Restoring what the household already has in force is a no-op for the person, even if the store's data refreshed it.
+  const already = sameSubscription && state !== null && resolveEffectivePlan(state, now).plan !== "free";
   return {
     outcome: already ? "already_linked" : "linked",
     message: already

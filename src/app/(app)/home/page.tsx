@@ -216,7 +216,7 @@ export default async function HomePage() {
                   </div>
                   {canPlanMeals && (
                     <div className="mt-4">
-                      <TonightActions planItemId={tonight.id} mealId={tonight.meal.id} />
+                      <TonightActions planItemId={tonight.id} mealId={tonight.meal.id} canSwap={ctx.plan.entitlements.advanced_meal_planning} />
                     </div>
                   )}
                 </Card>

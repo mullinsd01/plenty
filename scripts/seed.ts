@@ -504,7 +504,7 @@ async function main() {
           tx,
           household,
           userId,
-          [{ name: "Pepsi Max", quantity: 12, unit: "can", purchasedAt: boughtAt, ownerMemberId: memberId, visibility }],
+          [{ name: "Pepsi Max", quantity: 2.5, unit: "l", purchasedAt: boughtAt, ownerMemberId: memberId, visibility }],
           "manual",
           boughtAt,
         );
@@ -519,7 +519,7 @@ async function main() {
       }
       return productId;
     };
-    // Alex: a 12-pack lasts about 9 days. Jordan: a 12-pack lasts about 5 weeks.
+    // Alex gets through two bottles in about 9 days; Jordan takes about 5 weeks.
     const alexProduct = await buyFor(alexId, [
       { daysAgo: 58, lastedDays: 10 },
       { daysAgo: 48, lastedDays: 9 },
@@ -530,7 +530,9 @@ async function main() {
       { daysAgo: 7, lastedDays: null },
     ]);
     const jordanProduct = await buyFor(jordanId, [
-      { daysAgo: 70, lastedDays: 35 },
+      { daysAgo: 140, lastedDays: 35 },
+      { daysAgo: 105, lastedDays: 34 },
+      { daysAgo: 70, lastedDays: 36 },
       { daysAgo: 34, lastedDays: null },
     ]);
     // A private treat only Alex can see: it never shows to anyone else, or in anything shared.

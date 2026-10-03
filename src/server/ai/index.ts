@@ -1,36 +1,22 @@
 import "server-only";
+import { EXTERNAL_AI_PROVIDER } from "@/lib/ai/consent";
 import { env } from "@/server/env";
-import { AnthropicProvider } from "./anthropic";
-import { LocalProvider } from "./local";
+import { externalConfigured, localProvider } from "./providers";
 import type { AIProvider } from "./types";
 
 export * from "./types";
-
-let anthropic: AnthropicProvider | null = null;
-const local = new LocalProvider();
-
-function anthropicProvider(): AnthropicProvider | null {
-  const e = env();
-  if (e.AI_PROVIDER === "local" || !e.ANTHROPIC_API_KEY) return null;
-  if (!anthropic) anthropic = new AnthropicProvider(e.ANTHROPIC_API_KEY, e.ANTHROPIC_MODEL);
-  return anthropic;
-}
+export { AiPermissionError, providerFor, requireExternalProvider, resolveAiAccess, type AiAccess, type ChosenProvider } from "./consent";
 
 /**
- * The provider to use for this household. Households can opt out of sending
- * data to an external AI service in Settings → Privacy; then everything runs
- * on Plenty's own server.
+ * There is deliberately no function here that returns the outside provider
+ * without asking: see `./consent`. The on-device reader needs no permission.
  */
-export function getProvider(allowExternalAi: boolean): AIProvider {
-  if (!allowExternalAi) return local;
-  return anthropicProvider() ?? local;
-}
-
 export function getLocalProvider(): AIProvider {
-  return local;
+  return localProvider();
 }
 
-export function aiStatus(): { externalConfigured: boolean; model: string | null } {
-  const provider = anthropicProvider();
-  return { externalConfigured: provider !== null, model: provider ? env().ANTHROPIC_MODEL : null };
+/** Whether an outside AI service is set up on this server. This says nothing about permission to use it. */
+export function aiStatus(): { externalConfigured: boolean; model: string | null; providerName: string | null } {
+  const configured = externalConfigured();
+  return { externalConfigured: configured, model: configured ? env().ANTHROPIC_MODEL : null, providerName: configured ? EXTERNAL_AI_PROVIDER.name : null };
 }
