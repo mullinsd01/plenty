@@ -140,5 +140,6 @@ export function processorConfig(): ProcessorConfig {
     google: Boolean(e.GOOGLE_PLAY_PACKAGE_NAME),
     aiConfigured: ai.externalConfigured,
     aiProviderName: ai.providerName ?? EXTERNAL_AI_PROVIDER.name,
+    barcodeLookup: (e.BARCODE_LOOKUP ?? (e.NODE_ENV === "test" ? "off" : "openfoodfacts")) === "openfoodfacts",
   };
 }

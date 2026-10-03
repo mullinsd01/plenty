@@ -119,6 +119,8 @@ export interface ProcessorConfig {
   google: boolean;
   aiConfigured: boolean;
   aiProviderName: string;
+  /** Unknown barcodes may be looked up in the public Open Food Facts database. */
+  barcodeLookup: boolean;
 }
 
 export interface Processor {
@@ -152,11 +154,19 @@ export function processorsFor(cfg: ProcessorConfig): Processor[] {
   if (cfg.google) {
     list.push({ name: "Google Play", role: "Takes payment for subscriptions bought in the Android app.", receives: "Plenty receives your subscription's status and an identifier from Google. Google has your payment details; Plenty never does.", when: "Only if you buy a plan in the Android app." });
   }
+  if (cfg.barcodeLookup) {
+    list.push({
+      name: "Open Food Facts",
+      role: "A public product database, used to name a barcode Plenty doesn't know yet.",
+      receives: "The barcode number and nothing else — no account, household or location detail from Plenty.",
+      when: "Only when you scan a barcode that isn't already known to your household (Plus).",
+    });
+  }
   if (cfg.aiConfigured) {
     list.push({
       name: cfg.aiProviderName,
-      role: "An outside AI service that can read receipt photos and write recipe ideas.",
-      receives: "Only what you allowed: the receipt photo, or your kitchen and food preferences, when you use that feature. Never your name, email or the rest of your account.",
+      role: "An outside AI service that can read receipt photos, recognise groceries in a photo and write recipe ideas.",
+      receives: "Only what you allowed: the receipt or grocery photo, or your kitchen and food preferences, when you use that feature. A grocery photo is not stored. Never your name, email or the rest of your account.",
       when: "Only after someone in your household turns it on, and only on a plan that includes it. Off by default.",
     });
   }
