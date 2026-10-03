@@ -131,7 +131,7 @@ ALTER TABLE "predictions" ADD COLUMN "owner_member_id" uuid;--> statement-breakp
 ALTER TABLE "preferences" ADD COLUMN "ai_consent_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "preferences" ADD COLUMN "ai_consent_by" uuid;--> statement-breakpoint
 ALTER TABLE "preferences" ADD COLUMN "receipt_image_retention" text DEFAULT 'after_review' NOT NULL;--> statement-breakpoint
-ALTER TABLE "profiles" ADD COLUMN "analytics_opt_out" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "profiles" ADD COLUMN "analytics_opt_out" boolean DEFAULT true NOT NULL;--> statement-breakpoint
 ALTER TABLE "receipts" ADD COLUMN "image_delete_after" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "receipts" ADD COLUMN "image_deleted_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "shopping_list_items" ADD COLUMN "owner_member_id" uuid;--> statement-breakpoint

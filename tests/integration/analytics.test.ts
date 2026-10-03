@@ -18,6 +18,9 @@ describe("analytics intake", () => {
   beforeAll(async () => {
     ctx = await makeHousehold({ plan: "plus" });
     other = await makeHousehold({ plan: "plus" });
+    // Analytics are off until someone turns them on; these two have.
+    await setAnalyticsOptOut(ctx.user, false);
+    await setAnalyticsOptOut(other.user, false);
   });
   afterAll(async () => {
     await pool.end();
@@ -56,6 +59,21 @@ describe("analytics intake", () => {
     expect(await recordClientAnalytics(ctx, "not json", headers())).toMatchObject({ status: 400 });
     expect(await recordClientAnalytics(ctx, "x".repeat(5000), headers())).toMatchObject({ status: 413 });
     expect(await rows()).toHaveLength(0);
+  });
+
+  it("records nothing about someone who hasn't turned analytics on", async () => {
+    const stranger = await makeHousehold({ plan: "plus" });
+    // A new account is off by default.
+    const [profile] = await systemDb.select({ o: profiles.analyticsOptOut }).from(profiles).where(eq(profiles.userId, stranger.user.id));
+    expect(profile.o).toBe(true);
+    const before = (await rows()).length;
+    await recordClientAnalytics(stranger, body("meal_selected", { surface: "plan" }), headers());
+    await track("receipt_confirmed", { householdId: stranger.household.id, userId: stranger.user.id }, { lines: 2, corrected: 0 });
+    expect(await rows()).toHaveLength(before);
+    // Turning it on starts recording; nothing earlier is back-filled.
+    await setAnalyticsOptOut(stranger.user, false);
+    await recordClientAnalytics(stranger, body("meal_selected", { surface: "plan" }), headers());
+    expect(await rows()).toHaveLength(before + 1);
   });
 
   it("honours the person's opt-out: accepted, but nothing is recorded", async () => {

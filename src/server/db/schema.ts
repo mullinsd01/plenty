@@ -177,7 +177,8 @@ export const profiles = pgTable("profiles", {
   displayName: text("display_name").notNull(),
   activeHouseholdId: uuid("active_household_id").references(() => households.id, { onDelete: "set null" }),
   /** Product analytics are off when set. Plenty never sends analytics to third parties. */
-  analyticsOptOut: boolean("analytics_opt_out").notNull().default(false),
+  /** Off until a person turns usage analytics on: nothing is recorded about someone who hasn't chosen to help. */
+  analyticsOptOut: boolean("analytics_opt_out").notNull().default(true),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
