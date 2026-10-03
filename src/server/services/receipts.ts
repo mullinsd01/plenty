@@ -27,6 +27,9 @@ import { AppError, notFound } from "@/server/errors";
 import { deleteFile, readStoredFile, receiptImageKey, saveFile } from "@/server/storage/files";
 import { MAX_STORED_EDGE_PX, prepareReceiptImage, ReceiptImageError } from "@/server/receipts/image";
 import { scopeOf, type ItemVisibility } from "@/lib/members/scope";
+import { addUsage, usagePeriod, USAGE_RECEIPT_SCANS } from "@/server/billing/entitlements";
+import { assertReceiptScanAvailable } from "@/server/billing/limits";
+import { requireCapability } from "@/server/permissions";
 import { addItemsTx, finishItemTx, inferEndTime, resolveOwnership } from "./inventory";
 import { computeLiveState, predictionFor, refreshLearning } from "./learning";
 import { loadProductIndex, matchOptions, productCandidates, rememberAlias, type ProductIndex } from "./products";
@@ -101,6 +104,7 @@ export async function createReceiptFromUpload(
   file: { bytes: Buffer; size: number },
   opts: { allowDuplicate?: boolean } = {},
 ): Promise<UploadResult> {
+  requireCapability(ctx, "scan_receipts");
   if (file.size === 0) throw new AppError("receipt_invalid", "That file is empty. Try taking the photo again.");
   if (file.size > MAX_UPLOAD_BYTES) throw new AppError("receipt_invalid", "That photo is too large (15 MB max). Try a smaller one.");
 
@@ -137,6 +141,8 @@ export async function createReceiptFromUpload(
         };
       }
     }
+    // Past this month's allowance on the plan: say so before anything is stored. Manual entry always works.
+    await assertReceiptScanAvailable(ctx);
     const [row] = await tx
       .insert(receipts)
       .values({ householdId: ctx.household.id, uploadedBy: ctx.user.id, status: "processing", imageHash: prepared.sha256 })
@@ -403,6 +409,8 @@ export async function processReceipt(userId: string, household: ReceiptHousehold
     }
     if (extraction.lines.length === 0) return fail(fellBack ? "ai_busy" : "empty", extraction.rawText);
 
+    // A scan counts towards the month's allowance once it has been read, never for one that failed.
+    let read = false;
     await withUser(userId, async (tx) => {
       // Re-check ownership under a row lock before replacing anything.
       const [owned] = await tx.select({ id: receipts.id }).from(receipts).where(stillOurs).for("update");
@@ -499,7 +507,9 @@ export async function processReceipt(userId: string, household: ReceiptHousehold
           dedupeKey: `receipt_ready:${receiptId}`,
         })
         .onConflictDoNothing();
+      read = true;
     });
+    if (read) await addUsage(household.id, USAGE_RECEIPT_SCANS, usagePeriod(household.timezone, now), 1);
   } catch (err) {
     console.error("[receipts] processing failed:", err);
     await fail("ai_failed").catch(() => undefined);

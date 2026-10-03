@@ -9,7 +9,10 @@ import { Checkbox, Segmented } from "@/components/ui/controls";
 import { ConfirmDialog } from "@/components/ui/confirm";
 import { Field, Input, NativeSelect } from "@/components/ui/field";
 import { Sheet } from "@/components/ui/sheet";
+import { PersonChip } from "@/components/ui/person-chip";
 import { useAction } from "@/components/hooks/use-action";
+import { HOUSEHOLD_OWNER, OwnerPicker, type OwnerValue } from "@/features/members/owner-picker";
+import { usePeople } from "@/features/members/people-context";
 import { cn } from "@/lib/cn";
 import { STORAGE_LOCATIONS, STORAGE_LOCATION_LABELS, type StorageLocation } from "@/lib/domain";
 import { formatMoney } from "@/lib/format";
@@ -28,6 +31,8 @@ interface Draft {
   packCount: number;
   location: StorageLocation;
   existingDecision: "replace" | "keep" | "merge" | null;
+  /** Set when this line is for someone other than the receipt's default. */
+  owner?: OwnerValue;
 }
 
 const WARNING_TEXT: Record<string, string> = {
@@ -89,6 +94,11 @@ export function ReviewView({ review, currency, today }: { review: ReceiptReview;
   const [drafts, setDrafts] = useState<Draft[]>(() => review.items.map(toDraft));
   const [editing, setEditing] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Whose the shopping is: the household's, or one person's (on plans that allow it, privately). A line can differ.
+  const [defaultOwner, setDefaultOwner] = useState<OwnerValue>(HOUSEHOLD_OWNER);
+  const [showOwner, setShowOwner] = useState(false);
+  const people = usePeople();
+  const ownerOf = (d: Draft): OwnerValue => d.owner ?? defaultOwner;
   const confirm = useAction();
   const discard = useAction();
 
@@ -117,6 +127,8 @@ export function ReviewView({ review, currency, today }: { review: ReceiptReview;
             packCount: d.packCount,
             location: d.location,
             existingDecision: d.existingDecision,
+            // Left out when nothing was chosen, so Plenty doesn't assume anything about who the food is for.
+            ...(d.owner || defaultOwner.ownerMemberId ? { ownerMemberId: ownerOf(d).ownerMemberId, visibility: ownerOf(d).visibility } : {}),
           })),
         }),
       { onSuccess: () => router.push("/kitchen") },
@@ -155,6 +167,34 @@ export function ReviewView({ review, currency, today }: { review: ReceiptReview;
           <p className="mt-1.5 text-[20px] font-semibold tabular tracking-[-0.02em]">{review.total !== null ? formatMoney(review.total, review.currency ?? currency) : "—"}</p>
         </div>
       </Card>
+
+      {people.members.length > 1 && (
+        <div className="mb-6">
+          <button
+            type="button"
+            onClick={() => setShowOwner((v) => !v)}
+            aria-expanded={showOwner}
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink-3 transition hover:text-ink"
+          >
+            Whose shopping is this: <span className="text-ink-2">{defaultOwner.ownerMemberId ? (people.members.find((m) => m.id === defaultOwner.ownerMemberId)?.name ?? "someone") : "Everyone's"}</span>
+            {defaultOwner.visibility === "private" && <span>· private</span>}
+            <span className="underline underline-offset-2">{showOwner ? "done" : "change"}</span>
+          </button>
+          {showOwner && (
+            <div className="mt-2.5 max-w-sm">
+              <OwnerPicker
+                id="receipt-owner"
+                members={people.members}
+                value={defaultOwner}
+                onChange={setDefaultOwner}
+                canPrivate={people.canPrivate}
+                label="Everything on this receipt is for"
+                hint="You can change any single item from its edit sheet."
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {checkFirst.length > 0 && (
         <section className="mb-6" aria-labelledby="check-heading">
@@ -221,6 +261,7 @@ export function ReviewView({ review, currency, today }: { review: ReceiptReview;
       />
 
       <ItemEditSheet
+        defaultOwner={defaultOwner}
         draft={editingDraft}
         item={editingDraft ? byId.get(editingDraft.id)! : null}
         onClose={() => setEditing(null)}
@@ -248,6 +289,10 @@ function ItemRow({
   onPick: (patch: Partial<Draft>) => void;
   onDecision: (d: "replace" | "keep" | "merge") => void;
 }) {
+  const people = usePeople();
+  const ownerMember = draft.owner?.ownerMemberId ? people.members.find((m) => m.id === draft.owner!.ownerMemberId) : undefined;
+  const ownerName = ownerMember?.name;
+  const ownerColor = ownerMember?.color;
   const showCandidates = draft.include && item.certainty !== "confident" && draft.productId === item.productId && item.candidates.length > 0;
   return (
     <div className={cn("px-4 py-3", !draft.include && "opacity-60")}>
@@ -255,7 +300,17 @@ function ItemRow({
         <Checkbox checked={draft.include} onCheckedChange={(v) => onToggle(v === true)} aria-label={`Include ${draft.name}`} />
         <button type="button" onClick={onEdit} className="flex min-w-0 flex-1 items-center gap-3 text-left">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[15px] font-semibold">{draft.name}</p>
+            <p className="truncate text-[15px] font-semibold">
+              {draft.name}
+              {draft.owner && draft.owner.ownerMemberId && (
+                <PersonChip
+                  name={ownerName ?? "Someone"}
+                  color={ownerColor}
+                  isPrivate={draft.owner.visibility === "private"}
+                  className="ml-2 align-middle"
+                />
+              )}
+            </p>
             <p className="truncate text-[12px] text-ink-3">
               {amountLabel(draft)} · {STORAGE_LOCATION_LABELS[draft.location]}
               <span className="ml-1.5 font-mono text-[11px] text-ink-4">{item.rawText}</span>
@@ -318,11 +373,13 @@ function ItemRow({
 const COMMON_UNITS: Unit[] = ["each", "g", "kg", "ml", "l", "pack", "bunch", "can", "bottle", "jar", "loaf"];
 
 function ItemEditSheet({
+  defaultOwner,
   draft,
   item,
   onClose,
   onSave,
 }: {
+  defaultOwner: OwnerValue;
   draft: Draft | null;
   item: ReceiptReviewItem | null;
   onClose: () => void;
@@ -330,12 +387,26 @@ function ItemEditSheet({
 }) {
   return (
     <Sheet open={draft !== null} onOpenChange={(o) => !o && onClose()} title="Fix this item" description={item ? `Printed as “${item.rawText}”` : undefined}>
-      {draft && item && <EditForm key={draft.id} draft={draft} item={item} onSave={onSave} onCancel={onClose} />}
+      {draft && item && <EditForm key={draft.id} draft={draft} item={item} defaultOwner={defaultOwner} onSave={onSave} onCancel={onClose} />}
     </Sheet>
   );
 }
 
-function EditForm({ draft, item, onSave, onCancel }: { draft: Draft; item: ReceiptReviewItem; onSave: (p: Partial<Draft>) => void; onCancel: () => void }) {
+function EditForm({
+  draft,
+  item,
+  defaultOwner,
+  onSave,
+  onCancel,
+}: {
+  draft: Draft;
+  item: ReceiptReviewItem;
+  defaultOwner: OwnerValue;
+  onSave: (p: Partial<Draft>) => void;
+  onCancel: () => void;
+}) {
+  const people = usePeople();
+  const [owner, setOwner] = useState<OwnerValue>(draft.owner ?? defaultOwner);
   const [name, setName] = useState(draft.name);
   const [productId, setProductId] = useState(draft.productId);
   const [productName, setProductName] = useState(draft.productName);
@@ -360,7 +431,9 @@ function EditForm({ draft, item, onSave, onCancel }: { draft: Draft; item: Recei
       onSubmit={(e) => {
         e.preventDefault();
         if (!valid) return;
-        onSave({ name: name.trim(), productId, productName, quantity: total, unit, packCount, location, include: true });
+        // Only a line that differs from the receipt's default carries its own owner.
+        const differs = owner.ownerMemberId !== defaultOwner.ownerMemberId || owner.visibility !== defaultOwner.visibility;
+        onSave({ name: name.trim(), productId, productName, quantity: total, unit, packCount, location, include: true, owner: differs ? owner : undefined });
       }}
     >
       {candidates.length > 0 && (
@@ -432,6 +505,9 @@ function EditForm({ draft, item, onSave, onCancel }: { draft: Draft; item: Recei
           ))}
         </NativeSelect>
       </Field>
+      {people.members.length > 1 && (
+        <OwnerPicker id="ritem-owner" members={people.members} value={owner} onChange={setOwner} canPrivate={people.canPrivate} label="Whose is it?" />
+      )}
       <div className="flex gap-2 pt-1">
         <Button type="button" variant="secondary" className="flex-1" onClick={onCancel}>
           Cancel

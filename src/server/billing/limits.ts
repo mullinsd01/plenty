@@ -95,6 +95,16 @@ export async function receiptScanAllowance(ctx: HouseholdContext, now = new Date
   return { used, limit, remaining: limit === null ? null : Math.max(0, limit - used), period };
 }
 
+/** Refuse a new receipt when this month's scans on the plan are used up. The read itself counts the scan (see `processReceipt`). */
+export async function assertReceiptScanAvailable(ctx: HouseholdContext, now = new Date()): Promise<void> {
+  const allowance = await receiptScanAllowance(ctx, now);
+  if (allowance.limit === null || allowance.used < allowance.limit) return;
+  const next = cheapestPlanWith((e) => e.receipt_scans_per_month === null);
+  throw planLimitError(
+    `You've used this month's ${allowance.limit} receipt scans on this plan. You can still add items by hand, and scans reset next month.${next ? ` ${PLANS[next].name} has no limit.` : ""}`,
+  );
+}
+
 /**
  * Use one receipt scan from this month's allowance. Throws when it's used up.
  * Returns the period it was taken from so a failed read can give it back.

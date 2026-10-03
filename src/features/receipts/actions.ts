@@ -23,6 +23,9 @@ const confirmItem = z
     packCount: z.number(),
     location: z.enum(STORAGE_LOCATIONS),
     existingDecision: z.enum(["replace", "keep", "merge"]).nullable(),
+    /** Whose it is: a member's id, or null for the household. Absent leaves it as the household's. */
+    ownerMemberId: z.uuid().nullable().optional(),
+    visibility: z.enum(["household", "private"]).optional(),
   })
   // Only lines going into the kitchen need sensible amounts; messages name the line so it can be found.
   .superRefine((item, ctx) => {

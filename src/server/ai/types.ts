@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { CUISINES, DIFFICULTIES } from "@/lib/domain";
+import { GUESS_CONFIDENCES, PHOTO_PROBLEMS } from "@/lib/photo/validate";
 import { UNITS } from "@/lib/units";
 
 /**
@@ -106,6 +107,41 @@ export interface RecipeGenerationInput {
   avoidMeals: string[];
 }
 
+// ─── Grocery photos ─────────────────────────────────────────────────────────
+
+/**
+ * What a vision model reports for a photo of groceries. Deliberately small: a
+ * name, a rough count of what's visible, and how sure it is. Free text beyond
+ * the name is not part of the shape, so there's nowhere for stray instructions
+ * or claims to travel. This is a guess to be validated (`validateReading`) and
+ * confirmed by a person, never a record.
+ */
+export const groceryPhotoSchema = z.object({
+  /** False when the photo isn't mostly food or household products. */
+  isGroceryPhoto: z.boolean(),
+  items: z.array(
+    z.object({
+      /** A short everyday name as it would be written on a shopping list. */
+      name: z.string(),
+      /** How many separate items or packs are visible; null when it can't be told. Never a weight. */
+      quantity: z.number().nullable(),
+      confidence: z.enum(GUESS_CONFIDENCES),
+    }),
+  ),
+  problems: z.array(z.enum(PHOTO_PROBLEMS)),
+});
+
+export type GroceryPhotoReading = z.infer<typeof groceryPhotoSchema> & { provider: "anthropic" | "local" };
+
+export interface GroceryPhotoInput {
+  /** Prepared JPEG (rotated, resized, metadata stripped). Held in memory only. */
+  image: Buffer;
+  mimeType: "image/jpeg";
+}
+
+/** Longest an external AI provider may spend on one grocery photo, retries included. */
+export const PHOTO_AI_BUDGET_MS = 60_000;
+
 export interface AIProvider {
   readonly id: "anthropic" | "local";
   readonly label: string;
@@ -113,6 +149,11 @@ export interface AIProvider {
   extractReceipt(input: ReceiptExtractionInput): Promise<ReceiptExtraction>;
   /** Writes new recipes. Null when this provider can't (the built-in library is used instead). */
   generateRecipes: ((input: RecipeGenerationInput) => Promise<GeneratedRecipe[]>) | null;
+  /**
+   * Lists what's visible in a grocery photo. The built-in provider returns a fixed sample (it can't
+   * see); photo recognition only uses it for development, and says so on screen.
+   */
+  recognizeGroceries: (input: GroceryPhotoInput) => Promise<GroceryPhotoReading>;
 }
 
 /** Thrown when an AI provider fails in a way the caller may recover from (fallback / retry later). */

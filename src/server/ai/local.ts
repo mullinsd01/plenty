@@ -2,7 +2,7 @@ import "server-only";
 import { parseReceiptText } from "@/lib/receipts/parse";
 import { ocrReceipt } from "@/server/receipts/ocr";
 import { ocrVariant } from "@/server/receipts/image";
-import type { AIProvider, ReceiptExtraction, ReceiptExtractionInput } from "./types";
+import type { AIProvider, GroceryPhotoInput, GroceryPhotoReading, ReceiptExtraction, ReceiptExtractionInput } from "./types";
 
 /**
  * Fully offline provider: Tesseract OCR + Plenty's deterministic receipt
@@ -12,6 +12,26 @@ export class LocalProvider implements AIProvider {
   readonly id = "local" as const;
   readonly label = "On-device reading";
   readonly generateRecipes = null;
+
+  /**
+   * A fixed, made-up list: this provider cannot look at pictures, and never pretends to. It exists so the
+   * photo flow can be built, tested and demonstrated without an AI service. Photo recognition only uses
+   * it outside production and labels the result as a sample.
+   */
+  async recognizeGroceries(_input: GroceryPhotoInput): Promise<GroceryPhotoReading> {
+    return {
+      isGroceryPhoto: true,
+      items: [
+        { name: "Bananas", quantity: 5, confidence: "high" },
+        { name: "Full cream milk", quantity: 1, confidence: "high" },
+        { name: "Sourdough bread", quantity: 1, confidence: "medium" },
+        { name: "Red capsicum", quantity: 2, confidence: "medium" },
+        { name: "Jar of something", quantity: null, confidence: "low" },
+      ],
+      problems: [],
+      provider: "local",
+    };
+  }
 
   async extractReceipt(input: ReceiptExtractionInput): Promise<ReceiptExtraction> {
     const prepared = await ocrVariant(input.image);
