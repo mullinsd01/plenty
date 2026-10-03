@@ -236,3 +236,18 @@ describe("plan limits can't be skipped through the receipt", () => {
     await expect(confirmReceipt(free, r.id, { storeName: "Shop", purchasedOn: null, items: rows.map((row, i) => line(row, i === 0)) })).resolves.toMatchObject({ added: 1 });
   });
 });
+
+describe("what a housemate's export can reveal", () => {
+  it("never contains the name of something a housemate keeps private, even as a product Plenty made for it", async () => {
+    const alex = await makeHousehold({ name: "Export privacy", plan: "family" });
+    const jordan = await joinHousehold(alex, "member");
+    await addItems(alex, [{ name: "Zorblax miracle gummies", ownerMemberId: alex.member.id, visibility: "private" }]);
+    await addItems(alex, [{ name: "Quibblefruit jam", ownerMemberId: alex.member.id }]);
+    const mine = JSON.stringify(await exportHouseholdData(alex));
+    expect(mine).toMatch(/Zorblax/);
+    const theirs = JSON.stringify(await exportHouseholdData(jordan));
+    expect(theirs).not.toMatch(/Zorblax/i);
+    // What was shared is still there.
+    expect(theirs).toMatch(/Quibblefruit/);
+  });
+});
