@@ -248,8 +248,8 @@ const stripeSubFor = (householdId: string, over: Record<string, unknown> = {}) =
 };
 
 beforeAll(() => {
-  if (!/plenty_test_billing/.test(process.env.DATABASE_URL ?? "")) {
-    throw new Error("Refusing to run: billing integration tests must use the isolated plenty_test_billing database (set TEST_DATABASE_URL).");
+  if (!/plenty_test/.test(process.env.DATABASE_URL ?? "")) {
+    throw new Error("Refusing to run: billing integration tests must run on a test database (plenty_test*), never a real one.");
   }
 });
 
