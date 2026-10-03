@@ -67,8 +67,8 @@ export const AI_DISCLOSURE: Record<AiPurpose, { feature: string; sent: string[];
     ],
   },
   photo: {
-    // Not built yet. Flip this when photo recognition ships so the consent dialog starts listing it.
-    live: false,
+    // Photo recognition ships: src/server/services/photo-recognition.ts reaches the provider only through requireExternalProvider(…, "photo").
+    live: true,
     feature: "recognising groceries in a photo",
     sent: ["The grocery photo you take"],
   },

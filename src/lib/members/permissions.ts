@@ -88,6 +88,7 @@ const CAPABILITY_REFUSALS: Partial<Record<Capability, string>> = {
   edit_shopping_list: "This account can add requests, but only an adult can change the shopping list.",
   complete_shop: "Only an adult can finish a shop.",
   plan_meals: "Meal planning isn't available to this account.",
+  export_data: "Downloading the household's data isn't available to this account. Ask an adult.",
 };
 
 /** A plain-language reason for refusing, suitable for showing to the person. */

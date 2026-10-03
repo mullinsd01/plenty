@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import type { HouseholdContext } from "@/server/auth/context";
 import { withUser } from "@/server/db/client";
+import { requireCapability } from "@/server/permissions";
 import {
   consumptionEvents,
   consumptionStats,
@@ -38,6 +39,7 @@ import { listMembers } from "./members";
  * read through the member's row-level-security context.
  */
 export async function exportHouseholdData(ctx: HouseholdContext) {
+  requireCapability(ctx, "export_data");
   const members = await listMembers(ctx);
   return withUser(ctx.user.id, async (tx) => {
     const hid = ctx.household.id;

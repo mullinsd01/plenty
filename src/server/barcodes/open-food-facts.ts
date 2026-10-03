@@ -35,7 +35,10 @@ export interface OffProduct {
 
 export type OffUnavailableReason = "network" | "timeout" | "rate_limited" | "bad_response" | "too_large";
 
-export type OffLookup = { kind: "found"; product: OffProduct } | { kind: "not_found" } | { kind: "unavailable"; reason: OffUnavailableReason };
+export type OffLookup =
+  | { kind: "found"; product: OffProduct }
+  | { kind: "not_found" }
+  | { kind: "unavailable"; reason: OffUnavailableReason };
 
 // ─── Cleaning ───────────────────────────────────────────────────────────────
 

@@ -261,10 +261,10 @@ function BarcodeFlow({ onOpenChange, onBack }: { onOpenChange: (open: boolean) =
             </div>
             <div>
               <h3 ref={headingRef} tabIndex={-1} className="text-[17px] font-semibold tracking-[-0.015em] outline-none">
-                {view === "manual" ? "Type the numbers" : "Scan a barcode"}
+                {view === "manual" ? "Type the numbers" : "Scan with your camera"}
               </h3>
               <p className="mt-0.5 text-[14px] text-ink-3">
-                {phase === "manual"
+                {view === "manual"
                   ? "They're printed under the barcode, usually 8 to 13 digits."
                   : "Plenty will ask to use your camera. It reads the barcode on your device and nothing is recorded or uploaded."}
               </p>

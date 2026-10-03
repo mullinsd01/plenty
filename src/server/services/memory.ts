@@ -20,6 +20,7 @@ import type { HouseholdContext } from "@/server/auth/context";
 import { withUser } from "@/server/db/client";
 import { consumptionEvents, consumptionStats, mealPreferences, preferences, receiptItems, receipts } from "@/server/db/schema";
 import { notFound } from "@/server/errors";
+import { requireCapability } from "@/server/permissions";
 import { feedsHouseholdPattern, HOUSEHOLD_SCOPE, scopeOwner } from "@/lib/members/scope";
 import { computeLiveState, refreshLearning } from "./learning";
 import { memberNames } from "./members";
@@ -227,6 +228,8 @@ export async function getHouseholdMemory(ctx: HouseholdContext, now = new Date()
 
 /** Stop (or resume) run-out predictions for one product (for one person's pattern, or all of those you can see). */
 export async function setPredictionsPaused(ctx: HouseholdContext, productId: string, paused: boolean, scope?: string): Promise<void> {
+  // What Plenty has learned about the household is for adults to steer; a child account sees the kitchen but doesn't reshape it.
+  requireCapability(ctx, "edit_household_items");
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const updated = await tx
@@ -252,6 +255,8 @@ export async function setPredictionsPaused(ctx: HouseholdContext, productId: str
  * by person, that includes the people's shared items it was learned from.
  */
 export async function resetProductLearning(ctx: HouseholdContext, productId: string, scope?: string): Promise<void> {
+  // What Plenty has learned about the household is for adults to steer; a child account sees the kitchen but doesn't reshape it.
+  requireCapability(ctx, "edit_household_items");
   const now = new Date();
   await withUser(ctx.user.id, async (tx) => {
     const events = await tx

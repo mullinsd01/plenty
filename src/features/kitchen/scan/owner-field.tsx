@@ -32,7 +32,14 @@ export function OwnerField({ value, onChange, id }: { value: OwnerValue; onChang
       </button>
       {open && (
         <div className="mt-2.5">
-          <OwnerPicker id={id} members={people.members} value={value} onChange={onChange} canPrivate={people.canPrivate} label="Whose is it?" />
+          <OwnerPicker
+            id={id}
+            members={people.members}
+            value={value}
+            onChange={onChange}
+            canPrivate={people.canPrivate}
+            label="Whose is it?"
+          />
         </div>
       )}
     </div>

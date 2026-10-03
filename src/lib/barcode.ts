@@ -23,15 +23,7 @@
 
 export type BarcodeKind = "ean8" | "ean13" | "upca" | "upce" | "itf14" | "gtin14";
 
-export type BarcodeRejection =
-  | "empty"
-  | "not_digits"
-  | "bad_length"
-  | "bad_checksum"
-  | "all_zero"
-  | "in_store"
-  | "coupon"
-  | "publication";
+export type BarcodeRejection = "empty" | "not_digits" | "bad_length" | "bad_checksum" | "all_zero" | "in_store" | "coupon" | "publication";
 
 export interface Barcode {
   /** The canonical key: 8, 13 or 14 digits. This is what is stored and looked up. */
@@ -61,7 +53,8 @@ const MESSAGES: Record<BarcodeRejection, string> = {
   bad_length: "Product barcodes have 8, 12, 13 or 14 digits. Check you've typed them all.",
   bad_checksum: "Those numbers don't add up, so one may be mistyped or misread. Check them against the barcode.",
   all_zero: "That isn't a real barcode.",
-  in_store: "That's a shop's own label, used for things weighed or packed in the shop, so it only means something in that shop. Name it instead.",
+  in_store:
+    "That's a shop's own label, used for things weighed or packed in the shop, so it only means something in that shop. Name it instead.",
   coupon: "That looks like a coupon or voucher code, not a product barcode.",
   publication: "That looks like a book or magazine barcode, not a food or household product.",
 };

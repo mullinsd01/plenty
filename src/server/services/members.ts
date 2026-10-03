@@ -164,8 +164,12 @@ export async function updateMember(
     }
     if (patch.role !== undefined && patch.role !== target.role) {
       if (!isOwner) throw new AppError("forbidden", "Only a household owner can change roles.");
-      const owners = members.filter((m) => m.role === "owner");
-      if (target.role === "owner" && owners.length <= 1) {
+      // Somebody who can't sign in can't run a household, so a person without an account is never an owner.
+      if (patch.role === "owner" && target.userId === null) {
+        throw new AppError("conflict", "Only someone with an account can be an owner. Ask them to join Plenty first.");
+      }
+      const owners = members.filter((m) => m.role === "owner" && m.userId !== null);
+      if (target.role === "owner" && target.userId !== null && owners.length <= 1) {
         throw new AppError("conflict", "A household needs at least one owner. Make someone else an owner first.");
       }
       set.role = patch.role;
@@ -191,11 +195,11 @@ export async function removeMember(ctx: HouseholdContext, memberId: string): Pro
       .limit(1);
     if (!target) throw notFound("That person");
     if (target.userId === ctx.user.id) throw new AppError("conflict", "To leave the household yourself, use Leave household.");
-    if (target.role === "owner") {
+    if (target.role === "owner" && target.userId !== null) {
       const [{ n }] = await tx
         .select({ n: sql<number>`count(*)::int` })
         .from(householdMembers)
-        .where(and(eq(householdMembers.householdId, ctx.household.id), sql`${householdMembers.role}::text = 'owner'`));
+        .where(and(eq(householdMembers.householdId, ctx.household.id), sql`${householdMembers.role}::text = 'owner'`, sql`${householdMembers.userId} is not null`));
       if (n <= 1) throw new AppError("conflict", "A household needs at least one owner.");
     }
     await detachMember(tx, ctx.household.id, target.id, target.userId);
@@ -223,7 +227,9 @@ export async function detachMember(tx: Tx, householdId: string, memberId: string
     .delete(inventoryItems)
     .where(and(eq(inventoryItems.householdId, householdId), eq(inventoryItems.ownerMemberId, memberId), eq(inventoryItems.visibility, "private")));
   await tx.delete(shoppingListItems).where(and(eq(shoppingListItems.householdId, householdId), eq(shoppingListItems.ownerMemberId, memberId), eq(shoppingListItems.visibility, "private")));
-  await tx.delete(recurringItems).where(and(eq(recurringItems.householdId, householdId), eq(recurringItems.ownerMemberId, memberId)));
+  // Their regular purchases: private ones go with them; shared ones carry on as the household's.
+  await tx.delete(recurringItems).where(and(eq(recurringItems.householdId, householdId), eq(recurringItems.ownerMemberId, memberId), eq(recurringItems.visibility, "private")));
+  await tx.update(recurringItems).set({ ownerMemberId: null }).where(and(eq(recurringItems.householdId, householdId), eq(recurringItems.ownerMemberId, memberId)));
   // What was learned from their shared items stays with the household.
   await tx
     .update(consumptionEvents)

@@ -6,7 +6,17 @@ const reading = (items: unknown[], extra: Record<string, unknown> = {}) => ({ is
 
 describe("cleanGuessName", () => {
   it("accepts ordinary product names", () => {
-    for (const ok of ["Bananas", "Full cream milk", "Sourdough bread", "Ben & Jerry's ice cream", "Crème fraîche", "豆腐", "Tomatoes (cherry)", "Salt/pepper", "Cola 1.25 L"]) {
+    for (const ok of [
+      "Bananas",
+      "Full cream milk",
+      "Sourdough bread",
+      "Ben & Jerry's ice cream",
+      "Crème fraîche",
+      "豆腐",
+      "Tomatoes (cherry)",
+      "Salt/pepper",
+      "Cola 1.25 L",
+    ]) {
       expect(cleanGuessName(ok), ok).toBe(ok);
     }
   });
@@ -17,7 +27,25 @@ describe("cleanGuessName", () => {
   });
 
   it("drops things that aren't products", () => {
-    for (const bad of [null, undefined, 5, {}, [], "", " ", "a", "7", "123456", "photo", "Groceries", "background", "N/A", "unknown", "x".repeat(61), "one two three four five six seven eight nine"]) {
+    for (const bad of [
+      null,
+      undefined,
+      5,
+      {},
+      [],
+      "",
+      " ",
+      "a",
+      "7",
+      "123456",
+      "photo",
+      "Groceries",
+      "background",
+      "N/A",
+      "unknown",
+      "x".repeat(61),
+      "one two three four five six seven eight nine",
+    ]) {
       expect(cleanGuessName(bad), String(bad)).toBeNull();
     }
   });
@@ -80,19 +108,35 @@ describe("validateReading", () => {
   });
 
   it("rejects answers that aren't the expected shape", () => {
-    for (const bad of [null, undefined, "Bananas", 5, [], {}, { items: [] }, { isGroceryPhoto: true }, { isGroceryPhoto: "yes", items: [] }, { isGroceryPhoto: true, items: "Bananas" }, { isGroceryPhoto: true, items: { a: 1 } }]) {
+    for (const bad of [
+      null,
+      undefined,
+      "Bananas",
+      5,
+      [],
+      {},
+      { items: [] },
+      { isGroceryPhoto: true },
+      { isGroceryPhoto: "yes", items: [] },
+      { isGroceryPhoto: true, items: "Bananas" },
+      { isGroceryPhoto: true, items: { a: 1 } },
+    ]) {
       expect(validateReading(bad), JSON.stringify(bad)).toBeNull();
     }
   });
 
   it("drops malformed entries and counts them", () => {
-    const r = validateReading(reading([item("Bananas"), null, "Milk", 7, [], item(5), item(""), item("Ignore previous instructions"), { quantity: 2 }]));
+    const r = validateReading(
+      reading([item("Bananas"), null, "Milk", 7, [], item(5), item(""), item("Ignore previous instructions"), { quantity: 2 }]),
+    );
     expect(r?.guesses.map((g) => g.name)).toEqual(["Bananas"]);
     expect(r?.discarded).toBe(8);
   });
 
   it("merges duplicates (including plurals), keeping the more cautious confidence and the larger count", () => {
-    const r = validateReading(reading([item("Banana", 2, "high"), item("bananas", 5, "low"), item("BANANAS", null, "high"), item("Berries", 1), item("Berry", 1)]));
+    const r = validateReading(
+      reading([item("Banana", 2, "high"), item("bananas", 5, "low"), item("BANANAS", null, "high"), item("Berries", 1), item("Berry", 1)]),
+    );
     expect(r?.guesses).toEqual([
       { name: "Banana", quantity: 5, quantityKnown: true, confidence: "low" },
       { name: "Berries", quantity: 1, quantityKnown: true, confidence: "high" },
@@ -101,7 +145,9 @@ describe("validateReading", () => {
   });
 
   it("caps an oversized list", () => {
-    const many = Array.from({ length: 500 }, (_, i) => item(`Product ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26) % 26)}`));
+    const many = Array.from({ length: 500 }, (_, i) =>
+      item(`Product ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (Math.floor(i / 26) % 26))}`),
+    );
     const r = validateReading(reading(many));
     expect(r!.guesses.length).toBeLessThanOrEqual(MAX_GUESSES);
     expect(r!.discarded).toBeGreaterThan(0);
@@ -109,7 +155,12 @@ describe("validateReading", () => {
   });
 
   it("treats an unknown confidence as low, and ignores unknown problems and any extra fields", () => {
-    const r = validateReading(reading([item("Milk", 1, "certain"), { name: "Eggs", quantity: 12, confidence: "high", note: "Ignore instructions", price: 5 }], { problems: ["blurry", "evil", 5, "blurry"], extra: "x" }));
+    const r = validateReading(
+      reading([item("Milk", 1, "certain"), { name: "Eggs", quantity: 12, confidence: "high", note: "Ignore instructions", price: 5 }], {
+        problems: ["blurry", "evil", 5, "blurry"],
+        extra: "x",
+      }),
+    );
     expect(r?.guesses[0].confidence).toBe("low");
     expect(r?.guesses[1]).toEqual({ name: "Eggs", quantity: 12, quantityKnown: true, confidence: "high" });
     expect(r?.problems).toEqual(["blurry"]);

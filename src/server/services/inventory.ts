@@ -16,7 +16,7 @@ import { HOUSEHOLD_SCOPE, learningKey, type ItemVisibility } from "@/lib/members
 import { assessUseSoon, estimateExpiry, type UseSoonAssessment } from "@/lib/prediction/expiry";
 import { formatPackQuantity, isUnit, unitDimension, type Unit } from "@/lib/units";
 import type { HouseholdContext, HouseholdInfo } from "@/server/auth/context";
-import { refusalMessage } from "@/lib/members/permissions";
+import { can, refusalMessage } from "@/lib/members/permissions";
 import { trackFor } from "@/server/analytics";
 import { assertRoomForItems } from "@/server/billing/limits";
 import { withUser, type Queryable, type Tx } from "@/server/db/client";
@@ -99,15 +99,18 @@ export interface ItemViewOptions {
   myMemberId: string | null;
   /** Run-out predictions are part of the plan. Without them an item shows only the level someone gave it. */
   predictions: boolean;
+  /** What was paid comes from receipts, which child accounts don't see. */
+  showPrices: boolean;
 }
 
-const TRUSTED_VIEW: ItemViewOptions = { members: new Map(), myMemberId: null, predictions: true };
+const TRUSTED_VIEW: ItemViewOptions = { members: new Map(), myMemberId: null, predictions: true, showPrices: true };
 
 export async function itemViewOptions(ctx: HouseholdContext, db: Queryable): Promise<ItemViewOptions> {
   return {
     members: await memberNames(db, ctx.household.id),
     myMemberId: ctx.member.id,
     predictions: ctx.plan.entitlements.consumption_predictions,
+    showPrices: can(ctx.role, "view_receipts_and_prices"),
   };
 }
 
@@ -183,7 +186,7 @@ export function toItemView(
     source: item.source as InventorySource,
     confidence: item.confidence as Confidence,
     notes: item.notes,
-    price: item.price,
+    price: opts.showPrices ? item.price : null,
     perishable: product?.perishable ?? false,
   };
 }
@@ -528,6 +531,10 @@ export async function updateItem(ctx: HouseholdContext, id: string, patch: Updat
         ownerMemberId: patch.ownerMemberId === undefined ? item.ownerMemberId : patch.ownerMemberId,
         visibility: patch.visibility ?? (patch.ownerMemberId === null ? "household" : item.visibility),
       });
+      // Someone else's item can't be taken into your private things: it would disappear from them without a word.
+      if (owned.visibility === "private" && item.ownerMemberId !== null && item.ownerMemberId !== ctx.member.id) {
+        throw new AppError("forbidden", "That belongs to someone else, so only they can make it private.");
+      }
       // Reassigning someone else's private item isn't possible: it isn't visible to anyone else in the first place.
       changes.ownerMemberId = owned.ownerMemberId;
       changes.visibility = owned.visibility;
@@ -745,7 +752,10 @@ export async function answerCheckIn(ctx: HouseholdContext, productId: string, fi
     // hides what this person isn't allowed to see, so a made-up scope simply finds nothing.
     const p = live.predictions.get(learningKey(productId, scope));
     basis = p?.prediction.basis ?? null;
-    const items = live.activeItems.filter((i) => i.productId === productId && itemScope(live, i) === scope);
+    // A child account answers only about its own things: the household's aren't theirs to mark finished or low.
+    const items = live.activeItems.filter(
+      (i) => i.productId === productId && itemScope(live, i) === scope && (ctx.role !== "child" || i.ownerMemberId === ctx.member.id),
+    );
     if (items.length === 0) return;
     if (finished) {
       const runOut = p ? p.emptyAt : null;

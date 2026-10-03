@@ -10,7 +10,9 @@ import { formatHintFrom, parseBarcode, SCANNABLE_FORMATS, type Barcode, type Bar
  * is read still has to pass `parseBarcode`'s check digit before it counts.
  */
 
-export type ScanRead = { kind: "found"; barcode: Barcode; format: string | undefined } | { kind: "refused"; reason: BarcodeRejection; message: string };
+export type ScanRead =
+  | { kind: "found"; barcode: Barcode; format: string | undefined }
+  | { kind: "refused"; reason: BarcodeRejection; message: string };
 
 export interface BarcodeReader {
   readonly kind: "native" | "wasm";
@@ -58,7 +60,8 @@ async function nativeReader(): Promise<BarcodeReader | null> {
     // Some platforms report the detector but can't read retail codes; use the fallback there.
     if (!formats.includes("ean_13")) return null;
     const detector = new Detector({ formats: [...formats] });
-    const read = async (source: ImageBitmapSource) => pick((await detector.detect(source)).map((c) => ({ text: c.rawValue, format: c.format })));
+    const read = async (source: ImageBitmapSource) =>
+      pick((await detector.detect(source)).map((c) => ({ text: c.rawValue, format: c.format })));
     return { kind: "native", readVideo: (video) => read(video), readImage: (image) => read(image) };
   } catch {
     return null;
@@ -99,7 +102,8 @@ async function wasmReader(): Promise<BarcodeReader> {
   return {
     kind: "wasm",
     readVideo: (video) => (video.videoWidth ? decode(video, video.videoWidth, video.videoHeight, FRAME_WIDTH) : Promise.resolve(null)),
-    readImage: async (image) => (await decode(image, image.width, image.height, 1600)) ?? (await decode(image, image.width, image.height, 800)),
+    readImage: async (image) =>
+      (await decode(image, image.width, image.height, 1600)) ?? (await decode(image, image.width, image.height, 800)),
   };
 }
 

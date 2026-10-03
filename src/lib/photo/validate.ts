@@ -97,7 +97,9 @@ function guessKey(name: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .split(" ")
-    .map((w) => (w.endsWith("ies") && w.length > 4 ? `${w.slice(0, -3)}y` : w.endsWith("s") && !w.endsWith("ss") && w.length > 3 ? w.slice(0, -1) : w));
+    .map((w) =>
+      w.endsWith("ies") && w.length > 4 ? `${w.slice(0, -3)}y` : w.endsWith("s") && !w.endsWith("ss") && w.length > 3 ? w.slice(0, -1) : w,
+    );
   return words.join(" ");
 }
 
@@ -111,7 +113,11 @@ export function validateReading(raw: unknown): ValidReading | null {
   if (typeof obj.isGroceryPhoto !== "boolean" || !Array.isArray(obj.items)) return null;
 
   const problems = Array.isArray(obj.problems)
-    ? [...new Set(obj.problems.filter((p): p is PhotoProblem => typeof p === "string" && (PHOTO_PROBLEMS as readonly string[]).includes(p)))]
+    ? [
+        ...new Set(
+          obj.problems.filter((p): p is PhotoProblem => typeof p === "string" && (PHOTO_PROBLEMS as readonly string[]).includes(p)),
+        ),
+      ]
     : [];
 
   const byKey = new Map<string, ValidGuess>();

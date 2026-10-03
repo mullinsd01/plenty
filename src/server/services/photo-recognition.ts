@@ -3,13 +3,7 @@ import { decideExternalAi, EXTERNAL_AI_PROVIDER } from "@/lib/ai/consent";
 import { PHOTO_PROBLEM_TEXT, validateReading } from "@/lib/photo/validate";
 import type { ConfirmedPhotoItem, PhotoAvailability, PhotoGuess, PhotoProposal } from "@/lib/scan/types";
 import { formatQuantity } from "@/lib/units";
-import {
-  AIUnavailableError,
-  getLocalProvider,
-  requireExternalProvider,
-  resolveAiAccess,
-  type GroceryPhotoInput,
-} from "@/server/ai";
+import { AIUnavailableError, getLocalProvider, requireExternalProvider, resolveAiAccess, type GroceryPhotoInput } from "@/server/ai";
 import type { HouseholdContext } from "@/server/auth/context";
 import { checkRateLimit } from "@/server/auth/rate-limit";
 import { planLimitError, requireEntitlement } from "@/server/billing/limits";
@@ -135,7 +129,8 @@ export async function recognizeGroceryPhoto(ctx: HouseholdContext, bytes: Buffer
   }
 
   const valid = validateReading(reading);
-  if (!valid) throw new AppError("ai_unavailable", `Plenty couldn't make sense of what came back for that photo. Please try again. ${OTHER_WAYS}`);
+  if (!valid)
+    throw new AppError("ai_unavailable", `Plenty couldn't make sense of what came back for that photo. Please try again. ${OTHER_WAYS}`);
 
   const index = await withUser(ctx.user.id, (tx) => loadProductIndex(tx, ctx.household.id));
   const guesses: PhotoGuess[] = valid.guesses.map((g, i) => {

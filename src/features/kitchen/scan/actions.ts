@@ -57,11 +57,9 @@ const scannedItemSchema = z.object({
 
 /** Add what the person confirmed after scanning, and remember the barcode. */
 export async function addScannedItemAction(input: z.input<typeof scannedItemSchema>) {
-  return householdAction(
-    "scan.add",
-    async (ctx) => barcodes.addScannedItem(ctx, parseInput(scannedItemSchema, input)),
-    { message: (r) => (r.remembered ? "Added. Plenty will recognise that barcode next time." : "Added to your kitchen") },
-  );
+  return householdAction("scan.add", async (ctx) => barcodes.addScannedItem(ctx, parseInput(scannedItemSchema, input)), {
+    message: (r) => (r.remembered ? "Added. Plenty will recognise that barcode next time." : "Added to your kitchen"),
+  });
 }
 
 const photoItemsSchema = z
@@ -80,9 +78,7 @@ const photoItemsSchema = z
 
 /** Add the guesses the person ticked and edited. The only way a photo changes the kitchen. */
 export async function addPhotoItemsAction(items: z.input<typeof photoItemsSchema>) {
-  return householdAction(
-    "scan.photo.add",
-    async (ctx) => photos.addPhotoItems(ctx, parseInput(photoItemsSchema, items)),
-    { message: (ids) => (ids.length === 1 ? "Added to your kitchen" : `Added ${ids.length} things to your kitchen`) },
-  );
+  return householdAction("scan.photo.add", async (ctx) => photos.addPhotoItems(ctx, parseInput(photoItemsSchema, items)), {
+    message: (ids) => (ids.length === 1 ? "Added to your kitchen" : `Added ${ids.length} things to your kitchen`),
+  });
 }

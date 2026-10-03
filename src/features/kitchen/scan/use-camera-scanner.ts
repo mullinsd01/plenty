@@ -39,7 +39,13 @@ function stateForError(err: unknown): CameraState {
  * thrown away, and the stream is always stopped: on `stop()`, on unmount, and
  * when the page goes to the background.
  */
-export function useCameraScanner({ onBarcode, onRefused }: { onBarcode: (barcode: Barcode, format: string | undefined) => void; onRefused: (message: string) => void }) {
+export function useCameraScanner({
+  onBarcode,
+  onRefused,
+}: {
+  onBarcode: (barcode: Barcode, format: string | undefined) => void;
+  onRefused: (message: string) => void;
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<CameraState>("idle");
   const streamRef = useRef<MediaStream | null>(null);
@@ -84,9 +90,13 @@ export function useCameraScanner({ onBarcode, onRefused }: { onBarcode: (barcode
     let stream: MediaStream;
     try {
       const readerPromise = loadBarcodeReader();
-      const constraints: MediaStreamConstraints = { audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } };
+      const constraints: MediaStreamConstraints = {
+        audio: false,
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      };
       stream = await navigator.mediaDevices.getUserMedia(constraints).catch((err: unknown) => {
-        if ((err as { name?: string } | null)?.name === "OverconstrainedError") return navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+        if ((err as { name?: string } | null)?.name === "OverconstrainedError")
+          return navigator.mediaDevices.getUserMedia({ audio: false, video: true });
         throw err;
       });
       if (run !== runRef.current) {

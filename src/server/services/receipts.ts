@@ -28,7 +28,7 @@ import { deleteFile, readStoredFile, receiptImageKey, saveFile } from "@/server/
 import { MAX_STORED_EDGE_PX, prepareReceiptImage, ReceiptImageError } from "@/server/receipts/image";
 import { scopeOf, type ItemVisibility } from "@/lib/members/scope";
 import { addUsage, usagePeriod, USAGE_RECEIPT_SCANS } from "@/server/billing/entitlements";
-import { assertReceiptScanAvailable } from "@/server/billing/limits";
+import { assertReceiptScanAvailable, assertRoomForItems } from "@/server/billing/limits";
 import { requireCapability } from "@/server/permissions";
 import { addItemsTx, finishItemTx, inferEndTime, resolveOwnership } from "./inventory";
 import { computeLiveState, predictionFor, refreshLearning } from "./learning";
@@ -763,6 +763,10 @@ export async function confirmReceipt(
     const live = await computeLiveState(tx, ctx.household, now);
     const reviewTime = r.purchasedAt ?? r.createdAt;
     const accepted = input.items.filter((i) => i.include && byId.has(i.id));
+    // The kitchen's size on the plan counts here too: a receipt is the quickest way to add a lot at once.
+    // Lines that fold into a batch already there, or replace one that's finished, don't make it bigger.
+    const adding = accepted.filter((i) => i.existingDecision !== "merge" && i.existingDecision !== "replace").length;
+    if (adding > 0) await assertRoomForItems(ctx, adding);
     const touchedProducts: Array<string | null> = [];
     /** What actually went into the kitchen, with the products it resolved to — ticked off the list afterwards. */
     const bought: Array<{ productId: string | null; name: string; ownerMemberId?: string | null }> = [];

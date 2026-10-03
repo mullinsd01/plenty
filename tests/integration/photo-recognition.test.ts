@@ -9,14 +9,26 @@ import { buildHouseholdContext } from "@/server/auth/build-context";
 import type { HouseholdContext } from "@/server/auth/context";
 import { AIUnavailableError, type GroceryPhotoInput } from "@/server/ai";
 import { addManagedMember } from "@/server/services/members";
-import { addPhotoItems, photoAvailability, PHOTOS_PER_HOUSEHOLD_DAY, PHOTOS_PER_USER, recognizeGroceryPhoto } from "@/server/services/photo-recognition";
+import {
+  addPhotoItems,
+  photoAvailability,
+  PHOTOS_PER_HOUSEHOLD_DAY,
+  PHOTOS_PER_USER,
+  recognizeGroceryPhoto,
+} from "@/server/services/photo-recognition";
 import { makeHousehold } from "../helpers/db";
 
-const jpeg = (width = 640, height = 480) => sharp({ create: { width, height, channels: 3, background: "#7a9a4a" } }).jpeg().toBuffer();
+const jpeg = (width = 640, height = 480) =>
+  sharp({ create: { width, height, channels: 3, background: "#7a9a4a" } })
+    .jpeg()
+    .toBuffer();
 
 async function grantConsent(ctx: HouseholdContext) {
   const patch = { allowAiProcessing: true, aiConsentAt: new Date(), aiConsentBy: ctx.user.id };
-  await systemDb.insert(preferences).values({ householdId: ctx.household.id, ...patch }).onConflictDoUpdate({ target: preferences.householdId, set: patch });
+  await systemDb
+    .insert(preferences)
+    .values({ householdId: ctx.household.id, ...patch })
+    .onConflictDoUpdate({ target: preferences.householdId, set: patch });
 }
 
 /** A Plus household that has agreed to AI processing: a fresh one per test that makes many requests, since photos are rate limited. */
@@ -77,19 +89,27 @@ describe("grocery photo recognition", () => {
   describe("who may use it", () => {
     it("Free is told it's part of Plenty Plus, and the photo is never read", async () => {
       const reader = spyReader(sampleAnswer);
-      const err = await recognizeGroceryPhoto(free, await jpeg(), reader).then(() => null, (e: Error) => e);
+      const err = await recognizeGroceryPhoto(free, await jpeg(), reader).then(
+        () => null,
+        (e: Error) => e,
+      );
       expect(err?.message).toMatch(/Photo recognition is part of Plenty Plus/);
       expect(err).toMatchObject({ code: "plan_limit" });
       expect(reader.seen).toHaveLength(0);
       expect(await photoAvailability(free)).toEqual({ state: "needs_plan" });
       // Manual entry on Free is untouched.
-      await expect(addPhotoItems(free, [{ name: "Bananas", productId: null, quantity: 1, location: "pantry", confidence: "high" }])).rejects.toMatchObject({ code: "plan_limit" });
+      await expect(
+        addPhotoItems(free, [{ name: "Bananas", productId: null, quantity: 1, location: "pantry", confidence: "high" }]),
+      ).rejects.toMatchObject({ code: "plan_limit" });
       expect(await itemsOf(free)).toHaveLength(0);
     });
 
     it("without the household's consent, nothing is sent and the message says where to agree", async () => {
       const reader = spyReader(sampleAnswer);
-      const err = await recognizeGroceryPhoto(noConsent, await jpeg(), reader).then(() => null, (e: Error) => e);
+      const err = await recognizeGroceryPhoto(noConsent, await jpeg(), reader).then(
+        () => null,
+        (e: Error) => e,
+      );
       expect(err).toMatchObject({ code: "forbidden" });
       expect(err?.message).toMatch(/Settings → Privacy/);
       expect(err?.message).toMatch(/Anthropic/);
@@ -103,7 +123,10 @@ describe("grocery photo recognition", () => {
       await grantConsent(other);
       const reader = spyReader(sampleAnswer);
       await expect(recognizeGroceryPhoto(other, await jpeg(), reader)).resolves.toBeTruthy();
-      await systemDb.update(preferences).set({ allowAiProcessing: false, aiConsentAt: null, aiConsentBy: null }).where(eq(preferences.householdId, other.household.id));
+      await systemDb
+        .update(preferences)
+        .set({ allowAiProcessing: false, aiConsentAt: null, aiConsentBy: null })
+        .where(eq(preferences.householdId, other.household.id));
       await expect(recognizeGroceryPhoto(other, await jpeg(), reader)).rejects.toMatchObject({ code: "forbidden" });
       expect(reader.seen).toHaveLength(1);
     });
@@ -142,7 +165,9 @@ describe("grocery photo recognition", () => {
     });
 
     it("marks things Plenty only saw in a photo as low confidence when the reader was unsure", async () => {
-      const [id] = await addPhotoItems(plus, [{ name: "Jar of something", productId: null, quantity: 1, location: "pantry", confidence: "low" }]);
+      const [id] = await addPhotoItems(plus, [
+        { name: "Jar of something", productId: null, quantity: 1, location: "pantry", confidence: "low" },
+      ]);
       const [row] = await systemDb.select().from(inventoryItems).where(eq(inventoryItems.id, id));
       expect(row).toMatchObject({ source: "photo", confidence: "low" });
     });
@@ -162,7 +187,11 @@ describe("grocery photo recognition", () => {
           { name: "https://evil.example", quantity: 1, confidence: "high" },
           { name: "Milk'); DROP TABLE inventory_items;--", quantity: 1, confidence: "high" },
           { name: "Eggs", quantity: 100000, confidence: "certain" },
-          ...Array.from({ length: 300 }, (_, i) => ({ name: `Thing ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (Math.floor(i / 26) % 26))}`, quantity: 1, confidence: "low" })),
+          ...Array.from({ length: 300 }, (_, i) => ({
+            name: `Thing ${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + (Math.floor(i / 26) % 26))}`,
+            quantity: 1,
+            confidence: "low",
+          })),
           null,
           "Cheese",
         ],
@@ -185,10 +214,16 @@ describe("grocery photo recognition", () => {
 
     it("says so when the photo isn't of groceries, and when the answer isn't usable", async () => {
       const plus = await freshPlus();
-      const none = await recognizeGroceryPhoto(plus, await jpeg(), spyReader({ isGroceryPhoto: false, problems: [], items: [{ name: "Bananas", quantity: 1, confidence: "high" }] }));
+      const none = await recognizeGroceryPhoto(
+        plus,
+        await jpeg(),
+        spyReader({ isGroceryPhoto: false, problems: [], items: [{ name: "Bananas", quantity: 1, confidence: "high" }] }),
+      );
       expect(none.guesses).toEqual([]);
       for (const garbage of [null, "Bananas, milk", 42, { items: "lots" }, { isGroceryPhoto: true }]) {
-        await expect(recognizeGroceryPhoto(plus, await jpeg(), spyReader(garbage)), JSON.stringify(garbage)).rejects.toMatchObject({ code: "ai_unavailable" });
+        await expect(recognizeGroceryPhoto(plus, await jpeg(), spyReader(garbage)), JSON.stringify(garbage)).rejects.toMatchObject({
+          code: "ai_unavailable",
+        });
       }
     });
 
@@ -197,7 +232,10 @@ describe("grocery photo recognition", () => {
         recognize: async () => {
           throw new AIUnavailableError("upstream said: 529 overloaded at https://internal/stack", "overloaded");
         },
-      }).then(() => null, (e: Error) => e);
+      }).then(
+        () => null,
+        (e: Error) => e,
+      );
       expect(err).toMatchObject({ code: "ai_unavailable" });
       expect(err?.message).toMatch(/try again in a moment/);
       expect(err?.message).not.toMatch(/529|internal|stack|upstream/);
@@ -208,10 +246,15 @@ describe("grocery photo recognition", () => {
     it("is validated by decoding, and never reaches the reader when it isn't a usable photo", async () => {
       const reader = spyReader(sampleAnswer);
       const plus = await freshPlus();
-      const png = await sharp({ create: { width: 400, height: 400, channels: 3, background: "#fff" } }).png().toBuffer();
+      const png = await sharp({ create: { width: 400, height: 400, channels: 3, background: "#fff" } })
+        .png()
+        .toBuffer();
       const text = Buffer.from("just some text pretending to be a photo");
       const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><script>alert(1)</script></svg>');
-      const gif = Buffer.from("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;", "latin1");
+      const gif = Buffer.from(
+        "GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;",
+        "latin1",
+      );
       const truncated = (await jpeg()).subarray(0, 300);
       const tiny = await jpeg(40, 40);
       const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypheic"), Buffer.alloc(40)]);
@@ -253,20 +296,30 @@ describe("grocery photo recognition", () => {
       const limited = await makeHousehold({ plan: "plus" });
       await grantConsent(limited);
       const reader = spyReader(sampleAnswer);
-      await systemDb.execute(sql`insert into rate_limits (key, window_start, count) values (${`photo-recognition:user:${limited.user.id}`}, now(), ${PHOTOS_PER_USER + 1})`);
+      await systemDb.execute(
+        sql`insert into rate_limits (key, window_start, count) values (${`photo-recognition:user:${limited.user.id}`}, now(), ${PHOTOS_PER_USER + 1})`,
+      );
       await expect(recognizeGroceryPhoto(limited, await jpeg(), reader)).rejects.toMatchObject({ code: "rate_limited" });
 
       const daily = await makeHousehold({ plan: "plus" });
       await grantConsent(daily);
-      await systemDb.execute(sql`insert into rate_limits (key, window_start, count) values (${`photo-recognition:household:${daily.household.id}`}, now(), ${PHOTOS_PER_HOUSEHOLD_DAY + 1})`);
-      const err = await recognizeGroceryPhoto(daily, await jpeg(), reader).then(() => null, (e: Error) => e);
+      await systemDb.execute(
+        sql`insert into rate_limits (key, window_start, count) values (${`photo-recognition:household:${daily.household.id}`}, now(), ${PHOTOS_PER_HOUSEHOLD_DAY + 1})`,
+      );
+      const err = await recognizeGroceryPhoto(daily, await jpeg(), reader).then(
+        () => null,
+        (e: Error) => e,
+      );
       expect(err).toMatchObject({ code: "rate_limited" });
       expect(err?.message).toMatch(/tomorrow/);
       expect(reader.seen).toHaveLength(0);
     });
 
     it("respects the kitchen's size limit when adding", async () => {
-      const tight = { ...plus, plan: { ...plus.plan, entitlements: { ...plus.plan.entitlements, max_inventory_items: (await itemsOf(plus)).length + 1 } } };
+      const tight = {
+        ...plus,
+        plan: { ...plus.plan, entitlements: { ...plus.plan.entitlements, max_inventory_items: (await itemsOf(plus)).length + 1 } },
+      };
       const two = [
         { name: "Pears", productId: null, quantity: 1, location: "produce" as const, confidence: "high" as const },
         { name: "Plums", productId: null, quantity: 1, location: "produce" as const, confidence: "high" as const },
@@ -283,7 +336,9 @@ describe("grocery photo recognition", () => {
   describe("people", () => {
     it("lets an adult assign a guess to another member, and keeps children to their own", async () => {
       const kid = await addManagedMember(plus, { name: "Robin", role: "child" });
-      const [mine] = await addPhotoItems(plus, [{ name: "Robin's apples", productId: null, quantity: 3, location: "fridge", confidence: "high", ownerMemberId: kid.id }]);
+      const [mine] = await addPhotoItems(plus, [
+        { name: "Robin's apples", productId: null, quantity: 3, location: "fridge", confidence: "high", ownerMemberId: kid.id },
+      ]);
       const [row] = await systemDb.select().from(inventoryItems).where(eq(inventoryItems.id, mine));
       expect(row.ownerMemberId).toBe(kid.id);
 
@@ -291,9 +346,13 @@ describe("grocery photo recognition", () => {
       await systemDb.insert(householdMembers).values({ householdId: plus.household.id, userId: other.user.id, role: "child" });
       const child = (await buildHouseholdContext(other.user, plus.household.id))!;
       await expect(
-        addPhotoItems(child, [{ name: "Not mine", productId: null, quantity: 1, location: "pantry", confidence: "high", ownerMemberId: kid.id }]),
+        addPhotoItems(child, [
+          { name: "Not mine", productId: null, quantity: 1, location: "pantry", confidence: "high", ownerMemberId: kid.id },
+        ]),
       ).rejects.toMatchObject({ code: "forbidden" });
-      const [own] = await addPhotoItems(child, [{ name: "My crisps", productId: null, quantity: 1, location: "pantry", confidence: "high" }]);
+      const [own] = await addPhotoItems(child, [
+        { name: "My crisps", productId: null, quantity: 1, location: "pantry", confidence: "high" },
+      ]);
       const [ownRow] = await systemDb.select().from(inventoryItems).where(eq(inventoryItems.id, own));
       expect(ownRow.ownerMemberId).toBe(child.member.id);
     });

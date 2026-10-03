@@ -42,10 +42,11 @@ Sign up to start your own household, or click **Explore the demo household** on 
 | --- | --- | --- |
 | `DATABASE_URL` | yes | Postgres connection string. |
 | `APP_URL` | yes | Public base URL (used in password-reset and invite links). |
-| `ANTHROPIC_API_KEY` | no | Enables Claude for reading receipt photos and writing new recipes. Without it everything still works: receipts are read with on-device OCR (Tesseract) and meals come from Plenty's built-in library. |
+| `ANTHROPIC_API_KEY` | no | Enables Claude for reading receipt photos, writing new recipes and recognising groceries in photos (Plus; each also needs the household's OK in Settings → Privacy & data). Without it everything still works: receipts are read with on-device OCR (Tesseract) and meals come from Plenty's built-in library. |
 | `AI_PROVIDER` | no | `auto` (default), `local` or `anthropic`. |
 | `ANTHROPIC_MODEL` | no | Defaults to `claude-opus-5-5`. |
 | `SMTP_URL` / `EMAIL_FROM` | no | Real email delivery. Without SMTP, emails go to the dev outbox at `/dev/outbox` (disabled in production). |
+| `BARCODE_LOOKUP` | no | `openfoodfacts` (default) or `off`. When a scanned barcode isn't one the household has already told Plenty about, Plenty can ask [Open Food Facts](https://world.openfoodfacts.org), a public product database, what it is. **That discloses the barcode number (and nothing else) to openfoodfacts.org.** Set `off` to never do that; Plenty then asks the person to name the product and remembers it. Barcode scanning is a Plus feature. |
 | `STORAGE_DIR` | no | Where receipt photos are stored (private; served only to household members). |
 | `CRON_SECRET` | no | Protects the scheduled notifications endpoint. |
 | `TRUSTED_PROXY_HOPS` | no | Reverse proxies in front of Plenty that append to `X-Forwarded-For` (default `1`). Used to find the real client IP for rate limiting. |

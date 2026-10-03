@@ -136,7 +136,9 @@ async function knownRows(ctx: HouseholdContext, gtin: string) {
     const rows = await tx
       .select()
       .from(productBarcodes)
-      .where(and(eq(productBarcodes.barcode, gtin), or(eq(productBarcodes.householdId, ctx.household.id), isNull(productBarcodes.householdId))));
+      .where(
+        and(eq(productBarcodes.barcode, gtin), or(eq(productBarcodes.householdId, ctx.household.id), isNull(productBarcodes.householdId))),
+      );
     return { rows, index: await loadProductIndex(tx, ctx.household.id) };
   });
 }
@@ -202,7 +204,11 @@ export async function proposeForBarcode(ctx: HouseholdContext, barcode: Barcode,
   const cached = rows.find((r) => r.householdId === null);
   if (cached && fresh(cached.fetchedAt, cached.source === CACHE_SOURCE ? POSITIVE_CACHE_DAYS : NEGATIVE_CACHE_DAYS, now)) {
     if (cached.source === CACHE_SOURCE && cached.name) {
-      return { ...withMatch(base, { name: cached.name, brand: cached.brand, sizeText: cached.sizeText }, index), status: "found", source: "openfoodfacts" };
+      return {
+        ...withMatch(base, { name: cached.name, brand: cached.brand, sizeText: cached.sizeText }, index),
+        status: "found",
+        source: "openfoodfacts",
+      };
     }
     return { ...base, status: "unknown", notice: UNKNOWN_NOTICE };
   }
@@ -225,7 +231,12 @@ export async function proposeForBarcode(ctx: HouseholdContext, barcode: Barcode,
  * often one person can ask, then proposes. `format` is what the scanner said
  * it saw, if anything.
  */
-export async function lookupBarcode(ctx: HouseholdContext, raw: unknown, format?: BarcodeFormatHint, deps: BarcodeDeps = {}): Promise<BarcodeProposal> {
+export async function lookupBarcode(
+  ctx: HouseholdContext,
+  raw: unknown,
+  format?: BarcodeFormatHint,
+  deps: BarcodeDeps = {},
+): Promise<BarcodeProposal> {
   requireEntitlement(ctx, "barcode_scanning", FEATURE);
   const parsed = parseBarcode(raw, format);
   if (!parsed.ok) throw new AppError("validation", parsed.message);
@@ -254,7 +265,14 @@ async function rememberBarcode(
         .onConflictDoUpdate({
           target: [productBarcodes.householdId, productBarcodes.barcode],
           targetWhere: sql`${productBarcodes.householdId} is not null`,
-          set: { productId: input.productId, name: input.name, brand: input.brand, sizeText: input.sizeText, source: HOUSEHOLD_SOURCE, fetchedAt: sql`now()` },
+          set: {
+            productId: input.productId,
+            name: input.name,
+            brand: input.brand,
+            sizeText: input.sizeText,
+            source: HOUSEHOLD_SOURCE,
+            fetchedAt: sql`now()`,
+          },
         });
     });
     return true;
@@ -264,7 +282,12 @@ async function rememberBarcode(
   }
 }
 
-const clean = (text: string | null | undefined, max: number) => text?.replace(/[\p{Cc}\p{Cf}<>]/gu, " ").replace(/\s+/g, " ").trim().slice(0, max) || null;
+const clean = (text: string | null | undefined, max: number) =>
+  text
+    ?.replace(/[\p{Cc}\p{Cf}<>]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max) || null;
 
 /**
  * Add what the person confirmed after scanning, then remember the barcode.
@@ -301,7 +324,11 @@ export async function addScannedItem(ctx: HouseholdContext, input: ScannedItemIn
   let remembered = false;
   if (input.remember !== false && ctx.role !== "child") {
     const productId = await withUser(ctx.user.id, async (tx) => {
-      const [row] = await tx.select({ productId: inventoryItems.productId }).from(inventoryItems).where(eq(inventoryItems.id, itemId)).limit(1);
+      const [row] = await tx
+        .select({ productId: inventoryItems.productId })
+        .from(inventoryItems)
+        .where(eq(inventoryItems.id, itemId))
+        .limit(1);
       return row?.productId ?? null;
     });
     remembered = await rememberBarcode(ctx, {

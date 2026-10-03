@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { cleanText, fetchOffProduct, interpretOffResponse, parseSizeText, OFF_HOST, OFF_USER_AGENT } from "@/server/barcodes/open-food-facts";
+import {
+  cleanText,
+  fetchOffProduct,
+  interpretOffResponse,
+  parseSizeText,
+  OFF_HOST,
+  OFF_USER_AGENT,
+} from "@/server/barcodes/open-food-facts";
 
 const fixture = (name: string): unknown => JSON.parse(readFileSync(path.join(__dirname, "../fixtures/barcodes", `${name}.json`), "utf8"));
 
@@ -110,7 +117,16 @@ describe("fetchOffProduct", () => {
     const never = async () => {
       throw new Error("must not be called");
     };
-    for (const bad of ["../../admin", "3017620422003?x=1", "3017620422003/../x", "evil.com", "", "123", "１２３４５６７８", "1".repeat(15)]) {
+    for (const bad of [
+      "../../admin",
+      "3017620422003?x=1",
+      "3017620422003/../x",
+      "evil.com",
+      "",
+      "123",
+      "１２３４５６７８",
+      "1".repeat(15),
+    ]) {
       await expect(fetchOffProduct(bad, { fetch: never })).rejects.toThrow(/validated barcode/);
     }
   });
@@ -130,7 +146,9 @@ describe("fetchOffProduct", () => {
         }),
     });
     expect(slow).toEqual({ kind: "unavailable", reason: "timeout" });
-    const blocked = await fetchOffProduct("3017620422003", { fetch: async () => new Response("denied", { status: 403, headers: { "content-type": "text/plain" } }) });
+    const blocked = await fetchOffProduct("3017620422003", {
+      fetch: async () => new Response("denied", { status: 403, headers: { "content-type": "text/plain" } }),
+    });
     expect(blocked.kind).toBe("unavailable");
   });
 
@@ -138,7 +156,8 @@ describe("fetchOffProduct", () => {
     const big = "x".repeat(2000);
     const declared = await fetchOffProduct("3017620422003", {
       maxBytes: 1000,
-      fetch: async () => json({ product: { product_name: big } }, { headers: { "content-type": "application/json", "content-length": "2048" } }),
+      fetch: async () =>
+        json({ product: { product_name: big } }, { headers: { "content-type": "application/json", "content-length": "2048" } }),
     });
     expect(declared).toEqual({ kind: "unavailable", reason: "too_large" });
     // No content-length: stops reading once past the cap.
@@ -155,11 +174,15 @@ describe("fetchOffProduct", () => {
   });
 
   it("ignores answers that aren't JSON, and treats a 404 as not found", async () => {
-    const html = await fetchOffProduct("3017620422003", { fetch: async () => new Response("<html>", { status: 200, headers: { "content-type": "text/html" } }) });
+    const html = await fetchOffProduct("3017620422003", {
+      fetch: async () => new Response("<html>", { status: 200, headers: { "content-type": "text/html" } }),
+    });
     expect(html).toEqual({ kind: "unavailable", reason: "bad_response" });
     const missing = await fetchOffProduct("3017620422003", { fetch: async () => json(fixture("off-not-found"), { status: 404 }) });
     expect(missing).toEqual({ kind: "not_found" });
-    const garbage = await fetchOffProduct("3017620422003", { fetch: async () => new Response("{not json", { status: 200, headers: { "content-type": "application/json" } }) });
+    const garbage = await fetchOffProduct("3017620422003", {
+      fetch: async () => new Response("{not json", { status: 200, headers: { "content-type": "application/json" } }),
+    });
     expect(garbage).toEqual({ kind: "unavailable", reason: "bad_response" });
   });
 });

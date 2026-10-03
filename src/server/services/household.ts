@@ -16,7 +16,8 @@ import { generateCode } from "@/server/auth/crypto";
 import { planFlags } from "@/lib/billing/plans";
 import { countMembers, resolveHouseholdPlan } from "@/server/billing/entitlements";
 import { prepareHouseholdDeletion } from "@/server/billing/service";
-import { AppError } from "@/server/errors";
+import { AppError, notFound } from "@/server/errors";
+import { requireCapability } from "@/server/permissions";
 import { refreshLearning } from "@/server/services/learning";
 import { purgeHouseholdArtifacts } from "@/server/services/account-deletion";
 import { detachMember } from "@/server/services/members";
@@ -73,6 +74,7 @@ export async function updateHouseholdBasics(
   ctx: HouseholdContext,
   input: { name: string; adults: number; children: number; timezone?: string; currency?: string },
 ): Promise<void> {
+  requireCapability(ctx, "change_settings");
   await withUser(ctx.user.id, async (tx) => {
     const [updated] = await tx
       .update(households)
@@ -117,6 +119,7 @@ export async function getPreferences(ctx: HouseholdContext): Promise<HouseholdPr
 }
 
 export async function updatePreferences(ctx: HouseholdContext, input: PreferencesInput): Promise<void> {
+  requireCapability(ctx, "change_settings");
   const patch = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== undefined));
   if (Object.keys(patch).length === 0) return;
   await withUser(ctx.user.id, async (tx) => {
@@ -185,6 +188,7 @@ export async function getActiveInvitation(ctx: HouseholdContext) {
 
 /** Create (or reuse) a shareable invite link for the household. */
 export async function createInvitation(ctx: HouseholdContext): Promise<{ code: string; expiresAt: Date }> {
+  requireCapability(ctx, "manage_invitations");
   if (ctx.household.isDemo) throw new AppError("forbidden", "The demo household can't invite people.");
   const existing = await getActiveInvitation(ctx);
   if (existing) return { code: existing.code, expiresAt: existing.expiresAt };
@@ -197,6 +201,7 @@ export async function createInvitation(ctx: HouseholdContext): Promise<{ code: s
 }
 
 export async function revokeInvitations(ctx: HouseholdContext): Promise<void> {
+  requireCapability(ctx, "manage_invitations");
   await withUser(ctx.user.id, async (tx) => {
     await tx
       .update(householdInvitations)
@@ -308,9 +313,12 @@ export async function leaveHousehold(ctx: HouseholdContext): Promise<void> {
     if (others.length === 0) {
       throw new AppError("conflict", "You're the only person with an account here. Delete the household instead if you want to remove it.");
     }
+    // Nobody becomes an owner by surprise (and a child never does): the same rule as deleting an account.
     if (me.role === "owner" && !others.some((m) => m.role === "owner")) {
-      const successor = others.find((m) => m.role === "member") ?? others[0];
-      await tx.update(householdMembers).set({ role: "owner" }).where(eq(householdMembers.id, successor.id));
+      throw new AppError(
+        "conflict",
+        "You're the only owner here, and other people use this household. Make one of them an owner first (Settings → Household & sharing), or delete the household, then try again. Plenty won't hand a household to someone without being asked.",
+      );
     }
     await detachMember(tx, ctx.household.id, me.id, ctx.user.id);
     await tx.delete(householdMembers).where(eq(householdMembers.id, me.id));
@@ -334,6 +342,14 @@ export async function deleteHousehold(ctx: HouseholdContext): Promise<Awaited<Re
 
 export async function switchHousehold(user: AuthUser, householdId: string): Promise<void> {
   await withUser(user.id, async (tx) => {
+    // Only one of your own households. A stranger's and one that doesn't exist get the same answer.
+    const [mine] = await tx
+      .select({ id: householdMembers.id })
+      .from(householdMembers)
+      .innerJoin(households, eq(households.id, householdMembers.householdId))
+      .where(and(eq(householdMembers.householdId, householdId), eq(householdMembers.userId, user.id), isNull(households.deletedAt)))
+      .limit(1);
+    if (!mine) throw notFound("That household");
     await tx.update(profiles).set({ activeHouseholdId: householdId }).where(eq(profiles.userId, user.id));
   });
 }

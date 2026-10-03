@@ -181,7 +181,16 @@ describe("parseBarcode: refusals", () => {
   });
 
   it("gives every refusal a plain message", () => {
-    for (const bad of ["", "abc", "123", "5449000000997", "000000000000", withCheck("200000000123"), withCheck("990000000123"), withCheck("978030640615")]) {
+    for (const bad of [
+      "",
+      "abc",
+      "123",
+      "5449000000997",
+      "000000000000",
+      withCheck("200000000123"),
+      withCheck("990000000123"),
+      withCheck("978030640615"),
+    ]) {
       const r = parseBarcode(bad);
       expect(r.ok).toBe(false);
       if (!r.ok) {

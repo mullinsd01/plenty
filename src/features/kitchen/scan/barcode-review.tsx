@@ -98,7 +98,15 @@ export function BarcodeReview({
       )}
 
       <Field label="What is it?" htmlFor="scan-name">
-        <Input id="scan-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="e.g. Full cream milk" autoComplete="off" enterKeyHint="done" />
+        <Input
+          id="scan-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={120}
+          placeholder="e.g. Full cream milk"
+          autoComplete="off"
+          enterKeyHint="done"
+        />
       </Field>
 
       {productId && proposal.productName && (
@@ -137,7 +145,12 @@ export function BarcodeReview({
 
       {canRemember && (
         <label className="flex items-start gap-2.5 text-[13px] text-ink-2">
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="mt-0.5 size-4 accent-[var(--brand)]" />
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            className="mt-0.5 size-4 accent-[var(--brand)]"
+          />
           <span>
             Remember this barcode for your household, so next time it&apos;s one tap.
             <span className="mt-0.5 flex items-center gap-1 text-ink-3">
@@ -155,7 +168,12 @@ export function BarcodeReview({
           Add and scan another
         </Button>
       </div>
-      <button type="button" onClick={onRescan} disabled={pending} className="block w-full text-center text-[13px] font-medium text-ink-3 underline underline-offset-2 hover:text-ink">
+      <button
+        type="button"
+        onClick={onRescan}
+        disabled={pending}
+        className="block w-full text-center text-[13px] font-medium text-ink-3 underline underline-offset-2 hover:text-ink"
+      >
         Not the right one? Scan again
       </button>
     </div>
