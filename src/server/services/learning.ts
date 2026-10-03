@@ -304,6 +304,18 @@ export interface ProductPrediction {
   paused: boolean;
 }
 
+/**
+ * What this household calls the thing: the name on its most recent item for that product and person, so the list says
+ * "Pepsi Max" rather than the catalogue's "Diet cola". Only the items in this prediction's own scope are read.
+ */
+export function householdNameFor(p: Pick<ProductPrediction, "product" | "items">): string {
+  for (let i = p.items.length - 1; i >= 0; i--) {
+    const name = p.items[i].name?.trim();
+    if (name) return name;
+  }
+  return p.product.name;
+}
+
 export interface LiveState {
   now: Date;
   index: ProductIndex;
@@ -439,7 +451,7 @@ export async function persistPredictions(
     keep.add(learningKey(p.productId, p.scope));
     const snoozed = p.items.some((i) => i.checkInSnoozedUntil && i.checkInSnoozedUntil > live.now);
     const values = {
-      name: p.product.name,
+      name: householdNameFor(p),
       remainingBase: p.prediction.remainingBase,
       baseUnit: p.stats.baseUnit,
       dailyRate: p.prediction.dailyRate,

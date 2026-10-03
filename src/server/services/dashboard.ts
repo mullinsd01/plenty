@@ -9,7 +9,7 @@ import { withUser } from "@/server/db/client";
 import { mealPlanItems, predictions, receiptItems, receipts, shoppingListItems, preferences } from "@/server/db/schema";
 import { HOUSEHOLD_SCOPE, learningKey, scopeOf } from "@/lib/members/scope";
 import { itemViewOptions, toItemView } from "./inventory";
-import { computeLiveState, itemScope, persistPredictions, type LiveState } from "./learning";
+import { computeLiveState, householdNameFor, itemScope, persistPredictions, type LiveState } from "./learning";
 import { getMealPlan, type MealPlanView } from "./meals";
 import { memberNames } from "./members";
 import { getOrCreateActiveList, loadShoppingRhythm } from "./shopping";
@@ -151,7 +151,7 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
           scope: p.scope,
           ownerName,
           ownerIsYou: p.ownerMemberId === ctx.member.id,
-          name: p.product.unit === "each" ? pluralNoun(p.product.name) : p.product.name,
+          name: householdNameFor(p) === p.product.name && p.product.unit === "each" ? pluralNoun(p.product.name) : householdNameFor(p),
         });
         continue;
       }
@@ -162,7 +162,7 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
           ownerName,
           ownerIsYou: p.ownerMemberId === ctx.member.id,
           source: "prediction",
-          name: p.product.name,
+          name: householdNameFor(p),
           label: p.prediction.label,
           daysRemaining: p.prediction.daysRemaining,
           confidence: p.prediction.confidence,

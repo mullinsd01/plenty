@@ -31,7 +31,7 @@ import { AppError, notFound } from "@/server/errors";
 import { trackFor } from "@/server/analytics";
 import { requireCapability } from "@/server/permissions";
 import { addItemsTx, resolveOwnership } from "./inventory";
-import { computeLiveState, itemScope, productBase, refreshLearning, type LearningHousehold, type LiveState } from "./learning";
+import { computeLiveState, householdNameFor, itemScope, productBase, refreshLearning, type LearningHousehold, type LiveState } from "./learning";
 import { memberNames } from "./members";
 import { notifyHousemates } from "./notifications";
 import { loadPlannableMeals, lotsFromLive, upcomingPlanItems } from "./meal-data";
@@ -123,7 +123,7 @@ export async function syncShoppingList(
       itemKey: shoppingItemKey({ productId: p.productId, name: p.product.name, scope: p.scope }),
       scope: p.scope,
       ownerMemberId: p.ownerMemberId,
-      name: p.product.name,
+      name: householdNameFor(p),
       aisle: p.product.aisle,
       daysRemaining: p.prediction.daysRemaining,
       daysLow: p.prediction.daysLow,

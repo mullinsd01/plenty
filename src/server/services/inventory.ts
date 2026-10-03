@@ -338,13 +338,17 @@ export interface AddItemInput {
   visibility?: ItemVisibility;
 }
 
-function resolveForAdd(index: ProductIndex, input: AddItemInput): ProductInfo | null {
+function resolveForAdd(index: ProductIndex, input: AddItemInput, source: InventorySource): ProductInfo | null {
   if (input.productId) {
     const p = index.byId.get(input.productId);
     if (!p) throw new AppError("validation", "That product isn't available.");
     return p;
   }
-  return resolveProduct(index, input.name, 0.8)?.product ?? null;
+  const match = resolveProduct(index, input.name, 0.8);
+  // A scanned or photographed item that arrives without a product was already looked up and didn't match; a
+  // fuzzy re-guess from its label text would attach the wrong catalogue entry (and its shelf life and flags).
+  if (match && (source === "barcode" || source === "photo") && match.method === "fuzzy") return null;
+  return match?.product ?? null;
 }
 
 /**
@@ -362,7 +366,7 @@ export async function addItemsTx(
   const index = await loadProductIndex(tx, household.id);
   const created: DbInventoryItem[] = [];
   for (const input of inputs) {
-    let product = resolveForAdd(index, input);
+    let product = resolveForAdd(index, input, source);
     const location: StorageLocation = input.location ?? product?.location ?? "pantry";
     let packs = Math.max(1, Math.round(input.packCount ?? 1));
     const unit: Unit = input.unit && isUnit(input.unit) ? input.unit : product?.unit ?? "each";

@@ -3676,7 +3676,7 @@ const SNACKS = section({ aisle: "snacks", location: "pantry", perishable: false 
     eachWeightG: 31,
     shelfLifeDays: 180,
     contains: ["gluten"],
-    aliases: ["muesli bar", "chewy bars", "chewy muesli bars", "granola bars", "cereal bars", "yoghurt tops", "oat bars", "lunchbox bars", "nut bars", "protein bars", "breakfast bars", "le snak"],
+    aliases: ["muesli bar", "chewy bars", "chewy muesli bars", "granola bars", "cereal bars", "yoghurt tops", "oat bars", "lunchbox bars", "nut bars", "breakfast bars", "le snak"],
   },
   {
     slug: "popcorn",

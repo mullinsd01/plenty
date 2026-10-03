@@ -12,7 +12,7 @@ import { householdMembers, households, notificationSettings, notifications, prof
 import { emailButton, emailLayout, escapeHtml, sendEmail } from "@/server/email/mailer";
 import { env } from "@/server/env";
 import { toItemView } from "./inventory";
-import { computeLiveState, itemScope } from "./learning";
+import { computeLiveState, householdNameFor, itemScope } from "./learning";
 import { getOrCreateActiveList, loadShoppingRhythm } from "./shopping";
 
 /**
@@ -85,13 +85,14 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, plan: House
     const audience = audienceFor(p.scope, people);
     const owner = p.ownerMemberId ? people.get(p.ownerMemberId) : undefined;
     // Said to the owner it's "you"; said to the household about a profile without an account it's their name.
-    const name = audience === null && owner ? `${owner.name}'s ${p.product.name.toLowerCase()}` : p.product.name.toLowerCase();
+    const called = inSentence(householdNameFor(p));
+    const name = audience === null && owner ? `${owner.name}'s ${called}` : called;
     const key = learningKey(p.productId, p.scope);
     const snoozed = p.items.some((i) => i.checkInSnoozedUntil && i.checkInSnoozedUntil > now);
     if (p.prediction.needsCheckIn && !snoozed) {
       out.push({
         type: "check_in",
-        title: audience === null && owner ? `Did ${owner.name} finish the ${p.product.name.toLowerCase()}?` : `Did you finish the ${name}?`,
+        title: audience === null && owner ? `Did ${owner.name} finish the ${called}?` : `Did you finish the ${name}?`,
         body: "One tap on your home screen keeps Plenty's predictions accurate.",
         link: "/home",
         dedupeKey: `check_in:${key}:${today}`,
@@ -214,6 +215,11 @@ async function candidatesFor(db: Queryable, household: HouseholdRow, plan: House
  * member's preferences, daily limit and quiet hours. Idempotent via dedupe
  * keys, so it's safe to run as often as you like.
  */
+/** "Whole milk" reads as "the whole milk" mid-sentence; "Pepsi Max" keeps its capitals. */
+function inSentence(name: string): string {
+  return /[A-Z]/.test(name.slice(1)) ? name : name.charAt(0).toLowerCase() + name.slice(1);
+}
+
 export async function generateNotificationsForHousehold(db: Queryable, household: HouseholdRow, now: Date): Promise<number> {
   // One run per household at a time (page loads, the notifications page and the scheduled
   // job can overlap): otherwise two runs both count what's been sent today and both fill
