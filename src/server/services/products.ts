@@ -158,7 +158,11 @@ export interface ProductIndex {
 /** Everything needed to resolve product names for one household. */
 export async function loadProductIndex(db: Queryable, householdId: string): Promise<ProductIndex> {
   const global = await loadGlobalProducts(db);
-  const customRows = await db.select().from(products).where(eq(products.householdId, householdId));
+  // Row-level security already limits this to what the viewer may see: the household's products and their own
+  // private ones. If both exist under one name, the shared one wins so a name resolves one way only.
+  const allCustom = await db.select().from(products).where(eq(products.householdId, householdId));
+  const sharedSlugs = new Set(allCustom.filter((r) => !r.ownerMemberId).map((r) => r.slug));
+  const customRows = allCustom.filter((r) => !r.ownerMemberId || !sharedSlugs.has(r.slug));
   const aliasRows = await db
     .select({ aliasKey: productAliases.aliasKey, slug: products.slug })
     .from(productAliases)
@@ -256,25 +260,43 @@ export function inferContains(name: string, index?: ProductIndex): ContainsFlag[
   return [...flags];
 }
 
-/** Create (or reuse) a household-specific product for something not in the catalog. */
+/**
+ * Create (or reuse) a household-specific product for something not in the catalog.
+ *
+ * With `ownerMemberId` the product exists for one person's private item and only they can see it, so the name
+ * of a private thing never turns up in anyone else's suggestions. A product the household already shares under
+ * the same name is reused instead: nothing about it is secret.
+ */
 export async function ensureCustomProduct(
   db: Queryable,
   householdId: string,
-  input: { name: string; aisle: Aisle; location: StorageLocation; unit: Unit; packageQuantity: number },
+  input: { name: string; aisle: Aisle; location: StorageLocation; unit: Unit; packageQuantity: number; ownerMemberId?: string | null },
   index?: ProductIndex,
 ): Promise<ProductInfo> {
   const name = sentenceCase(input.name.trim()).slice(0, 80);
   const slug = `custom-${slugify(name) || "item"}`;
-  const [existing] = await db
-    .select()
-    .from(products)
-    .where(and(eq(products.householdId, householdId), eq(products.slug, slug)))
-    .limit(1);
+  const owner = input.ownerMemberId ?? null;
+  const find = async (ownedBy: string | null) => {
+    const [row] = await db
+      .select()
+      .from(products)
+      .where(
+        and(
+          eq(products.householdId, householdId),
+          eq(products.slug, slug),
+          ownedBy === null ? isNull(products.ownerMemberId) : eq(products.ownerMemberId, ownedBy),
+        ),
+      )
+      .limit(1);
+    return row;
+  };
+  const existing = (await find(null)) ?? (owner ? await find(owner) : undefined);
   if (existing) return productRowToInfo(existing);
   const [row] = await db
     .insert(products)
     .values({
       householdId,
+      ownerMemberId: owner,
       slug,
       name,
       aisle: input.aisle,
@@ -289,12 +311,27 @@ export async function ensureCustomProduct(
     .onConflictDoNothing()
     .returning();
   if (row) return productRowToInfo(row);
-  const [again] = await db
-    .select()
-    .from(products)
-    .where(and(eq(products.householdId, householdId), eq(products.slug, slug)))
-    .limit(1);
+  const again = (await find(null)) ?? (owner ? await find(owner) : undefined);
+  if (!again) throw new Error("A custom product could not be created or found.");
   return productRowToInfo(again);
+}
+
+/**
+ * An item that stops being private takes its product with it: otherwise everyone else would see an item whose
+ * product they can't. Returns the product the item should now point at (an existing shared one with the same
+ * name is used rather than a duplicate).
+ */
+export async function shareProductWithHousehold(db: Queryable, householdId: string, productId: string): Promise<string> {
+  const [row] = await db.select().from(products).where(eq(products.id, productId)).limit(1);
+  if (!row || !row.ownerMemberId) return productId;
+  const [shared] = await db
+    .select({ id: products.id })
+    .from(products)
+    .where(and(eq(products.householdId, householdId), eq(products.slug, row.slug), isNull(products.ownerMemberId)))
+    .limit(1);
+  if (shared) return shared.id;
+  await db.update(products).set({ ownerMemberId: null }).where(eq(products.id, productId));
+  return productId;
 }
 
 /** Remember that this receipt text means this product, for this household. */

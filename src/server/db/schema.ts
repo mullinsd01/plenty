@@ -430,12 +430,19 @@ export const products = pgTable(
     pantryBasic: boolean("pantry_basic").notNull().default(false),
     commonStaple: boolean("common_staple").notNull().default(false),
     nonFood: boolean("non_food").notNull().default(false),
+    /**
+     * Set when the product exists only because of one person's private item: the name is theirs alone, so
+     * nobody else in the household can see it. Null for everything the household shares.
+     */
+    ownerMemberId: uuid("owner_member_id").references(() => householdMembers.id, { onDelete: "cascade" }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (t) => [
     uniqueIndex("products_global_slug_unique").on(t.slug).where(sql`${t.householdId} is null`),
-    uniqueIndex("products_household_slug_unique").on(t.householdId, t.slug).where(sql`${t.householdId} is not null`),
+    uniqueIndex("products_household_slug_unique")
+      .on(t.householdId, t.slug, sql`coalesce(${t.ownerMemberId}, '00000000-0000-0000-0000-000000000000'::uuid)`)
+      .where(sql`${t.householdId} is not null`),
     index("products_name_trgm").using("gin", sql`${t.name} gin_trgm_ops`),
     check("products_package_positive", sql`${t.packageQuantity} > 0`),
   ],
@@ -1176,6 +1183,37 @@ export const notifications = pgTable(
   (t) => [
     uniqueIndex("notifications_dedupe_unique").on(t.userId, t.householdId, t.dedupeKey),
     index("notifications_user_created_idx").on(t.userId, t.householdId, t.createdAt),
+  ],
+);
+
+// ─── Content reports ─────────────────────────────────────────────────────────
+
+export const CONTENT_REPORT_REASONS = ["unsafe", "inaccurate", "offensive", "other"] as const;
+export type ContentReportReason = (typeof CONTENT_REPORT_REASONS)[number];
+
+/**
+ * "Report this recipe": someone telling us an AI-written recipe is unsafe, wrong or offensive. Stores the recipe's
+ * name and text as it was reported so it can be reviewed even if the household later edits or removes it.
+ */
+export const contentReports = pgTable(
+  "content_reports",
+  {
+    id: id(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => households.id, { onDelete: "cascade" }),
+    reporterUserId: uuid("reporter_user_id").references(() => users.id, { onDelete: "set null" }),
+    mealId: uuid("meal_id").references(() => meals.id, { onDelete: "set null" }),
+    mealName: text("meal_name").notNull(),
+    mealSnapshot: text("meal_snapshot").notNull().default(""),
+    reason: text("reason").notNull(),
+    note: text("note"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("content_reports_household_idx").on(t.householdId, t.createdAt),
+    check("content_reports_reason_check", sql`${t.reason} in ('unsafe', 'inaccurate', 'offensive', 'other')`),
+    check("content_reports_note_length", sql`${t.note} is null or char_length(${t.note}) <= 1000`),
   ],
 );
 

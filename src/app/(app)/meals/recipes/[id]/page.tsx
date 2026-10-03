@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, SectionTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { Pill } from "@/components/ui/pill";
-import { CookActions, RatingActions } from "@/features/meals/cook-actions";
+import { CookActions, RatingActions, ReportRecipe } from "@/features/meals/cook-actions";
 import { nextDays } from "@/features/meals/day-options";
 import { AvailabilityLine } from "@/features/meals/meal-card";
 import { cn } from "@/lib/cn";
@@ -137,11 +137,19 @@ export default async function RecipePage({ params, searchParams }: PageProps<"/m
         </ol>
       </section>
 
-      <Button asChild variant="secondary" size="sm">
-        <Link href={`/meals/recipes/${meal.id}/edit`}>
-          <Pencil /> {detail.basedOnLibrary ? "Make your own version" : "Edit recipe"}
-        </Link>
-      </Button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Button asChild variant="secondary" size="sm">
+          <Link href={`/meals/recipes/${meal.id}/edit`}>
+            <Pencil /> {detail.basedOnLibrary ? "Make your own version" : "Edit recipe"}
+          </Link>
+        </Button>
+        {meal.source === "ai" && <ReportRecipe mealId={meal.id} />}
+      </div>
+      {meal.source === "ai" && (
+        <p className="mt-4 text-[12px] leading-relaxed text-ink-3">
+          Written by AI for your kitchen. Check cooking times and allergens yourself before you serve it.
+        </p>
+      )}
     </div>
   );
 }

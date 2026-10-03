@@ -34,7 +34,7 @@ import {
   type LiveState,
 } from "./learning";
 import { memberNames } from "./members";
-import { ensureCustomProduct, loadProductIndex, resolveProduct, type ProductIndex } from "./products";
+import { ensureCustomProduct, loadProductIndex, resolveProduct, shareProductWithHousehold, type ProductIndex } from "./products";
 
 const EMPTY_THRESHOLD = 0.02;
 const CHECK_IN_SNOOZE_DAYS = 2;
@@ -387,7 +387,15 @@ export async function addItemsTx(
       product = await ensureCustomProduct(
         tx,
         household.id,
-        { name: input.name, aisle: "other", location, unit, packageQuantity: quantity },
+        {
+          name: input.name,
+          aisle: "other",
+          location,
+          unit,
+          packageQuantity: quantity,
+          // A private item's product is private too, so its name doesn't surface in anyone else's suggestions.
+          ownerMemberId: input.ownerMemberId && input.visibility === "private" ? input.ownerMemberId : null,
+        },
         index,
       );
     }
@@ -522,6 +530,7 @@ export async function updateItem(ctx: HouseholdContext, id: string, patch: Updat
     const item = await loadItem(tx, ctx.household.id, id);
     assertCanChange(ctx, item);
     const changes: Partial<typeof inventoryItems.$inferInsert> = {};
+    const relearn: string[] = [];
     if (patch.name !== undefined) changes.name = patch.name.trim().slice(0, 120) || item.name;
     if (patch.quantity !== undefined) {
       if (!(patch.quantity > 0)) throw new AppError("validation", "Quantity must be more than zero.");
@@ -542,6 +551,14 @@ export async function updateItem(ctx: HouseholdContext, id: string, patch: Updat
       // Reassigning someone else's private item isn't possible: it isn't visible to anyone else in the first place.
       changes.ownerMemberId = owned.ownerMemberId;
       changes.visibility = owned.visibility;
+      // No longer private: its product (if it was made just for this item) has to be visible to everyone who now sees it.
+      if (item.visibility === "private" && owned.visibility !== "private" && item.productId) {
+        const productId = await shareProductWithHousehold(tx, ctx.household.id, item.productId);
+        if (productId !== item.productId) {
+          changes.productId = productId;
+          relearn.push(productId);
+        }
+      }
     }
     let moved = false;
     if (patch.location !== undefined && patch.location !== item.location) {
@@ -575,7 +592,7 @@ export async function updateItem(ctx: HouseholdContext, id: string, patch: Updat
       note: moved ? `Moved to ${patch.location}` : null,
       occurredAt: now,
     });
-    await refreshLearning(tx, ctx.household, [item.productId], now);
+    await refreshLearning(tx, ctx.household, [item.productId, ...relearn], now);
   });
 }
 

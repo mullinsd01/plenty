@@ -768,6 +768,21 @@ export async function confirmReceipt(
     const adding = accepted.filter((i) => i.existingDecision !== "merge" && i.existingDecision !== "replace").length;
     if (adding > 0) await assertRoomForItems(ctx, adding);
     const touchedProducts: Array<string | null> = [];
+    // The receipt is the household's, and other adults can open it. A line someone filed as private keeps only its
+    // place on the receipt: no name, product, price or link to the item it became.
+    const privateLine = {
+      status: "accepted" as const,
+      name: PRIVATE_LINE_LABEL,
+      rawText: PRIVATE_LINE_LABEL,
+      productId: null,
+      inventoryItemId: null,
+      unitPrice: null,
+      totalPrice: null,
+      aisle: "other" as const,
+      location: "pantry" as const,
+      isFood: true,
+      matchConfidence: 0,
+    };
     /** What actually went into the kitchen, with the products it resolved to — ticked off the list afterwards. */
     const bought: Array<{ productId: string | null; name: string; ownerMemberId?: string | null; private?: boolean }> = [];
     /** Shopping-list batches already taken over by an earlier line of this receipt. */
@@ -810,7 +825,10 @@ export async function confirmReceipt(
               purchasedAt: effectivePurchase,
             })
             .where(eq(inventoryItems.id, target.id));
-          await tx.update(receiptItems).set({ status: "accepted", productId, inventoryItemId: target.id, name: item.name }).where(eq(receiptItems.id, row.id));
+          await tx
+            .update(receiptItems)
+            .set(target.visibility === "private" ? privateLine : { status: "accepted", productId, inventoryItemId: target.id, name: item.name })
+            .where(eq(receiptItems.id, row.id));
           touchedProducts.push(productId);
           bought.push({ productId, name: item.name, ownerMemberId: item.ownerMemberId === undefined ? null : target.ownerMemberId });
           continue;
@@ -875,22 +893,27 @@ export async function confirmReceipt(
       });
       await tx
         .update(receiptItems)
-        .set({
-          status: "accepted",
-          productId: created.productId,
-          inventoryItemId: created.id,
-          name: item.name,
-          quantity: item.quantity,
-          unit: item.unit,
-          location: item.location,
-        })
+        .set(
+          owned.visibility === "private"
+            ? privateLine
+            : {
+                status: "accepted",
+                productId: created.productId,
+                inventoryItemId: created.id,
+                name: item.name,
+                quantity: item.quantity,
+                unit: item.unit,
+                location: item.location,
+              },
+        )
         .where(eq(receiptItems.id, row.id));
 
       // Learn this household's receipt vocabulary from what a person actually told us: a different
       // product, or a name they typed for the line. An unsure guess left as it was isn't remembered
       // (it would come back as "certain", with no alternatives offered); a confident match is.
       const corrected = productId !== row.productId || item.name.trim().toLowerCase() !== row.name.trim().toLowerCase();
-      if (created.productId && (corrected || row.matchConfidence >= MATCH_CONFIDENT)) {
+      // A private line leaves nothing behind for the household to learn from or read.
+      if (owned.visibility !== "private" && created.productId && (corrected || row.matchConfidence >= MATCH_CONFIDENT)) {
         await rememberAlias(tx, ctx.household.id, toAliasKey(row.rawText), created.productId);
       }
     }
@@ -920,6 +943,8 @@ export async function confirmReceipt(
   }
   return { added: outcome.added, tickedOff: outcome.tickedOff };
 }
+
+const PRIVATE_LINE_LABEL = "Private item";
 
 export async function discardReceipt(ctx: HouseholdContext, receiptId: string): Promise<void> {
   const key = await withUser(ctx.user.id, async (tx) => {

@@ -56,6 +56,7 @@ async function populate(ctx: HouseholdContext, joiner?: HouseholdContext) {
   await systemDb.insert(s.predictions).values({ householdId: hid, productId: product.id, name: "Milk", remainingBase: 1, baseUnit: "each", dailyRate: 1, daysRemaining: 1, daysLow: 1, daysHigh: 2, runOutOn: day, confidence: "low", basis: "estimate", reason: "test" });
   const [meal] = await systemDb.insert(s.meals).values({ householdId: hid, source: "user", slug: `meal-${hid.slice(0, 8)}`, name: "Pasta", timeMinutes: 20 }).returning();
   await systemDb.insert(s.mealIngredients).values({ mealId: meal.id, householdId: hid, position: 0, name: "Pasta" });
+  await systemDb.insert(s.contentReports).values({ householdId: hid, reporterUserId: ctx.user.id, mealId: meal.id, mealName: "Pasta", reason: "other" });
   await systemDb.insert(s.mealPreferences).values({ householdId: hid, mealId: meal.id, rating: 1 });
   const [plan] = await systemDb.insert(s.mealPlans).values({ householdId: hid, startDate: day, endDate: day }).returning();
   const [planItem] = await systemDb.insert(s.mealPlanItems).values({ mealPlanId: plan.id, householdId: hid, date: day, mealId: meal.id, servings: 2 }).returning();

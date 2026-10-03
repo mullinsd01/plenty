@@ -36,6 +36,13 @@
       "when": 1791026002152,
       "tag": "0004_rls_members_privacy",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791066164089,
+      "tag": "0005_rls_private_products_reports",
+      "breakpoints": true
     }
   ]
 }

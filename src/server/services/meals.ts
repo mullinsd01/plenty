@@ -28,6 +28,8 @@ import type { HouseholdContext } from "@/server/auth/context";
 import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { systemDb, withUser, type Queryable, type Tx } from "@/server/db/client";
 import {
+  CONTENT_REPORT_REASONS,
+  contentReports,
   mealIngredients,
   mealPlanItems,
   mealPlans,
@@ -903,6 +905,51 @@ export async function getMealDetail(ctx: HouseholdContext, mealId: string, servi
       blockedReason: allowed.allowed ? null : allowed.reason,
       plannedOn: plannedRows.map((p) => ({ id: p.id, date: p.date, label: relativeDayLabel(p.date, loaded.today) })),
     };
+  });
+}
+
+export type RecipeReportReason = (typeof CONTENT_REPORT_REASONS)[number];
+
+/**
+ * "Report this recipe": for recipes an AI wrote. The recipe is copied into the report as it was, so it can be
+ * reviewed even if the household edits or deletes it afterwards. Reporting doesn't change the recipe or anyone's plan.
+ */
+export async function reportRecipe(ctx: HouseholdContext, mealId: string, reason: RecipeReportReason, note?: string | null): Promise<void> {
+  requireCapability(ctx, "plan_meals");
+  await enforceRateLimit(`report:${ctx.user.id}`, 10, 3600, "sending reports");
+  await withUser(ctx.user.id, async (tx) => {
+    const [meal] = await tx
+      .select({ id: meals.id, name: meals.name, description: meals.description, steps: meals.steps, source: meals.source })
+      .from(meals)
+      .where(and(eq(meals.id, mealId), isNull(meals.deletedAt)))
+      .limit(1);
+    if (!meal) throw notFound("That recipe");
+    if (meal.source !== "ai") throw new AppError("validation", "Only recipes written by AI can be reported here.");
+    const ingredients = await tx
+      .select({ name: mealIngredients.name, quantity: mealIngredients.quantity, unit: mealIngredients.unit, note: mealIngredients.note })
+      .from(mealIngredients)
+      .where(eq(mealIngredients.mealId, mealId))
+      .orderBy(asc(mealIngredients.position));
+    const snapshot = [
+      meal.name,
+      meal.description,
+      "Ingredients:",
+      ...ingredients.map((i) => [i.quantity ?? "", i.unit ?? "", i.name, i.note ? `(${i.note})` : ""].filter((part) => part !== "").join(" ")),
+      "Method:",
+      ...meal.steps.map((step, n) => `${n + 1}. ${step}`),
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 6000);
+    await tx.insert(contentReports).values({
+      householdId: ctx.household.id,
+      reporterUserId: ctx.user.id,
+      mealId: meal.id,
+      mealName: meal.name.slice(0, 200),
+      mealSnapshot: snapshot,
+      reason,
+      note: note?.trim().slice(0, 1000) || null,
+    });
   });
 }
 

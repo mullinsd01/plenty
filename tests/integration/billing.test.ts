@@ -1322,7 +1322,20 @@ describe("row-level security on billing tables", () => {
     const theirs = await withUser(stranger.user.id, (tx) => tx.select({ householdId: subscriptions.householdId }).from(subscriptions));
     expect(theirs.map((s) => s.householdId)).toEqual([stranger.household.id]);
     // And asking for someone else's by id returns nothing.
-    expect(await withUser(stranger.user.id, (tx) => tx.select().from(subscriptions).where(eq(subscriptions.householdId, owner.household.id)))).toHaveLength(0);
+    expect(await withUser(stranger.user.id, (tx) => tx.select({ id: subscriptions.id }).from(subscriptions).where(eq(subscriptions.householdId, owner.household.id)))).toHaveLength(0);
+  });
+
+  it("the billing provider's own identifiers can't be read by the app role at all, even for the household's own subscription", async () => {
+    const { owner } = await householdWithMember();
+    await go(nev("web", owner.household.id, uid("sub"), started("web", "plus", "monthly", at(0), at(30))), at(0));
+    for (const column of [subscriptions.providerCustomerId, subscriptions.providerSubscriptionId, subscriptions.providerProductId]) {
+      await expect(withUser(owner.user.id, (tx) => tx.select({ value: column }).from(subscriptions))).rejects.toThrow();
+    }
+    // The whole row is refused too: a stray `select()` can't pull the identifiers in by accident.
+    await expect(withUser(owner.user.id, (tx) => tx.select().from(subscriptions))).rejects.toThrow();
+    // What the app does need is still there.
+    const [row] = await withUser(owner.user.id, (tx) => tx.select({ plan: subscriptions.plan, provider: subscriptions.provider }).from(subscriptions).where(eq(subscriptions.householdId, owner.household.id)));
+    expect(row.plan).toBe("plus");
   });
 
   it("the app role can never write subscriptions, billing events or usage, even for its own household", async () => {

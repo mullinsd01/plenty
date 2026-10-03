@@ -87,7 +87,26 @@ export async function exportHouseholdData(ctx: HouseholdContext) {
       foodRules: await tx.select().from(memberFoodRules).where(eq(memberFoodRules.householdId, hid)),
       recurringItems: recurring,
       barcodes: barcodeRows,
-      subscription: (await tx.select().from(subscriptions).where(eq(subscriptions.householdId, hid)))[0] ?? null,
+      // The billing provider's own identifiers stay with Plenty and the provider; they aren't the household's to export.
+      subscription:
+        (
+          await tx
+            .select({
+              plan: subscriptions.plan,
+              period: subscriptions.period,
+              status: subscriptions.status,
+              provider: subscriptions.provider,
+              autoRenew: subscriptions.autoRenew,
+              currentPeriodStart: subscriptions.currentPeriodStart,
+              currentPeriodEnd: subscriptions.currentPeriodEnd,
+              trialEndsAt: subscriptions.trialEndsAt,
+              canceledAt: subscriptions.canceledAt,
+              endedAt: subscriptions.endedAt,
+              createdAt: subscriptions.createdAt,
+            })
+            .from(subscriptions)
+            .where(eq(subscriptions.householdId, hid))
+        )[0] ?? null,
       usage: await tx.select().from(usageCounters).where(eq(usageCounters.householdId, hid)),
       mealPlans: await tx.select().from(mealPlans).where(eq(mealPlans.householdId, hid)),
       mealPlan: await tx.select().from(mealPlanItems).where(eq(mealPlanItems.householdId, hid)),

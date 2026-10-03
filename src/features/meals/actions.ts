@@ -87,6 +87,22 @@ export async function rateMealAction(mealId: string, rating: -1 | 0 | 1) {
   return householdAction("meals.rate", async (ctx) => meals.rateMeal(ctx, parseInput(id, mealId), parseInput(z.union([z.literal(-1), z.literal(0), z.literal(1)]), rating)));
 }
 
+const reportSchema = z.object({
+  reason: z.enum(["unsafe", "inaccurate", "offensive", "other"], { error: "Pick what's wrong with it." }),
+  note: z.string().max(1000, "Keep the note under 1,000 characters.").optional(),
+});
+
+export async function reportRecipeAction(mealId: string, input: { reason: string; note?: string }) {
+  return householdAction(
+    "meals.report",
+    async (ctx) => {
+      const report = parseInput(reportSchema, input);
+      await meals.reportRecipe(ctx, parseInput(id, mealId), report.reason, report.note);
+    },
+    { message: "Thanks — we've got your report.", refresh: false },
+  );
+}
+
 export async function saveMealAction(mealId: string, saved: boolean) {
   return householdAction("meals.save", async (ctx) => meals.setMealSaved(ctx, parseInput(id, mealId), Boolean(saved)), {
     message: saved ? "Saved to your recipes" : undefined,
