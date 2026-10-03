@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/ui/page-header";
 import { UpgradeNote } from "@/components/ui/upgrade-note";
-import { AddPersonButton, PERSON_COLORS, PeopleList, type PersonRow } from "@/features/members/members-panel";
+import { AddPersonButton, PeopleList, type PersonRow } from "@/features/members/members-panel";
+import { PERSON_COLORS } from "@/lib/members/colors";
 import { DangerZone, HouseholdForm, InviteLink, SettingsCard } from "@/features/settings/forms";
 import { cheapestPlanWith } from "@/lib/billing/plans";
 import { can } from "@/lib/members/permissions";

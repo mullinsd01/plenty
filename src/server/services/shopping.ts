@@ -673,7 +673,8 @@ export async function addRequest(ctx: HouseholdContext, input: RequestInput): Pr
   const result = await withUser(ctx.user.id, async (tx) => {
     const line = await upsertListLine(tx, ctx, input, owned, { source: "request", requestedByMemberId: ctx.member.id });
     if (line.created) {
-      const asked = input.name.trim().toLowerCase();
+      // As typed: "Pepsi Max" stays "Pepsi Max".
+      const asked = input.name.trim();
       await notifyHousemates(tx, ctx.household, ctx.user.id, {
         type: "request",
         title: `${ctx.member.displayName} asked for ${asked}`,

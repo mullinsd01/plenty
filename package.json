@@ -14,6 +14,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --conditions=react-server scripts/migrate.ts",
     "db:seed": "tsx --conditions=react-server scripts/seed.ts",
+    "db:seed-roles": "tsx --conditions=react-server scripts/seed-roles.ts",
     "db:reset": "tsx --conditions=react-server scripts/reset.ts",
     "setup": "tsx --conditions=react-server scripts/setup.ts",
     "receipts:fixtures": "tsx scripts/generate-receipt-fixtures.ts",

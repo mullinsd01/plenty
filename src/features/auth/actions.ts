@@ -12,7 +12,7 @@ import { users } from "@/server/db/schema";
 import { env } from "@/server/env";
 import { AppError, parseInput, toUserError } from "@/server/errors";
 import { clientIp, safeRedirectPath } from "@/server/http";
-import { forgotPasswordSchema, resetPasswordSchema, signInSchema, signUpSchema } from "@/validation/auth";
+import { forgotPasswordSchema, resetPasswordSchema, signInSchema, signUpFormSchema } from "@/validation/auth";
 
 type FormState = ActionResult<undefined> | null;
 
@@ -32,13 +32,14 @@ async function startSession(userId: string) {
 export async function signUpAction(_prev: FormState, formData: FormData): Promise<FormState> {
   let next: string;
   try {
-    const input = parseInput(signUpSchema, {
+    const { name, email, password } = parseInput(signUpFormSchema, {
       name: formData.get("name"),
       email: formData.get("email"),
       password: formData.get("password"),
+      terms: formData.get("terms"),
     });
     await enforceRateLimit(`signup:${await clientKey()}`, 10, 3600, "creating accounts");
-    const { userId } = await auth.signUp(input);
+    const { userId } = await auth.signUp({ name, email, password });
     await startSession(userId);
     next = safeNext(formData.get("next"), "/onboarding");
   } catch (err) {

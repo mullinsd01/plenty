@@ -53,8 +53,8 @@ export default async function InsightsPage() {
         </Card>
       ) : (
         <div className="mb-10 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat value={m.summary.learnedProducts} label="things learned from your history" />
-          <Stat value={m.summary.estimatedProducts} label="still on Plenty's estimates" />
+          {predictive && <Stat value={m.summary.learnedProducts} label="things learned from your history" />}
+          {predictive && <Stat value={m.summary.estimatedProducts} label="still on Plenty's estimates" />}
           <Stat value={m.summary.observations} label="times you've finished something" />
           <Stat value={m.summary.receipts} label="receipts scanned" />
         </div>

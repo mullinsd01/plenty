@@ -37,6 +37,7 @@ test("the full Plenty loop works for a brand-new household", async ({ page }) =>
   await page.fill("#name", "Robin");
   await page.fill("#email", email);
   await page.fill("#password", password);
+  await page.getByLabel(/I'm 18 or over/).check();
   await page.getByRole("button", { name: "Create account" }).click();
   await page.waitForURL(/\/onboarding$/);
 

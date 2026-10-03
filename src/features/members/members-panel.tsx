@@ -15,6 +15,7 @@ import { UpgradeNote } from "@/components/ui/upgrade-note";
 import { useAction } from "@/components/hooks/use-action";
 import type { PlanId } from "@/lib/billing/plans";
 import { ALLERGENS, ALLERGEN_LABELS, DIETS, DIET_LABELS, type Allergen, type Diet } from "@/lib/domain";
+import { PERSON_COLORS } from "@/lib/members/colors";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS, type Role } from "@/lib/members/permissions";
 import { removeMemberAction } from "@/features/settings/actions";
 import { addPersonAction, setFoodRulesAction, updatePersonAction } from "./actions";
@@ -31,7 +32,6 @@ export interface PersonRow {
   canEditRules: boolean;
 }
 
-export const PERSON_COLORS = ["#E0654B", "#3B6FA5", "#4F8A5B", "#B07A2A", "#7A5AA6", "#2F8F8B", "#B5527A", "#6B7280"];
 
 function Dot({ name, color }: { name: string; color: string }) {
   return (

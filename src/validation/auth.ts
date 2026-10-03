@@ -25,6 +25,11 @@ export const signUpSchema = z.object({
   password: passwordSchema,
 });
 
+/** The sign-up form adds an explicit confirmation; service-level sign-up (tests, seeds) doesn't carry it. */
+export const signUpFormSchema = signUpSchema.extend({
+  terms: z.literal("on", { error: "Tick this box to confirm you're 18 or over and agree to the Terms and Privacy Policy." }),
+});
+
 export const signInSchema = z.object({
   email: emailSchema,
   password: z.string().min(1, "Enter your password.").max(200),

@@ -106,20 +106,37 @@ export function SignUpForm({ next }: { next?: string }) {
       <Field label="Password" htmlFor="password" hint="At least 8 characters." error={fieldError(state, "password")}>
         <PasswordInput id="password" name="password" autoComplete="new-password" required minLength={8} />
       </Field>
+      <div>
+        <label className="flex items-start gap-2.5 text-[13px] leading-relaxed text-ink-2">
+          <input
+            type="checkbox"
+            name="terms"
+            required
+            aria-invalid={fieldError(state, "terms") ? true : undefined}
+            aria-describedby={fieldError(state, "terms") ? "terms-error" : undefined}
+            className="mt-0.5 size-4 shrink-0 accent-[var(--brand)]"
+          />
+          <span>
+            I&apos;m 18 or over, and I agree to the{" "}
+            <Link href="/terms" target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">
+              Terms
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy" target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">
+              Privacy Policy
+            </Link>
+            .
+          </span>
+        </label>
+        {fieldError(state, "terms") && (
+          <p id="terms-error" role="alert" className="mt-1.5 text-[13px] text-alert">
+            {fieldError(state, "terms")}
+          </p>
+        )}
+      </div>
       <Button type="submit" size="lg" block loading={pending}>
         Create account
       </Button>
-      <p className="text-center text-[13px] leading-relaxed text-ink-3">
-        By creating an account you confirm you&apos;re 18 or over and agree to the{" "}
-        <Link href="/terms" target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">
-          Terms
-        </Link>{" "}
-        and{" "}
-        <Link href="/privacy" target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">
-          Privacy Policy
-        </Link>
-        .
-      </p>
     </form>
   );
 }

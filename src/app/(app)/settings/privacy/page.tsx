@@ -6,7 +6,7 @@ import { AnalyticsToggle, ReceiptRetentionControl } from "@/features/privacy/pri
 import { DeleteAccountControl } from "@/features/privacy/delete-account";
 import { ChildrenText, DataGroups, DeletionText, ProcessorList, VisibilityRules } from "@/features/privacy/policy-sections";
 import { DangerZone, ExportButton, SettingsCard } from "@/features/settings/forms";
-import { ROLE_LABELS, can } from "@/lib/members/permissions";
+import { ROLE_LABELS, can, isRestricted } from "@/lib/members/permissions";
 import { processorsFor } from "@/lib/privacy-content";
 import { requireHousehold } from "@/server/auth/context";
 import { getPreferences } from "@/server/services/household";
@@ -39,6 +39,8 @@ export default async function PrivacySettingsPage() {
     householdSubscriptionNotice(ctx.household.id),
   ]);
   const canChange = can(ctx.role, "change_settings");
+  // A child account has choices of its own (analytics, its own account); the household's AI, photo and export settings are the adults'.
+  const restricted = isRestricted(ctx.role);
   const retention = isRetentionPolicy(prefs.receiptImageRetention) ? prefs.receiptImageRetention : "after_review";
   const processors = processorsFor(processorConfig());
   return (
@@ -58,23 +60,33 @@ export default async function PrivacySettingsPage() {
 
       <SectionHeading id="choices">Your choices</SectionHeading>
       <div className="space-y-5">
-        <SettingsCard title="AI-assisted features" description="Off unless you turn it on. Plenty works fully without it.">
-          <AiConsentControl view={aiView} />
-        </SettingsCard>
-        <SettingsCard title="Receipt photos" description="After a receipt is checked, Plenty only needs the items. How long should it keep the photo?">
-          <ReceiptRetentionControl
-            initial={retention}
-            canChange={canChange}
-            options={RETENTION_POLICIES.map((value) => ({ value, ...RETENTION_LABELS[value] }))}
-          />
-          <p className="mt-3 text-[13px] text-ink-3">A photo you never check is deleted after 14 days. Deleting a photo never removes the items you added from it.</p>
-        </SettingsCard>
+        {restricted ? (
+          <p className="rounded-2xl bg-subtle px-4 py-3 text-[14px] text-ink-2">
+            The household&apos;s AI, receipt-photo and data-download settings are looked after by the adults. Below is what you can choose for yourself.
+          </p>
+        ) : (
+          <>
+            <SettingsCard title="AI-assisted features" description="Off unless you turn it on. Plenty works fully without it.">
+              <AiConsentControl view={aiView} />
+            </SettingsCard>
+            <SettingsCard title="Receipt photos" description="After a receipt is checked, Plenty only needs the items. How long should it keep the photo?">
+              <ReceiptRetentionControl
+                initial={retention}
+                canChange={canChange}
+                options={RETENTION_POLICIES.map((value) => ({ value, ...RETENTION_LABELS[value] }))}
+              />
+              <p className="mt-3 text-[13px] text-ink-3">A photo you never check is deleted after 14 days. Deleting a photo never removes the items you added from it.</p>
+            </SettingsCard>
+          </>
+        )}
         <SettingsCard title="Usage analytics">
           <AnalyticsToggle optedOut={optedOut} />
         </SettingsCard>
-        <SettingsCard title="Your data" description="A complete copy of your household's data as JSON. Receipt photos aren't included in the file; open a receipt to see or save its photo.">
-          {can(ctx.role, "export_data") ? <ExportButton /> : <p className="text-[14px] text-ink-3">An owner or member of the household can download the data.</p>}
-        </SettingsCard>
+        {!restricted && (
+          <SettingsCard title="Your data" description="A complete copy of your household's data as JSON. Receipt photos aren't included in the file; open a receipt to see or save its photo.">
+            {can(ctx.role, "export_data") ? <ExportButton /> : <p className="text-[14px] text-ink-3">An owner or member of the household can download the data.</p>}
+          </SettingsCard>
+        )}
       </div>
 
       <SectionHeading id="collected" note="Plenty keeps only what it needs to do its job. Tap a heading for the detail.">
@@ -101,15 +113,17 @@ export default async function PrivacySettingsPage() {
         <DeletionText />
       </div>
       <div className="space-y-5">
-        <SettingsCard title="Delete this household" description="Removes the household and everything in it, for everyone who uses it.">
-          <DangerZone
-            householdName={ctx.household.name}
-            isOwner={ctx.role === "owner"}
-            memberCount={members.length}
-            isDemo={ctx.household.isDemo}
-            subscription={ctx.role === "owner" ? subscription : null}
-          />
-        </SettingsCard>
+        {!restricted && (
+          <SettingsCard title="Delete this household" description="Removes the household and everything in it, for everyone who uses it.">
+            <DangerZone
+              householdName={ctx.household.name}
+              isOwner={ctx.role === "owner"}
+              memberCount={members.length}
+              isDemo={ctx.household.isDemo}
+              subscription={ctx.role === "owner" ? subscription : null}
+            />
+          </SettingsCard>
+        )}
         <SettingsCard title="Delete my account" description="Removes your sign-in and any household you're the only person with an account in.">
           <DeleteAccountControl plan={deletionPlan} isDemo={ctx.user.isDemo} />
         </SettingsCard>

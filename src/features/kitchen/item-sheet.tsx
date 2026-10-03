@@ -17,6 +17,7 @@ import { usePeople } from "@/features/members/people-context";
 import { STORAGE_LOCATIONS, STORAGE_LOCATION_LABELS, type StorageLocation } from "@/lib/domain";
 import type { InventoryItemView } from "@/server/services/inventory";
 import { finishItemAction, removeItemAction, restoreItemAction, setLevelAction, updateItemAction } from "./actions";
+import { formatLongDate } from "@/lib/dates";
 import { remainingPhrase } from "@/lib/format";
 
 export function useUndoableFinish() {
@@ -253,7 +254,7 @@ function EditForm({
         label="Use-by date"
         htmlFor="item-expiry"
         optional
-        hint={item.expiresOn && !item.expiryIsActual ? `Plenty estimates ${item.expiresOn}. Set the printed date if you know it.` : undefined}
+        hint={item.expiresOn && !item.expiryIsActual ? `Plenty estimates ${formatLongDate(item.expiresOn)}. Set the printed date if you know it.` : undefined}
       >
         <Input id="item-expiry" type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} />
       </Field>
