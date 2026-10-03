@@ -48,8 +48,9 @@ export function decideExternalAi(input: AiAccessInputs): AiDecision {
 }
 
 /** What each use sends and doesn't, in the words shown to people. Kept next to the code that sends it. */
-export const AI_DISCLOSURE: Record<AiPurpose, { feature: string; sent: string[] }> = {
+export const AI_DISCLOSURE: Record<AiPurpose, { feature: string; sent: string[]; /** Shown to people only once the feature exists. */ live: boolean }> = {
   receipt: {
+    live: true,
     feature: "reading your receipt photos",
     sent: [
       "The receipt photo you upload (with its camera details removed)",
@@ -57,6 +58,7 @@ export const AI_DISCLOSURE: Record<AiPurpose, { feature: string; sent: string[] 
     ],
   },
   recipes: {
+    live: true,
     feature: "writing new recipe ideas",
     sent: [
       "The names and amounts of the food in your kitchen, and use-by dates",
@@ -65,6 +67,8 @@ export const AI_DISCLOSURE: Record<AiPurpose, { feature: string; sent: string[] 
     ],
   },
   photo: {
+    // Not built yet. Flip this when photo recognition ships so the consent dialog starts listing it.
+    live: false,
     feature: "recognising groceries in a photo",
     sent: ["The grocery photo you take"],
   },

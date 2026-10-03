@@ -170,7 +170,7 @@ export async function switchHouseholdAction(householdId: string): Promise<Action
 /** Say yes or no to sending household data to the outside AI service. Recorded with who and when. */
 export async function setAiConsentAction(granted: boolean) {
   return householdAction("settings.aiConsent", async (ctx) => privacy.setAiConsent(ctx, parseInput(z.boolean(), granted)), {
-    message: (_d) => (granted ? "AI-assisted features turned on" : "AI-assisted features turned off. Nothing more will be sent."),
+    message: () => (granted ? "AI-assisted features turned on" : "AI-assisted features turned off. Nothing more will be sent."),
   });
 }
 

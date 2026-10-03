@@ -46,6 +46,11 @@ const schema = z.object({
     .optional()
     .transform((v) => v === "true" || v === "1"),
   STORAGE_DIR: z.string().default(".data/uploads"),
+  /**
+   * Whether Plenty may look an unknown barcode up in Open Food Facts, a public product database. That
+   * discloses the barcode number (and nothing else) to openfoodfacts.org. Unset: on, except in tests.
+   */
+  BARCODE_LOOKUP: z.enum(["off", "openfoodfacts"]).optional(),
   CRON_SECRET: z.string().optional().transform((v) => (v ? v : undefined)),
   /**
    * Treat every household without a paid subscription as being on this plan.

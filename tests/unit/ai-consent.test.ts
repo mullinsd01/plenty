@@ -37,6 +37,8 @@ describe("when Plenty may send something to an outside AI service", () => {
 describe("the consent wording", () => {
   it("lists what each feature sends, and never claims what the provider does with it", () => {
     for (const purpose of AI_PURPOSES) expect(AI_DISCLOSURE[purpose].sent.length).toBeGreaterThan(0);
+    // Only features that exist are offered for consent (photo recognition isn't built yet).
+    expect(AI_PURPOSES.filter((p) => AI_DISCLOSURE[p].live)).toEqual(["receipt", "recipes"]);
     const all = JSON.stringify([AI_DISCLOSURE, AI_NEVER_SENT, EXTERNAL_AI_PROVIDER]).toLowerCase();
     for (const claim of ["not retain", "doesn't retain", "never stored", "deleted immediately", "not used for training", "zero retention"]) {
       expect(all).not.toContain(claim);

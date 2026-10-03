@@ -109,7 +109,7 @@ function ReceiptPhoto({ review }: { review: ReceiptReview }) {
     return (
       <div className="mt-8">
         <ReceiptImage id={review.id} />
-        {until && until.getTime() > Date.now() && (
+        {until && (
           <p className="mt-2 text-[12px] text-ink-4">
             The photo is deleted on {until.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}. The items stay. You can change this in{" "}
             <Link href="/settings/privacy" className="underline underline-offset-2">

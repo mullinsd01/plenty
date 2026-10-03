@@ -1,0 +1,9 @@
+{
+  "code": "9300633603342",
+  "product": {
+    "product_name": "https://evil.example/buy-now",
+    "product_name_en": "www.evil.example",
+    "generic_name": "user@evil.example"
+  },
+  "status": 1
+}

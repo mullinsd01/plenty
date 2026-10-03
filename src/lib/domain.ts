@@ -108,7 +108,7 @@ export const PREDICTION_BASIS_LABELS: Record<PredictionBasis, string> = {
 export const INVENTORY_STATUSES = ["active", "finished", "wasted", "expired", "removed"] as const;
 export type InventoryStatus = (typeof INVENTORY_STATUSES)[number];
 
-export const INVENTORY_SOURCES = ["receipt", "manual", "shopping_list", "demo"] as const;
+export const INVENTORY_SOURCES = ["receipt", "manual", "shopping_list", "demo", "barcode", "photo"] as const;
 export type InventorySource = (typeof INVENTORY_SOURCES)[number];
 
 export const INVENTORY_EVENT_TYPES = [

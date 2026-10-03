@@ -11,6 +11,8 @@ import { AI_DISCLOSURE, AI_NEVER_SENT, AI_PURPOSES } from "@/lib/ai/consent";
 import { setAiConsentAction } from "@/features/settings/actions";
 import type { AiConsentView } from "@/server/services/privacy";
 
+const sentenceCase = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
+
 /** Plain-language date, e.g. "3 Oct 2026". */
 function when(iso: string): string {
   return new Date(iso).toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" });
@@ -53,9 +55,9 @@ export function AiConsentDialog({ open, onOpenChange, view }: { open: boolean; o
           </h3>
           <p className="mt-1 text-ink-3">Only when you use the feature, and only this:</p>
           <ul className="mt-2 space-y-3">
-            {AI_PURPOSES.map((purpose) => (
+            {AI_PURPOSES.filter((purpose) => AI_DISCLOSURE[purpose].live).map((purpose) => (
               <li key={purpose}>
-                <p className="font-medium capitalize text-ink">{AI_DISCLOSURE[purpose].feature}</p>
+                <p className="font-medium text-ink">{sentenceCase(AI_DISCLOSURE[purpose].feature)}</p>
                 <ul className="mt-1 list-disc space-y-0.5 pl-5 text-ink-3">
                   {AI_DISCLOSURE[purpose].sent.map((line) => (
                     <li key={line}>{line}</li>

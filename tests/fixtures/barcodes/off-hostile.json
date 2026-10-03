@@ -1,0 +1,11 @@
+{
+  "code": "9300633603342",
+  "product": {
+    "brands": "<img src=x onerror=alert(1)>,Other",
+    "product_name": "<script>alert(1)</script>Oat​ milk\u0000 ‮evil",
+    "quantity": "visit http://evil.example for 5 off",
+    "generic_name": "x"
+  },
+  "status": 1,
+  "status_verbose": "product found"
+}
