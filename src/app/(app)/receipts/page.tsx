@@ -53,7 +53,7 @@ export default async function ReceiptsPage() {
         }
       />
       {hidden > 0 && (
-        <UpgradeNote plan="plus" className="mb-5">
+        <UpgradeNote plan="plus" feature="receipts" className="mb-5">
           {hidden === 1 ? "1 older receipt is" : `${hidden} older receipts are`} kept safe. Browsing purchase history beyond the last {HISTORY_FREE_DAYS} days is part of Plenty
           Plus.
         </UpgradeNote>

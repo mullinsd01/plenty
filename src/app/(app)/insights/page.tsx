@@ -88,7 +88,7 @@ export default async function InsightsPage() {
       {!analytics && (m.spend.weeks.some((w) => w.total > 0) || m.waste.length > 0) && (
         <section className="mb-10">
           <SectionTitle>Spending and waste</SectionTitle>
-          <UpgradeNote plan="family">
+          <UpgradeNote plan="family" feature="analytics">
             Weekly spending and waste analytics are part of Plenty Family. Your receipts are kept, and Plenty still uses what it has learned to suggest
             smaller amounts of things you tend to throw out.
           </UpgradeNote>
@@ -169,7 +169,7 @@ export default async function InsightsPage() {
       <section className="mb-10">
         <SectionTitle>How fast things go</SectionTitle>
         {!predictive ? (
-          <UpgradeNote plan="plus">
+          <UpgradeNote plan="plus" feature="predictions">
             Run-out predictions and learned paces are part of Plenty Plus. Plenty keeps recording what you finish and buy — {m.summary.observations}{" "}
             so far — so they&apos;re ready to go the moment you upgrade. Nothing is lost.
           </UpgradeNote>

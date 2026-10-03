@@ -27,9 +27,10 @@ export function legalContact(): LegalContact {
     }
     return null;
   };
+  const entityName = pick(e.LEGAL_ENTITY_NAME, "LEGAL_ENTITY_NAME");
   const supportEmail = pick(e.SUPPORT_EMAIL, "SUPPORT_EMAIL");
   return {
-    entityName: pick(e.LEGAL_ENTITY_NAME, "LEGAL_ENTITY_NAME"),
+    entityName,
     supportEmail,
     // Privacy requests go to the support address when there's no separate one.
     privacyEmail: e.PRIVACY_CONTACT_EMAIL ?? e.SUPPORT_EMAIL ?? (dev ? pick(undefined, "PRIVACY_CONTACT_EMAIL") : null),

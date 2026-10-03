@@ -13,6 +13,7 @@ import { STORAGE_LOCATION_LABELS } from "@/lib/domain";
 import { formatMoney } from "@/lib/format";
 import { formatQuantity } from "@/lib/units";
 import { requireHousehold } from "@/server/auth/context";
+import type { ReceiptReview } from "@/server/services/receipts";
 import { getReceiptReview } from "@/server/services/receipts";
 
 export const metadata: Metadata = { title: "Receipt" };
@@ -55,7 +56,7 @@ export default async function ReceiptPage({ params }: PageProps<"/receipts/[id]"
             <ReceiptFailedActions receiptId={review.id} />
           </div>
         </Card>
-        {review.hasImage && <ReceiptImage id={review.id} />}
+        <ReceiptPhoto review={review} />
       </div>
     );
   }
@@ -69,7 +70,7 @@ export default async function ReceiptPage({ params }: PageProps<"/receipts/[id]"
           subtitle={`${review.items.filter((i) => i.status !== "ignored").length} items found. Fix anything that's off, then add them to your kitchen.`}
         />
         <ReviewView review={review} currency={ctx.household.currency} today={today} />
-        {review.hasImage && <ReceiptImage id={review.id} />}
+        <ReceiptPhoto review={review} />
       </div>
     );
   }
@@ -96,14 +97,45 @@ export default async function ReceiptPage({ params }: PageProps<"/receipts/[id]"
           </div>
         ))}
       </Card>
-      {review.hasImage && <ReceiptImage id={review.id} />}
+      <ReceiptPhoto review={review} />
     </div>
+  );
+}
+
+/** The photo while it's stored, or a plain note when it's gone or about to go ("Photo deleted"). */
+function ReceiptPhoto({ review }: { review: ReceiptReview }) {
+  if (review.hasImage) {
+    const until = review.imageDeleteAfter ? new Date(review.imageDeleteAfter) : null;
+    return (
+      <div className="mt-8">
+        <ReceiptImage id={review.id} />
+        {until && until.getTime() > Date.now() && (
+          <p className="mt-2 text-[12px] text-ink-4">
+            The photo is deleted on {until.toLocaleDateString("en-AU", { day: "numeric", month: "short", year: "numeric" })}. The items stay. You can change this in{" "}
+            <Link href="/settings/privacy" className="underline underline-offset-2">
+              Privacy &amp; data
+            </Link>
+            .
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (!review.imageDeleted) return null;
+  return (
+    <p className="mt-8 text-[13px] text-ink-3">
+      <span className="font-semibold text-ink-2">Photo deleted.</span> The items you added stay; the photo was removed as you chose in{" "}
+      <Link href="/settings/privacy" className="underline underline-offset-2">
+        Privacy &amp; data
+      </Link>
+      .
+    </p>
   );
 }
 
 function ReceiptImage({ id }: { id: string }) {
   return (
-    <details className="mt-8">
+    <details>
       <summary className="cursor-pointer text-[13px] font-semibold text-ink-3">Show the photo</summary>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={`/api/receipts/${id}/image`} alt="Receipt photo" loading="lazy" className="mt-3 max-h-[80vh] w-auto rounded-xl border border-line object-contain" />

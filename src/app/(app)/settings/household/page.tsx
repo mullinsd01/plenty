@@ -71,7 +71,7 @@ export default async function HouseholdSettingsPage() {
           description="Send a link to anyone you live with. They get their own account and see what the household shares."
         >
           {!room.ok && (
-            <UpgradeNote plan={upgradePlan} className="mb-4">
+            <UpgradeNote plan={upgradePlan} feature="members" className="mb-4">
               {room.message}
             </UpgradeNote>
           )}

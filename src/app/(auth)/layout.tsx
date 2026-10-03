@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PlentyLogo } from "@/components/brand/logo";
 import { ProductGlimpse } from "@/features/auth/product-glimpse";
+import { LegalFooterLinks } from "@/features/legal/legal-ui";
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -10,7 +11,10 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <PlentyLogo className="h-7" />
         </Link>
         <main className="mx-auto flex w-full max-w-[380px] flex-1 flex-col justify-center py-10">{children}</main>
-        <p className="text-center text-xs text-ink-4 lg:text-left">Your household, figured out.</p>
+        <div className="flex flex-col items-center gap-2 text-xs text-ink-4 lg:items-start">
+          <p>Your household, figured out.</p>
+          <LegalFooterLinks />
+        </div>
       </div>
       <aside className="relative hidden overflow-hidden bg-subtle lg:block">
         <ProductGlimpse />

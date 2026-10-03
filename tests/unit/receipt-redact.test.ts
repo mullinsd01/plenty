@@ -24,7 +24,6 @@ const fixtureReceipts = (): Record<string, string> =>
   );
 
 const redact = redactReceiptText;
-const has = (text: string, needle: string | RegExp) => (typeof needle === "string" ? text.includes(needle) : needle.test(text));
 
 // ─── What must go ───────────────────────────────────────────────────────────
 

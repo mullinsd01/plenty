@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { PlentyLogo, PlentyMark } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { ProductGlimpse } from "@/features/auth/product-glimpse";
+import { LegalFooterLinks } from "@/features/legal/legal-ui";
 import { getAuthUser } from "@/server/auth/context";
 
 export default async function LandingPage() {
@@ -65,9 +66,12 @@ export default async function LandingPage() {
         </section>
       </main>
 
-      <footer className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-10 text-sm text-ink-3">
-        <PlentyMark className="h-5" />
-        Plenty · Your household, figured out.
+      <footer className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-6 py-10 text-sm text-ink-3">
+        <span className="flex items-center gap-3">
+          <PlentyMark className="h-5" />
+          Plenty · Your household, figured out.
+        </span>
+        <LegalFooterLinks className="flex flex-wrap gap-x-4 gap-y-1 sm:ml-auto" />
       </footer>
     </div>
   );

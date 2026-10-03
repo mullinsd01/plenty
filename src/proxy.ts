@@ -2,7 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const SESSION_COOKIE = "plenty_session";
 
-/** App areas that need a signed-in user. The pages themselves re-validate the session. */
+/**
+ * App areas that need a signed-in user. The pages themselves re-validate the session.
+ * Everything else is public on purpose: the landing page, sign-in and sign-up, invitations,
+ * and the legal pages the stores require to be reachable without an account
+ * (/privacy, /terms, /support, /delete-account, /account-deleted). Add a public page
+ * simply by not listing it here (tests/unit/proxy-public.test.ts keeps both lists honest).
+ */
 const PROTECTED = [
   "/home",
   "/kitchen",

@@ -109,6 +109,17 @@ export function SignUpForm({ next }: { next?: string }) {
       <Button type="submit" size="lg" block loading={pending}>
         Create account
       </Button>
+      <p className="text-center text-[13px] leading-relaxed text-ink-3">
+        By creating an account you confirm you&apos;re 18 or over and agree to the{" "}
+        <Link href="/terms" target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">
+          Terms
+        </Link>{" "}
+        and{" "}
+        <Link href="/privacy" target="_blank" rel="noopener" className="font-medium text-ink underline underline-offset-2">
+          Privacy Policy
+        </Link>
+        .
+      </p>
     </form>
   );
 }

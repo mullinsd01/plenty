@@ -3,7 +3,9 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
+import { LegalFooterLinks } from "@/features/legal/legal-ui";
 import { SETTINGS_SECTIONS } from "@/features/settings/settings-nav";
+import { PLANS } from "@/lib/billing/plans";
 import { isRestricted } from "@/lib/members/permissions";
 import { requireHousehold } from "@/server/auth/context";
 
@@ -22,12 +24,16 @@ export default async function SettingsPage() {
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-[15px] font-semibold">{s.label}</span>
-              <span className="block truncate text-[13px] text-ink-3">{s.description}</span>
+              <span className="block truncate text-[13px] text-ink-3">{s.href === "/settings/plan" ? PLANS[ctx.plan.plan].name : s.description}</span>
             </span>
             <ChevronRight className="size-4 text-ink-4" />
           </Link>
         ))}
       </Card>
+      <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[13px]">
+        <span className="text-ink-4">About Plenty</span>
+        <LegalFooterLinks />
+      </div>
     </div>
   );
 }

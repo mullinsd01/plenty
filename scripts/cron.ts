@@ -22,6 +22,9 @@ async function main() {
   const { pruneAnalyticsEvents } = await import("../src/server/analytics-intake");
   const pruned = await pruneAnalyticsEvents();
   if (pruned) console.log(`✓ Analytics: ${pruned} old events deleted`);
+  const { pruneExpiredAuthRecords } = await import("../src/server/services/housekeeping");
+  const signIns = await pruneExpiredAuthRecords();
+  if (signIns.sessions || signIns.resetTokens) console.log(`✓ Sign-in records: ${signIns.sessions} expired sessions and ${signIns.resetTokens} spent reset links deleted`);
   const { terminateOcrWorker } = await import("../src/server/receipts/ocr");
   await terminateOcrWorker();
   const { pool } = await import("../src/server/db/client");

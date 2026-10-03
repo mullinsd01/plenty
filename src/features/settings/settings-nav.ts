@@ -1,4 +1,4 @@
-import { Bell, CircleUser, Lock, ShoppingBasket, Users, UtensilsCrossed, type LucideIcon } from "lucide-react";
+import { Bell, CircleUser, CreditCard, Lock, ShoppingBasket, Users, UtensilsCrossed, type LucideIcon } from "lucide-react";
 
 export const SETTINGS_SECTIONS: Array<{
   href: string;
@@ -13,5 +13,6 @@ export const SETTINGS_SECTIONS: Array<{
   { href: "/settings/food", label: "Food preferences", description: "Allergies, diets, dislikes, cuisines", icon: UtensilsCrossed },
   { href: "/settings/shopping", label: "Shopping & budget", description: "Stores, budget, shopping day", icon: ShoppingBasket },
   { href: "/settings/notifications", label: "Notifications", description: "What Plenty nudges you about", icon: Bell, childSafe: true },
-  { href: "/settings/privacy", label: "Privacy & data", description: "AI processing, export, delete", icon: Lock },
+  { href: "/settings/plan", label: "Plan & billing", description: "Your plan, usage and billing", icon: CreditCard },
+  { href: "/settings/privacy", label: "Privacy & data", description: "AI permission, photos, analytics, export, delete", icon: Lock },
 ];

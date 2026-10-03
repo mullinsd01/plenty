@@ -35,11 +35,11 @@ export function DataGroupDetails({ group, defaultOpen = false }: { group: DataGr
   );
 }
 
-export function DataGroups({ openFirst = false }: { openFirst?: boolean }) {
+export function DataGroups({ openFirst = false, openAll = false }: { openFirst?: boolean; openAll?: boolean }) {
   return (
     <div className="space-y-2.5">
       {DATA_GROUPS.map((g, i) => (
-        <DataGroupDetails key={g.id} group={g} defaultOpen={openFirst && i === 0} />
+        <DataGroupDetails key={g.id} group={g} defaultOpen={openAll || (openFirst && i === 0)} />
       ))}
     </div>
   );

@@ -231,7 +231,7 @@ export function AddPersonButton({
         size="sm"
       >
         {limitNote ? (
-          <UpgradeNote plan={upgradePlan}>{limitNote}</UpgradeNote>
+          <UpgradeNote plan={upgradePlan} feature="members">{limitNote}</UpgradeNote>
         ) : (
           <form
             className="space-y-4"

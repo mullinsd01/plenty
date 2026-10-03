@@ -54,7 +54,7 @@ type Stage =
   | { kind: "duplicate"; receiptId: string; date: string | null; added: boolean; blob: Blob; preview: string }
   | { kind: "error"; message: string };
 
-export function ReceiptUploader() {
+export function ReceiptUploader({ notice }: { notice?: React.ReactNode }) {
   const router = useRouter();
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
   const [dragging, setDragging] = useState(false);
@@ -176,6 +176,7 @@ export function ReceiptUploader() {
 
   return (
     <div className="space-y-6">
+      {notice}
       {stage.kind === "error" && (
         <div role="alert" className="flex gap-3 rounded-2xl bg-alert-soft px-4 py-3.5 text-[14px] text-alert">
           <CircleAlert className="mt-0.5 size-4 shrink-0" />
