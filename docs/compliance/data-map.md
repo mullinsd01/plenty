@@ -42,7 +42,7 @@ Keep this file in step with the code. The test `tests/integration/account-deleti
 | `predictions` | run-out estimates with reasons | "Running low" | Service | Scope rules | Hosting/DB | Recomputed; as above | As above |
 | `products` | household custom products (global catalog rows have no household) | Names for your own products | Service | Members | Hosting/DB | Until deleted | Cascade |
 | `product_aliases` | receipt wording to product mappings | Recognise receipt wording | Service | Adults (not children) | Hosting/DB | Until household deletion | Cascade |
-| `product_barcodes` | barcode, name, brand, size for household-added or cached products | Barcode scanning (feature not shipped yet) | Service | Global rows: members read. Household rows: members | The public product database receives only the barcode, when the feature ships | Until household deletion | Cascade |
+| `product_barcodes` | barcode, name, brand, size for household-added or cached products | Barcode scanning (Plus): a household's own barcode → product mapping, plus a shared cache of public answers (30 days; "not found" 3 days) | Service | Global (cache) rows: members read. Household rows: members (a child account can look up and add, but its barcodes are not saved to the household mapping) | The public product database receives only the barcode number, only when `BARCODE_LOOKUP=openfoodfacts` | Until household deletion | Cascade |
 | `meals`, `meal_ingredients` | household recipes (user-added or AI-generated; library rows have no household) | Meals | Service | Members | Hosting/DB. AI-generated ones came from the provider only with consent | Until deleted | Cascade |
 | `meal_preferences` | likes/dislikes and counts | Better suggestions | Service | Members | Hosting/DB | Until household deletion | Cascade |
 | `meal_plans`, `meal_plan_items` | plan dates, slots, chosen meals | Planning | Service | Members | Hosting/DB | Until deleted | Cascade |
@@ -75,7 +75,8 @@ Keep this file in step with the code. The test `tests/integration/account-deleti
 | Stripe | Customer email and plan for checkout; card details go to Stripe's hosted page | Web purchase | Only if `STRIPE_SECRET_KEY` is set |
 | Apple / Google | Plenty receives status and ids; sends verification requests | Store purchases | Only if configured |
 | **AI provider (Anthropic)** | Receipt photo + date, currency, chosen shops; **or** kitchen item names/amounts/use-by dates, diets, allergies, dislikes, cuisines, rejected meal names; **or** a grocery photo (feature later). Never names, emails, other household data | Only when that feature is used, the household has consented (recorded with who and when), the plan includes it and a key is configured. Re-checked on every call | `src/server/ai/consent.ts`; household can withdraw at any time |
-| Public product database | Barcode number only | When barcode scanning ships | Not shipped |
+| Public product database (Open Food Facts, `world.openfoodfacts.org`) | Barcode number only (fixed host, 3 s timeout, no redirects, a Plenty user-agent; no household, account or IP detail is sent by Plenty) | When a barcode isn't in the household's mapping or the shared cache and `BARCODE_LOOKUP=openfoodfacts` (the default outside tests; set `off` to disable) | Shipped; its own privacy terms apply to what it receives |
+| **AI provider (Anthropic), photo recognition** | A grocery photo, downscaled with metadata stripped, plus a fixed instruction. Nothing about the household. The photo is processed in memory and **never stored** | Only with the household's explicit AI consent, on Plus or above, with an AI service configured | Shipped |
 
 ## 7. Deletion summary (verified by `tests/integration/account-deletion.test.ts`)
 

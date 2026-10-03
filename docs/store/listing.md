@@ -23,7 +23,7 @@ Facts used: Plans **Free**, **Plus** ($4.99/month, $49.99/year) and **Family** (
 
 ## 2. Full description (draft)
 
-Only the lines that exist today. Two Plus features, **barcode scanning** and **photo recognition**, are in the plan list but not built: **delete those lines from the description and screenshots unless they ship in the build you submit.**
+Only the lines that exist today. Two Plus features, **barcode scanning** and **photo recognition**, are built. Barcode scanning works in the browser camera of the web app and needs a camera on the device; **photo recognition only works when the operator has configured an AI service and the household has consented**, so describe it that way ("with your permission") and do not show it in screenshots from a build without an AI service. Neither has been tried in an iOS or Android shell.
 
 > Plenty keeps track of what's in your kitchen, so you know what you have, what's running low and what to buy.
 >
@@ -46,7 +46,7 @@ Only the lines that exist today. Two Plus features, **barcode scanning** and **p
 > • Recurring purchases
 > • Weekly meal plans that turn into shopping lists
 > • Purchase history and email notifications
-> • *(Only if shipped: barcode scanning and photo recognition.)*
+> • Barcode scanning, and photo recognition with your permission (Plus).
 >
 > **Plenty Family** — $8.99 a month or $89.99 a year
 > • Everything in Plus, for up to 12 people
@@ -176,7 +176,7 @@ Every marketing claim above, mapped to code. If a row can't be ticked for the bu
 | Purchase history; email notifications | `purchase_history`; `emailDigest` (`advanced_notifications`) | Built |
 | Household grocery and waste analytics; each person's own pattern | `household_analytics`; `individualPatterns` | Built |
 | Priority support | `priority_support` flag only | **Operational promise, not code**: only keep it if someone answers Family users first |
-| Barcode scanning; photo recognition | `barcode_scanning`, `photo_recognition` flags and `product_barcodes` table | **Not built**: remove unless shipped |
+| Barcode scanning; photo recognition | `src/lib/barcode.ts`, `src/server/services/barcodes.ts`, `src/features/kitchen/scan/*`, `src/server/services/photo-recognition.ts`, tests `barcode-scanning` and `photo-recognition` | **Built.** Verified with a fake camera on the web build; the live AI vision call, Open Food Facts and the native iOS/Android scanners are **not verified** |
 | Receipt photos deleted once checked, unless you choose to keep them | `src/server/services/receipt-privacy.ts`; `tests/integration/receipt-privacy.test.ts` | Built |
 | Nothing is sent to an AI service unless you turn it on | same as above; `tests/unit/ai-consent.test.ts` | Built |
 | Delete your account any time | `src/features/privacy/delete-account.tsx`; `tests/integration/account-deletion.test.ts` | Built |
