@@ -13,7 +13,6 @@ import * as households from "@/server/services/household";
 import * as members from "@/server/services/members";
 import * as privacy from "@/server/services/privacy";
 import { RETENTION_POLICIES } from "@/server/services/receipt-privacy";
-import { planAccountDeletion } from "@/server/services/account-deletion";
 import { DELETE_CONFIRMATION } from "@/lib/privacy";
 import { changePasswordSchema, emailSchema, nameSchema } from "@/validation/auth";
 import { householdBasicsSchema, notificationSettingsSchema, preferencesSchema, type PreferencesInput } from "@/validation/household";
@@ -132,10 +131,9 @@ export async function deleteAccountAction(input: { password: string; confirm: st
       throw new AppError("validation", `Type ${DELETE_CONFIRMATION} to confirm.`, { confirm: `Type ${DELETE_CONFIRMATION} to confirm.` });
     }
     await enforceRateLimit(`delete-account:${user.id}`, 5, 900, "deleting your account");
-    // Read before deleting: afterwards there's nothing left to say which subscriptions to cancel.
-    const plan = await planAccountDeletion(user.id);
-    await deleteAccount(user.id, String(input?.password ?? ""));
-    notice = [...new Set(plan.households.map((h) => h.subscription?.provider).filter(Boolean))].join(",");
+    const result = await deleteAccount(user.id, String(input?.password ?? ""));
+    // Only a store subscription needs cancelling by the person; a web one was cancelled before anything was deleted.
+    notice = result.storeSubscriptions.join(",");
     await clearSessionCookie();
   } catch (err) {
     return toUserError(err, "settings.deleteAccount");

@@ -136,9 +136,9 @@ export async function updateEmail(userId: string, email: string, password: strin
  * the deletion is refused until someone else is made an owner (nothing is
  * handed over silently). See `services/account-deletion.ts` for the details.
  */
-export async function deleteAccount(userId: string, password: string): Promise<{ deletedHouseholdIds: string[]; leftHouseholdIds: string[] }> {
+export async function deleteAccount(userId: string, password: string): ReturnType<typeof deleteUserAndData> {
   const [user] = await systemDb.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!user) return { deletedHouseholdIds: [], leftHouseholdIds: [] };
+  if (!user) return { deletedHouseholdIds: [], leftHouseholdIds: [], storeSubscriptions: [] };
   if (user.isDemo) throw new AppError("forbidden", "The demo account can't be deleted.");
   if (!(await verifyPassword(user.passwordHash, password))) {
     throw new AppError("validation", "Your password isn't right.", { password: "Your password isn't right." });

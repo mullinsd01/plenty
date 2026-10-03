@@ -2,9 +2,11 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { cheapestPlanWith, PLANS, type PlanId } from "@/lib/billing/plans";
 import { denialMessage, EXTERNAL_AI_PROVIDER } from "@/lib/ai/consent";
-import { resolveAiAccess } from "@/server/ai";
+import { aiStatus, resolveAiAccess } from "@/server/ai";
 import type { AuthUser, HouseholdContext } from "@/server/auth/context";
 import { withUser } from "@/server/db/client";
+import { env } from "@/server/env";
+import type { ProcessorConfig } from "@/lib/privacy-content";
 import { preferences, profiles } from "@/server/db/schema";
 import { AppError } from "@/server/errors";
 import { requireCapability } from "@/server/permissions";
@@ -125,4 +127,18 @@ export async function setAnalyticsOptOut(user: AuthUser, optOut: boolean): Promi
   await withUser(user.id, async (tx) => {
     await tx.update(profiles).set({ analyticsOptOut: optOut }).where(eq(profiles.userId, user.id));
   });
+}
+
+/** Which outside companies this Plenty is set up to use, for the privacy pages. Only what's configured is listed. */
+export function processorConfig(): ProcessorConfig {
+  const e = env();
+  const ai = aiStatus();
+  return {
+    email: Boolean(e.SMTP_URL),
+    stripe: Boolean(e.STRIPE_SECRET_KEY),
+    apple: Boolean(e.APPLE_BUNDLE_ID),
+    google: Boolean(e.GOOGLE_PLAY_PACKAGE_NAME),
+    aiConfigured: ai.externalConfigured,
+    aiProviderName: ai.providerName ?? EXTERNAL_AI_PROVIDER.name,
+  };
 }

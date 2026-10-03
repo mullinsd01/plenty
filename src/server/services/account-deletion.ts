@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 import { PLANS, isPlanId, type PlanId } from "@/lib/billing/plans";
 import { deleteAnalyticsFor } from "@/server/analytics";
+import { prepareHouseholdDeletion } from "@/server/billing/service";
 import { systemDb, withSystem, type Tx } from "@/server/db/client";
 import {
   emailOutbox,
@@ -30,9 +31,11 @@ import { detachMember } from "./members";
  *    the deletion is refused until another person has been made an owner, so a
  *    household is never left without one and nobody becomes an owner by surprise.
  *
- * Deleting never cancels a subscription: that lives with Stripe, Apple or Google,
- * and only they can end it. `planAccountDeletion` tells the person which ones to
- * cancel; the records in Plenty are deleted either way.
+ * Subscriptions: before a household is deleted, billing cancels a web (Stripe)
+ * subscription so nobody keeps paying for a household that's gone, and stops the
+ * deletion if it can't. An App Store or Google Play subscription can only be
+ * cancelled in the store, so the person is told (before and after) to do that;
+ * Plenty never claims to have cancelled one. Its own records go either way.
  */
 
 export type HouseholdOutcome = "delete" | "leave" | "blocked";
@@ -42,9 +45,11 @@ export interface SubscriptionNotice {
   provider: "web" | "apple" | "google";
   plan: PlanId;
   planName: string;
-  /** It will renew unless cancelled with the provider. */
+  /** It will renew unless cancelled. */
   autoRenew: boolean;
   currentPeriodEnd: string | null;
+  /** Plenty cancels it as part of deleting (a web subscription). Otherwise the person has to cancel it in the store. */
+  cancelledOnDelete: boolean;
 }
 
 export interface HouseholdDeletionPlan {
@@ -79,6 +84,7 @@ function subscriptionNotice(row: typeof subscriptions.$inferSelect | undefined):
     planName: PLANS[row.plan].name,
     autoRenew: row.autoRenew,
     currentPeriodEnd: row.currentPeriodEnd?.toISOString() ?? null,
+    cancelledOnDelete: row.provider === "web" && Boolean(row.providerSubscriptionId),
   };
 }
 
@@ -119,7 +125,19 @@ export async function purgeHouseholdArtifacts(householdId: string): Promise<void
  * Delete a user and what hangs off them, in one transaction: either all of it
  * or (when refused) none of it. Authorisation (the password) is checked by the caller.
  */
-export async function deleteUserAndData(userId: string): Promise<{ deletedHouseholdIds: string[]; leftHouseholdIds: string[] }> {
+export async function deleteUserAndData(
+  userId: string,
+): Promise<{ deletedHouseholdIds: string[]; leftHouseholdIds: string[]; storeSubscriptions: Array<"apple" | "google"> }> {
+  // Look first, so nothing outside the database is touched for a deletion that will be refused.
+  const plan = await planAccountDeletion(userId);
+  const blocked = plan.blockedBy[0];
+  if (blocked) throw new AppError("conflict", BLOCKED_MESSAGE(blocked.name));
+  // Stop a web subscription billing a household that's about to go (throws, and nothing is deleted, if it can't be stopped).
+  const storeSubscriptions = new Set<"apple" | "google">();
+  for (const h of plan.households.filter((x) => x.outcome === "delete")) {
+    const billing = await prepareHouseholdDeletion(h.id);
+    if (billing.storeManaged) storeSubscriptions.add(billing.storeManaged);
+  }
   const result = await withSystem(async (tx) => {
     const [user] = await tx.select({ email: users.email }).from(users).where(eq(users.id, userId)).limit(1);
     if (!user) return { deletedHouseholdIds: [], leftHouseholdIds: [], email: null as string | null };
@@ -163,7 +181,7 @@ export async function deleteUserAndData(userId: string): Promise<{ deletedHouseh
   });
   // Outside the database: photos and analytics for the households that went.
   await Promise.all(result.deletedHouseholdIds.map(purgeHouseholdArtifacts));
-  return { deletedHouseholdIds: result.deletedHouseholdIds, leftHouseholdIds: result.leftHouseholdIds };
+  return { deletedHouseholdIds: result.deletedHouseholdIds, leftHouseholdIds: result.leftHouseholdIds, storeSubscriptions: [...storeSubscriptions] };
 }
 
 /** The paid plan, billed outside Plenty, that deleting this household removes the record of (null when there isn't one). */

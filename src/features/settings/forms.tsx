@@ -27,11 +27,12 @@ import {
   type Diet,
 } from "@/lib/domain";
 import { WEEKDAY_NAMES } from "@/lib/dates";
+import { SubscriptionCancelNotice } from "@/features/privacy/delete-account";
+import type { SubscriptionNotice } from "@/server/services/account-deletion";
 import {
   changeEmailAction,
   changePasswordAction,
   createInviteAction,
-  deleteAccountAction,
   deleteHouseholdAction,
   leaveHouseholdAction,
   removeMemberAction,
@@ -145,35 +146,6 @@ export function SignOutEverywhere() {
     <Button variant="secondary" loading={pending} onClick={() => run(() => signOutEverywhereAction())}>
       <LogOut /> Sign out on all devices
     </Button>
-  );
-}
-
-export function DeleteAccount({ isDemo }: { isDemo: boolean }) {
-  const [open, setOpen] = useState(false);
-  const [password, setPassword] = useState("");
-  const { pending, run } = useAction();
-  return (
-    <>
-      <Button variant="danger-subtle" onClick={() => setOpen(true)} disabled={isDemo}>
-        <Trash2 /> Delete my account
-      </Button>
-      <ConfirmDialog
-        open={open}
-        onOpenChange={setOpen}
-        title="Delete your account?"
-        description="This permanently deletes your account. Households where you're the only member are deleted with everything in them. This can't be undone."
-        confirmLabel="Delete everything"
-        destructive
-        loading={pending}
-        onConfirm={() => run(() => deleteAccountAction(password))}
-      >
-        <div className="mt-4">
-          <Field label="Your password" htmlFor="del-pw">
-            <Input id="del-pw" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" />
-          </Field>
-        </div>
-      </ConfirmDialog>
-    </>
   );
 }
 
@@ -338,7 +310,20 @@ export function InviteLink({ initial, appUrl, isDemo }: { initial: { code: strin
   );
 }
 
-export function DangerZone({ householdName, isOwner, memberCount, isDemo }: { householdName: string; isOwner: boolean; memberCount: number; isDemo: boolean }) {
+export function DangerZone({
+  householdName,
+  isOwner,
+  memberCount,
+  isDemo,
+  subscription = null,
+}: {
+  householdName: string;
+  isOwner: boolean;
+  memberCount: number;
+  isDemo: boolean;
+  /** A paid plan billed outside Plenty, which deleting the household doesn't cancel. */
+  subscription?: SubscriptionNotice | null;
+}) {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirmName, setConfirmName] = useState("");
@@ -370,12 +355,17 @@ export function DangerZone({ householdName, isOwner, memberCount, isDemo }: { ho
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title="Delete this household?"
-        description="Everything in it — kitchen, receipts, what Plenty learned, meal plans and lists — is permanently deleted for every member."
+        description={`Everything in it is permanently deleted for every person in the household, and this can't be undone: the kitchen, shopping lists, recurring items, meal plans and recipes, receipts and their photos, what Plenty has learned, notifications, usage and subscription records${memberCount > 1 ? `, and the ${memberCount} people in it lose access` : ""}.`}
         confirmLabel="Delete household"
         destructive
         loading={del.pending}
         onConfirm={() => del.run(() => deleteHouseholdAction(confirmName))}
       >
+        {subscription && (
+          <div className="mt-4">
+            <SubscriptionCancelNotice subscription={subscription} what="household" />
+          </div>
+        )}
         <div className="mt-4">
           <Field label={`Type “${householdName}” to confirm`} htmlFor="del-hh">
             <Input id="del-hh" value={confirmName} onChange={(e) => setConfirmName(e.target.value)} />
@@ -686,32 +676,6 @@ export function NotificationSettingsForm({ initial }: { initial: NotificationPre
 }
 
 // ─── Privacy ────────────────────────────────────────────────────────────────
-
-export function AiProcessingToggle({ allowed, externalConfigured }: { allowed: boolean; externalConfigured: boolean }) {
-  const [value, setValue] = useState(allowed);
-  const { pending, run } = useAction();
-  return (
-    <div className="flex items-start justify-between gap-4">
-      <label htmlFor="ai-toggle" className="min-w-0">
-        <span className="block text-[15px] font-medium">Use AI to read receipts and suggest recipes</span>
-        <span className="mt-1 block text-[13px] leading-relaxed text-ink-3">
-          {externalConfigured
-            ? "Receipt photos and a summary of your kitchen are sent to Anthropic's Claude to read receipts and write recipes. Turn this off to keep everything on Plenty's server — receipts are then read with on-device OCR."
-            : "No AI service is configured on this server, so receipts are already read on-device and nothing leaves Plenty's server."}
-        </span>
-      </label>
-      <Switch
-        id="ai-toggle"
-        checked={value}
-        disabled={pending}
-        onCheckedChange={(v) => {
-          setValue(v);
-          run(() => updatePreferencesAction({ allowAiProcessing: v }), { onError: () => setValue(!v) });
-        }}
-      />
-    </div>
-  );
-}
 
 export function ExportButton() {
   return (

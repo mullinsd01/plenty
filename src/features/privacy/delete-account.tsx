@@ -7,45 +7,52 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/field";
 import { Sheet } from "@/components/ui/sheet";
 import { useAction } from "@/components/hooks/use-action";
-import { APPLE_MANAGE_URL, BILLING_PATH, googleManageUrl } from "@/lib/billing/management";
+import { APPLE_MANAGE_URL, googleManageUrl } from "@/lib/billing/management";
 import { DELETE_CONFIRMATION } from "@/lib/privacy";
 import { deleteAccountAction } from "@/features/settings/actions";
 import type { AccountDeletionPlan, SubscriptionNotice } from "@/server/services/account-deletion";
 
-/** Where to cancel, by who bills for it. Never says Plenty cancelled anything: it can't. */
+/**
+ * What happens to a paid plan when its household is deleted. A web subscription is cancelled for the person
+ * (and the deletion stops if that fails); an App Store or Google Play one can only be cancelled in the store,
+ * so the way is spelled out. Never says Plenty cancelled something it can't.
+ */
 export function SubscriptionCancelNotice({ subscription, what }: { subscription: SubscriptionNotice; what: "account" | "household" }) {
-  const where =
-    subscription.provider === "apple" ? (
-      <>
-        Cancel it in your Apple ID subscription settings:{" "}
-        <a className="inline-flex items-center gap-1 font-medium underline underline-offset-2" href={APPLE_MANAGE_URL} target="_blank" rel="noopener noreferrer">
-          open subscriptions <ExternalLink className="size-3" aria-hidden />
-        </a>
-        . Or on an iPhone: Settings → your name → Subscriptions.
-      </>
-    ) : subscription.provider === "google" ? (
-      <>
-        Cancel it in Google Play:{" "}
-        <a className="inline-flex items-center gap-1 font-medium underline underline-offset-2" href={googleManageUrl()} target="_blank" rel="noopener noreferrer">
-          open subscriptions <ExternalLink className="size-3" aria-hidden />
-        </a>
-        . Or in the Play Store app: profile picture → Payments &amp; subscriptions → Subscriptions.
-      </>
-    ) : (
-      <>
-        Cancel it on the{" "}
-        <Link className="font-medium underline underline-offset-2" href={BILLING_PATH}>
-          plan page
-        </Link>{" "}
-        (it opens the billing portal), before deleting.
-      </>
+  if (subscription.cancelledOnDelete) {
+    return (
+      <div role="note" className="rounded-xl bg-subtle px-4 py-3 text-[13px] leading-relaxed text-ink-2">
+        <p className="font-semibold text-ink">Your {subscription.planName} subscription will be cancelled.</p>
+        <p className="mt-1">
+          It&apos;s billed on the web, so Plenty cancels it as part of deleting your {what} and you won&apos;t be charged again. If it can&apos;t be cancelled, nothing is deleted and you&apos;ll be told why.
+        </p>
+      </div>
     );
+  }
+  const store = subscription.provider === "apple" ? "Apple" : "Google";
   return (
     <div role="note" className="rounded-xl bg-soon-soft px-4 py-3 text-[13px] leading-relaxed text-ink-2">
-      <p className="font-semibold text-ink">Deleting your {what} does not cancel your {subscription.planName} subscription.</p>
+      <p className="font-semibold text-ink">
+        Deleting your {what} does not cancel your {subscription.planName} subscription.
+      </p>
       <p className="mt-1">
-        It&apos;s billed by {subscription.provider === "apple" ? "Apple" : subscription.provider === "google" ? "Google" : "our payment provider"}, and only they can end it
-        {subscription.autoRenew ? ", so it keeps renewing until you do" : ""}. Plenty removes its record of the subscription either way. {where}
+        It&apos;s billed by {store}, and only {store} can end it{subscription.autoRenew ? ", so it keeps renewing until you do" : ""}. Plenty removes its own record of it either way. Cancel it{" "}
+        {subscription.provider === "apple" ? (
+          <>
+            in your Apple ID subscription settings (
+            <a className="inline-flex items-center gap-1 font-medium underline underline-offset-2" href={APPLE_MANAGE_URL} target="_blank" rel="noopener noreferrer">
+              open subscriptions <ExternalLink className="size-3" aria-hidden />
+            </a>
+            , or on an iPhone: Settings → your name → Subscriptions).
+          </>
+        ) : (
+          <>
+            in Google Play (
+            <a className="inline-flex items-center gap-1 font-medium underline underline-offset-2" href={googleManageUrl()} target="_blank" rel="noopener noreferrer">
+              open subscriptions <ExternalLink className="size-3" aria-hidden />
+            </a>
+            , or in the Play Store app: profile picture → Payments &amp; subscriptions → Subscriptions).
+          </>
+        )}
       </p>
     </div>
   );

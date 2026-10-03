@@ -15,6 +15,7 @@ import type { AuthUser, HouseholdContext } from "@/server/auth/context";
 import { generateCode } from "@/server/auth/crypto";
 import { planFlags } from "@/lib/billing/plans";
 import { countMembers, resolveHouseholdPlan } from "@/server/billing/entitlements";
+import { prepareHouseholdDeletion } from "@/server/billing/service";
 import { AppError } from "@/server/errors";
 import { refreshLearning } from "@/server/services/learning";
 import { purgeHouseholdArtifacts } from "@/server/services/account-deletion";
@@ -317,14 +318,18 @@ export async function leaveHousehold(ctx: HouseholdContext): Promise<void> {
 }
 
 /** Permanently delete the household and everything in it (owner only). */
-export async function deleteHousehold(ctx: HouseholdContext): Promise<void> {
+export async function deleteHousehold(ctx: HouseholdContext): Promise<Awaited<ReturnType<typeof prepareHouseholdDeletion>>> {
   if (ctx.role !== "owner") throw new AppError("forbidden", "Only the household owner can delete it.");
+  // Stops a web subscription from billing a household that's about to go; throws (and nothing is deleted) if it can't.
+  // An App Store or Google Play subscription can only be cancelled in the store, which the confirmation tells the owner.
+  const billing = await prepareHouseholdDeletion(ctx.household.id);
   await withUser(ctx.user.id, async (tx) => {
     await tx.delete(households).where(eq(households.id, ctx.household.id));
   });
   // What lives outside the database goes too: receipt photos and analytics. (A subscription billed by Stripe, Apple or
   // Google isn't cancelled by this; the person is told so before they confirm.)
   await purgeHouseholdArtifacts(ctx.household.id);
+  return billing;
 }
 
 export async function switchHousehold(user: AuthUser, householdId: string): Promise<void> {

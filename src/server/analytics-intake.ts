@@ -3,7 +3,10 @@ import { validateClientEvent, MAX_ANALYTICS_BODY } from "@/lib/analytics-validat
 import { detectPlatform } from "@/lib/billing/platform";
 import type { HouseholdContext } from "@/server/auth/context";
 import { checkRateLimit } from "@/server/auth/rate-limit";
+import { lt } from "drizzle-orm";
 import { analyticsSubject, track } from "@/server/analytics";
+import { systemDb } from "@/server/db/client";
+import { analyticsEvents } from "@/server/db/schema";
 
 /** At most this many client events per person per minute. */
 export const ANALYTICS_RATE_LIMIT = { limit: 120, windowSeconds: 60 } as const;
@@ -39,4 +42,14 @@ export async function recordClientAnalytics(ctx: HouseholdContext, rawBody: stri
   // `track` also checks this person's own opt-out before writing anything.
   await track(checked.event, { householdId: ctx.household.id, userId: ctx.user.id, plan: ctx.plan.plan, platform: detectPlatform(headers) }, checked.props);
   return { status: 202, recorded: true };
+}
+
+/** Analytics events are kept this long, then deleted. */
+export const ANALYTICS_RETENTION_DAYS = 395;
+
+/** Scheduled job: delete analytics older than the retention period. Idempotent. */
+export async function pruneAnalyticsEvents(now = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - ANALYTICS_RETENTION_DAYS * 86_400_000);
+  const removed = await systemDb.delete(analyticsEvents).where(lt(analyticsEvents.occurredAt, cutoff)).returning({ id: analyticsEvents.id });
+  return removed.length;
 }
