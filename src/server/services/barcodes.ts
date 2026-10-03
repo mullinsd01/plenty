@@ -87,7 +87,9 @@ function matchCatalogue(index: ProductIndex, suggested: Suggested): { product: P
 function displayName(p: OffProduct): string {
   const brand = p.brand;
   const withBrand = brand && !p.name.toLowerCase().includes(brand.toLowerCase()) ? `${brand} ${p.name}` : p.name;
-  return sentenceCase(withBrand).slice(0, 80);
+  // Keep brand capitalisation ("Pauls"); only tame labels shouted in capitals.
+  const tidy = withBrand === withBrand.toUpperCase() ? sentenceCase(withBrand) : withBrand;
+  return tidy.slice(0, 80);
 }
 
 function baseProposal(barcode: Barcode): BarcodeProposal {
@@ -100,6 +102,7 @@ function baseProposal(barcode: Barcode): BarcodeProposal {
     name: "",
     brand: null,
     sizeText: null,
+    size: null,
     productId: null,
     productName: null,
     match: "none",
@@ -111,10 +114,12 @@ function baseProposal(barcode: Barcode): BarcodeProposal {
 
 function withMatch(base: BarcodeProposal, suggested: Suggested, index: ProductIndex): BarcodeProposal {
   const matched = matchCatalogue(index, suggested);
-  if (!matched) return { ...base, ...suggested, match: "none" };
+  const size = parseSizeText(suggested.sizeText);
+  if (!matched) return { ...base, ...suggested, size, match: "none" };
   return {
     ...base,
     ...suggested,
+    size,
     productId: matched.product.id,
     productName: matched.product.name,
     match: matched.match,

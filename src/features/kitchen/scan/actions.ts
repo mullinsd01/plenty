@@ -22,7 +22,7 @@ export async function scanAccessAction() {
   return householdAction(
     "scan.access",
     async (ctx): Promise<ScanAccess> => ({
-      barcode: { allowed: ctx.plan.entitlements.barcode_scanning },
+      barcode: { allowed: ctx.plan.entitlements.barcode_scanning, publicLookup: barcodes.barcodeLookupMode() === "openfoodfacts" },
       photo: await photos.photoAvailability(ctx),
     }),
     { refresh: false },

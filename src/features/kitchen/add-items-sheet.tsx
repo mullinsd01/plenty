@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { ScanLine, X } from "lucide-react";
+import { Camera, ScanBarcode, ScanLine, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/field";
 import { HOUSEHOLD_OWNER, OwnerPicker, type OwnerValue } from "@/features/members/owner-picker";
@@ -12,6 +12,8 @@ import { useAction } from "@/components/hooks/use-action";
 import { parseQuickAdd } from "@/lib/quick-add";
 import { formatQuantity } from "@/lib/units";
 import { addItemsAction } from "./actions";
+import { BarcodeSheet } from "./scan/barcode-sheet";
+import { PhotoSheet } from "./scan/photo-sheet";
 
 const EXAMPLES = ["2 milk", "bread", "500g mince", "a dozen eggs", "bananas"];
 
@@ -23,6 +25,8 @@ export function AddItemsSheet({ open, onOpenChange }: { open: boolean; onOpenCha
   const [text, setText] = useState("");
   const [owner, setOwner] = useState<OwnerValue>(HOUSEHOLD_OWNER);
   const [showOwner, setShowOwner] = useState(false);
+  /** Typing is the default way in; scanning a barcode or photographing groceries swaps this sheet for the scanner. */
+  const [mode, setMode] = useState<"type" | "barcode" | "photo">("type");
   const { pending, run } = useAction();
   const items = useMemo(() => parseQuickAdd(text), [text]);
   const people = usePeople();
@@ -50,10 +54,17 @@ export function AddItemsSheet({ open, onOpenChange }: { open: boolean; onOpenCha
     );
   };
 
+  const handleOpenChange = (next: boolean) => {
+    if (!next) setMode("type");
+    onOpenChange(next);
+  };
+  if (mode === "barcode") return <BarcodeSheet open={open} onOpenChange={handleOpenChange} onBack={() => setMode("type")} />;
+  if (mode === "photo") return <PhotoSheet open={open} onOpenChange={handleOpenChange} onBack={() => setMode("type")} />;
+
   return (
     <Sheet
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={handleOpenChange}
       title="Add to your kitchen"
       description="Type what you've got, separated by commas. Plenty fills in the rest."
       footer={
@@ -134,6 +145,14 @@ export function AddItemsSheet({ open, onOpenChange }: { open: boolean; onOpenCha
             </div>
           )
         )}
+        <div className="grid grid-cols-2 gap-2">
+          <Button type="button" variant="secondary" onClick={() => setMode("barcode")}>
+            <ScanBarcode /> Scan barcode
+          </Button>
+          <Button type="button" variant="secondary" onClick={() => setMode("photo")}>
+            <Camera /> Photo of groceries
+          </Button>
+        </div>
         <div className="flex items-center gap-3 rounded-xl bg-subtle px-3.5 py-3 text-[13px] text-ink-2">
           <ScanLine className="size-4 shrink-0 text-brand" />
           <span className="flex-1">Just been shopping? Scanning the receipt is quicker.</span>

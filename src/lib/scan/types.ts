@@ -35,6 +35,8 @@ export interface BarcodeProposal {
   productName: string | null;
   /** How sure the match to the catalogue is. `none`: the name will become a new product. */
   match: "confident" | "likely" | "none";
+  /** The amount printed on the pack as a number and unit, when it is a plain weight or volume. Used for products not in the catalogue. */
+  size: { quantity: number; unit: Unit } | null;
   /** "Usual pack: 2 L" when the product is in the catalogue. */
   packLabel: string | null;
   /** Where Plenty would put it, as a default to change. */
@@ -119,6 +121,7 @@ export type PhotoAvailability =
 
 /** What the add-food screens may offer this household. Decided on the server, from the plan and settings. */
 export interface ScanAccess {
-  barcode: { allowed: boolean };
+  /** `publicLookup`: an unknown barcode number may be looked up in Open Food Facts (see BARCODE_LOOKUP). */
+  barcode: { allowed: boolean; publicLookup: boolean };
   photo: PhotoAvailability;
 }
