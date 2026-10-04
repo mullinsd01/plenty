@@ -2,11 +2,15 @@
   "name": "plenty-mobile",
   "version": "1.0.0",
   "private": true,
-  "description": "Plenty iOS shell (Capacitor): loads the hosted Plenty site in a WKWebView.",
+  "description": "Plenty iOS shell (Capacitor): loads the hosted Plenty site in a WKWebView and adds in-app purchases.",
   "scripts": {
+    "capacitor:sync:before": "node scripts/apply-app-config.mjs",
+    "apply-config": "node scripts/apply-app-config.mjs",
+    "check": "node scripts/apply-app-config.mjs --check && tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "cap:sync": "cap sync ios",
-    "cap:open": "cap open ios"
+    "sync": "cap sync ios",
+    "open": "cap open ios",
+    "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^8.5.2",
@@ -15,6 +19,9 @@
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
     "@types/node": "^22.0.0",
-    "typescript": "^5.9.0"
+    "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
