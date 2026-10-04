@@ -13,6 +13,7 @@ import {
   ocrVariant,
   prepareReceiptImage,
   ReceiptImageError,
+  rescaledVariant,
   type ReceiptImageErrorCode,
 } from "@/server/receipts/image";
 
@@ -216,5 +217,29 @@ describe("divideByBackground", () => {
     const pixels = new Uint8Array([100, 50, 200, 0]);
     const background = new Uint8Array([200, 100, 200, 0]);
     expect([...divideByBackground(pixels, background)]).toEqual([128, 128, 255, 0]);
+  });
+});
+
+describe("rescaledVariant", () => {
+  it("makes the OCR copy wider or narrower by the factor, keeping its proportions, within sane limits", async () => {
+    const variant = await ocrVariant(await sharp(fixture("coles-topup.png")).resize({ width: 800 }).png().toBuffer());
+    const original = await sharp(variant).metadata();
+    expect(original.width).toBe(OCR_MIN_WIDTH_PX);
+    const wider = await sharp(await rescaledVariant(variant, 1.25)).metadata();
+    expect(wider.width).toBe(2000);
+    expect(wider.height).toBe(Math.round(((original.height ?? 0) * 2000) / OCR_MIN_WIDTH_PX));
+    expect((await sharp(await rescaledVariant(variant, 0.8)).metadata()).width).toBe(1280);
+    // Never absurdly small or large, whatever the factor.
+    expect((await sharp(await rescaledVariant(variant, 0.1)).metadata()).width).toBe(900);
+    expect((await sharp(await rescaledVariant(variant, 9)).metadata()).width).toBe(2400);
+  });
+
+  it("returns a greyscale PNG and rejects undecodable input", async () => {
+    const variant = await ocrVariant(fixture("coles-topup.png"));
+    const out = await rescaledVariant(variant, 0.65);
+    const meta = await sharp(out).metadata();
+    expect(meta.format).toBe("png");
+    expect(meta.space).toBe("b-w");
+    await expect(rescaledVariant(Buffer.from("not an image"), 1.25)).rejects.toBeInstanceOf(ReceiptImageError);
   });
 });

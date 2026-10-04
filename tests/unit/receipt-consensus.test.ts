@@ -9,7 +9,17 @@ function line(description: string, price: number | null, extra: Partial<ParsedRe
 }
 
 function reading(lines: ParsedReceiptLine[], extra: Partial<Reading> = {}): Reading {
-  return { store: null, purchasedOn: null, dateRejection: null, total: null, subtotal: null, taxes: [], footerSeen: false, lines, ...extra };
+  return {
+    store: null,
+    purchasedOn: null,
+    dateRejection: null,
+    total: null,
+    subtotal: null,
+    taxes: [],
+    footerSeen: false,
+    lines,
+    ...extra,
+  };
 }
 
 describe("mergeReadings", () => {
@@ -40,13 +50,21 @@ describe("mergeReadings", () => {
   });
 
   it("adds an item that two readings found but the best reading missed, in receipt order", () => {
-    const merged = mergeReadings([reading([milk(3.1), eggs(6.2)]), reading([milk(3.1), bread(2.7), eggs(6.2)]), reading([milk(3.1), bread(2.7)])]);
+    const merged = mergeReadings([
+      reading([milk(3.1), eggs(6.2)]),
+      reading([milk(3.1), bread(2.7), eggs(6.2)]),
+      reading([milk(3.1), bread(2.7)]),
+    ]);
     expect(merged.lines.map((l) => l.description)).toEqual(["Full cream milk 2L", "White bread 700g", "Free range eggs 12pk"]);
   });
 
   it("drops an item only one reading saw unless it is in the best reading", () => {
     const junk = line("Wakable Ttews", 1.18);
-    const merged = mergeReadings([reading([milk(3.1), bread(2.7)]), reading([milk(3.1), junk, bread(2.7)]), reading([milk(3.1), bread(2.7)])]);
+    const merged = mergeReadings([
+      reading([milk(3.1), bread(2.7)]),
+      reading([milk(3.1), junk, bread(2.7)]),
+      reading([milk(3.1), bread(2.7)]),
+    ]);
     expect(merged.lines.map((l) => l.description)).toEqual(["Full cream milk 2L", "White bread 700g"]);
     // With only two readings neither can outvote the other: the better one's lines stand.
     const keeps = mergeReadings([reading([milk(3.1)]), reading([milk(3.1), bread(2.7)])]);
@@ -65,12 +83,18 @@ describe("mergeReadings", () => {
   });
 
   it("keeps different items with similar prices apart", () => {
-    const merged = mergeReadings([reading([line("Bananas", 3.5), line("Apples", 3.5)]), reading([line("Bananas", 3.5), line("Apples", 3.5)])]);
+    const merged = mergeReadings([
+      reading([line("Bananas", 3.5), line("Apples", 3.5)]),
+      reading([line("Bananas", 3.5), line("Apples", 3.5)]),
+    ]);
     expect(merged.lines.map((l) => l.description)).toEqual(["Bananas", "Apples"]);
   });
 
   it("keeps two lines with the same name apart when each reading has both", () => {
-    const merged = mergeReadings([reading([line("Bread rolls 6pk", 3), line("Bread rolls 6pk", 3)]), reading([line("Bread rolls 6pk", 3), line("Bread rolls 6pk", 3)])]);
+    const merged = mergeReadings([
+      reading([line("Bread rolls 6pk", 3), line("Bread rolls 6pk", 3)]),
+      reading([line("Bread rolls 6pk", 3), line("Bread rolls 6pk", 3)]),
+    ]);
     expect(merged.lines).toHaveLength(2);
   });
 
@@ -149,8 +173,30 @@ describe("parseReceiptText with several readings", () => {
     const merged = parseReceiptText(join(withoutTotal(A), withoutTotal(B), withoutTotal(C)), { today: TODAY });
     expect(merged.total).toBeNull();
     expect(merged.warnings).toContain("no_total");
-    const mismatch = parseReceiptText(join(B, B.replace("TOTAL 12.00", "TOTAL 40.00"), B.replace("TOTAL 12.00", "TOTAL 40.00")), { today: TODAY });
+    const mismatch = parseReceiptText(join(B, B.replace("TOTAL 12.00", "TOTAL 40.00"), B.replace("TOTAL 12.00", "TOTAL 40.00")), {
+      today: TODAY,
+    });
     expect(mismatch.total).toBe(40);
     expect(mismatch.warnings).toContain("total_mismatch");
+  });
+});
+
+describe("mergeReadings — choosing a description", () => {
+  it("prefers the cleanly built reading over one with a digit among its letters", () => {
+    const merged = mergeReadings([
+      reading([line("Woolvorths Art 3ag", 2)]),
+      reading([line("Woolvorths Art Bag", 2)]),
+      reading([line("Woolvorths Art 3ag", 2)]),
+    ]);
+    expect(merged.lines[0].description).toBe("Woolvorths Art Bag");
+  });
+
+  it("does not mistake sizes and packs for damage", () => {
+    const merged = mergeReadings([
+      reading([line("Free range eggs 12pk 700g", 6.2)]),
+      reading([line("Free range eggs 12pk 700g", 6.2)]),
+      reading([line("Free range egqs 12pk 7OOg", 6.2)]),
+    ]);
+    expect(merged.lines[0].description).toBe("Free range eggs 12pk 700g");
   });
 });

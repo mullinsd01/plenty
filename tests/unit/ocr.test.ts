@@ -167,6 +167,12 @@ describe("a phone photo of a Woolworths receipt (angled, shadowed, on a speckled
     expect(reading.parsed.lines.length).toBeLessThanOrEqual(expected.items.length + 1);
   });
 
+  it("is read more than once, because the first reading did not add up, and the readings are merged", () => {
+    const { reading } = photo();
+    expect(reading.text.split("\f").length).toBeGreaterThan(1);
+    expect(reading.text.split("\f").length).toBeLessThanOrEqual(5);
+  });
+
   it("reads the store, finds no date, and keeps the lines even though the total was not read", () => {
     const { reading, expected } = photo();
     expect(reading.parsed.store).toBe(expected.store);
@@ -207,7 +213,7 @@ describe("a phone photo of a Woolworths receipt (angled, shadowed, on a speckled
       if (!line) return false;
       const n = normalizeReceiptLine(line.description);
       if (item.isFood === false) return !n.isFood;
-      return n.match?.product.slug === item.product && n.match.score >= 0.55;
+      return n.match !== null && n.match.product.slug === item.product && n.match.score >= 0.55;
     });
     expect(right.length).toBeGreaterThanOrEqual(7);
   });

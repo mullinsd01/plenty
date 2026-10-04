@@ -1176,35 +1176,27 @@ function isNumericToken(text: string): boolean {
   return NUMERIC_TOKEN.test(text);
 }
 
-/** Long, distinctive store names, matched with one OCR error allowed. */
+/** Long, distinctive store names, matched with OCR errors allowed (one, or two for names of nine letters or more). */
 const MISREAD_STORE_NAMES = ["woolworths", "sainsburys", "morrisons", "countdown", "waitrose"];
 
-/** True when `a` and `b` differ by at most one substitution, insertion or deletion. */
-function withinOneEdit(a: string, b: string): boolean {
-  if (Math.abs(a.length - b.length) > 1) return false;
-  let i = 0;
-  let j = 0;
-  let edits = 0;
-  while (i < a.length && j < b.length) {
-    if (a[i] === b[j]) {
-      i += 1;
-      j += 1;
-      continue;
+/** Levenshtein distance, giving up (returning max + 1) once it must exceed `max`. */
+function editDistanceWithin(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      row.push(Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
     }
-    edits += 1;
-    if (edits > 1) return false;
-    if (a.length > b.length) i += 1;
-    else if (b.length > a.length) j += 1;
-    else {
-      i += 1;
-      j += 1;
-    }
+    if (Math.min(...row) > max) return max + 1;
+    previous = row;
   }
-  return edits + (a.length - i) + (b.length - j) <= 1;
+  return previous[b.length];
 }
 
 function isMisreadStoreName(word: string): boolean {
-  return /^[a-z]{8,12}$/.test(word) && !MISREAD_STORE_NAMES.includes(word) && MISREAD_STORE_NAMES.some((name) => withinOneEdit(word, name));
+  if (!/^[a-z]{8,12}$/.test(word) || MISREAD_STORE_NAMES.includes(word)) return false;
+  return MISREAD_STORE_NAMES.some((name) => editDistanceWithin(word, name, name.length >= 9 ? 2 : 1) <= (name.length >= 9 ? 2 : 1));
 }
 
 /**
@@ -1249,9 +1241,10 @@ function stripBrandTokens(tokens: Token[]): { tokens: Token[]; removed: string[]
  */
 const CONTEXTUAL_ABBREVIATIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   pots: new Set([
-    "washed", "brushed", "white", "red", "new", "baby", "dutch", "cream", "sebago", "desiree", "pontiac", "royal", "blue", "gold", "bag", "loose",
-    "kg", "kilo", "fresh", "organic", "prepacked", "pack", "packed", "pre", "per", "each", "ea", "australian", "aussie", "local", "large", "small",
-    "medium", "premium", "value", "select", "selected", "nicola", "kipfler", "coliban", "spud",
+    ...["washed", "brushed", "white", "red", "new", "baby", "dutch", "cream", "sebago", "desiree", "pontiac", "royal", "blue", "gold"],
+    ...["bag", "loose", "kg", "kilo", "fresh", "organic", "prepacked", "pack", "packed", "pre", "per", "each", "ea"],
+    ...["australian", "aussie", "local", "large", "small", "medium", "premium", "value", "select", "selected"],
+    ...["nicola", "kipfler", "coliban", "spud"],
   ]),
 };
 

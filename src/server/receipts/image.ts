@@ -331,7 +331,7 @@ export async function rescaledVariant(variant: Buffer, factor: number): Promise<
   try {
     const { width } = await sharp(variant).metadata();
     const target = Math.min(RESCALE_MAX_WIDTH_PX, Math.max(RESCALE_MIN_WIDTH_PX, Math.round((width ?? OCR_MIN_WIDTH_PX) * factor)));
-    return await sharp(variant).resize({ width: target, kernel: "lanczos3" }).png({ compressionLevel: 1 }).toBuffer();
+    return await sharp(variant).resize({ width: target, kernel: "lanczos3" }).toColourspace("b-w").png({ compressionLevel: 1 }).toBuffer();
   } catch {
     throw new ReceiptImageError("corrupt", MESSAGES.corrupt);
   }

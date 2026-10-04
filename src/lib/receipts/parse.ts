@@ -65,7 +65,10 @@ export const RECEIPT_PARSE_WARNINGS = [
   "total_mismatch",
   /** Items found but no total or subtotal was read, and nothing follows the items: the receipt may be cut off. */
   "no_total",
-  /** Items found and no total amount was read, but the receipt carries on below the items (or a subtotal matches them): it is a reading problem, not a missing part. */
+  /**
+   * Items found and no total amount was read, but the receipt carries on below the items (or a subtotal matches them): it is a reading
+   * problem, not a missing part.
+   */
   "total_unreadable",
   "no_date",
   "date_in_future",
@@ -220,7 +223,7 @@ function toKey(upper: string): string {
  * be real abbreviations) only when the text is clearly noisy.
  */
 
-/** Symbols a photographed margin turns into; never part of an item. `#`, `*`, `-`, `@`, `$` and brackets are meaningful and kept. */
+/** Symbols a photographed margin turns into; never part of an item. `#`, `*`, `-`, `@`, `$`, `%`, `/`, `&` and round brackets are meaningful and kept. */
 const JUNK_SYMBOLS = /^[©®™°§¶•·~_|\\^=+<>«»{}[\]!;:,.'"`´¬¦†‡¡¿…]+$/;
 /** A junk word: a few letters with at most a little punctuation stuck to it ("re,", "Tal,"). */
 const JUNK_FRAGMENT = /^[^A-Za-z0-9]{0,2}[A-Za-z]{1,5}[^A-Za-z0-9]{0,2}$/;
@@ -339,7 +342,8 @@ function isNoisyText(lines: ReadonlyArray<readonly RawToken[]>): boolean {
     }
     const price = lastPriceIndex(tokens);
     const trailing = price >= 0 ? tokens.slice(price + 1) : [];
-    if (trailing.length > 0 && trailing[0].gap >= JUNK_GAP_AFTER_PRICE && trailing.every((t) => isJunkWord(t, true)) && trailing.some((t) => t.text.replace(/[^A-Za-z]/g, "").length >= 3)) {
+    const letters = (t: RawToken) => t.text.replace(/[^A-Za-z]/g, "").length;
+    if (trailing.length > 0 && trailing[0].gap >= JUNK_GAP_AFTER_PRICE && trailing.every((t) => isJunkWord(t, true)) && trailing.some((t) => letters(t) >= 3)) {
       evidence += 1;
     }
   }
@@ -638,6 +642,8 @@ type LineKind =
   | { kind: "skip" }
   | { kind: "date" }
   | { kind: "subtotal"; amount: number }
+  /** A subtotal/total label OCR damaged ("SJBTOTAL", "IOTAL"): not an item, and its amount isn't trusted. */
+  | { kind: "garbled"; amount: number }
   | { kind: "total"; amount: number; priority: number }
   | { kind: "tender"; amount: number }
   | { kind: "tax"; amount: number }
@@ -680,6 +686,47 @@ const TOTAL_INCLUDES = /^\W*TOTAL\s+[I1L]NCL?\w*/;
 /** Words that may accompany a total without making it something else. */
 const TOTAL_QUALIFIERS =
   /\b(?:GRAND|SUB|TOTAL|SUBTOTAL|BALANCE|DUE|AMOUNT|AMT|TO|PAY|PAYABLE|FOR|ITEMS?|INC|INCL|INCLUDING|INCLUSIVE|OF|GST|VAT|TAX|AUD|NZD|GBP|USD|EUR|CAD|SALE|PURCHASE|NET|FINAL|THE)\b/g;
+
+/** Edit distance, abandoning (returning max + 1) once it must exceed `max`. */
+function editDistanceWithin(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      row.push(Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)));
+    }
+    if (Math.min(...row) > max) return max + 1;
+    previous = row;
+  }
+  return previous[b.length];
+}
+
+/** Subtotal and total words with the misreads OCR makes of them ("SJBTOTAL", "SHBIOTAL", "IOTAL"). */
+const FUZZY_TOTAL_WORDS: ReadonlyArray<{ word: string; edits: number; startsWith: string }> = [
+  { word: "SUBTOTAL", edits: 2, startsWith: "S" },
+  { word: "TOTAL", edits: 1, startsWith: "" },
+];
+
+/**
+ * A label made of a damaged "SUBTOTAL"/"TOTAL" word (and at most a count or a
+ * couple of stray letters): "10 SJBTOTAL", "C10 SHBIOTAL", "IOTAL". Real words
+ * that look like them don't pass, because the word must start the right way,
+ * be nearly the right length, and nothing else may be on the line.
+ */
+function isGarbledTotalLabel(label: string): boolean {
+  const words = label.split(" ").filter((w) => /[A-Z]{4,}/.test(w));
+  const damaged = words.filter((w) => {
+    const letters = w.replace(/[^A-Z]/g, "");
+    return FUZZY_TOTAL_WORDS.some((f) => {
+      const near = Math.abs(letters.length - f.word.length) <= f.edits && editDistanceWithin(letters, f.word, f.edits) <= f.edits;
+      return letters !== f.word && letters.startsWith(f.startsWith) && near;
+    });
+  });
+  if (damaged.length !== 1) return false;
+  const residual = words.filter((w) => w !== damaged[0]).join("").replace(/[^A-Z]/g, "").length;
+  return residual <= TOTAL_RESIDUAL_MAX_LETTERS;
+}
 
 type TotalLabel = { kind: "subtotal" } | { kind: "total"; priority: number } | null;
 
@@ -759,9 +806,10 @@ function parseCleanWeightLine(upper: string): Qualifier | null {
  * A weighed-item line whose unit price OCR has mangled: "0.632 kg NET @ B4.30rkg 3.10",
  * "0.222 kg NET © $4.3)/kg 1.09". Shape: weight, kg (or a misread "kq"/"ky"), an
  * optional "NET", "@", unit-price garbage, then the line total as the right-most price.
- * A short junk fragment before the weight ("CET 0.632 kg …") is tolerated.
+ * A short junk token before the weight ("CET 0.632 kg …", "C0 0.632 kg …") is tolerated.
  */
-const DAMAGED_WEIGHT_LINE = /^(?:[^\sA-Z0-9]{0,2}[A-Z]{1,3}\s+)?(\d{1,2}[.,]\d{2,3})\s*(?:KGS?|KQ|KY|K9)\.?\s*([A-Z]{2,4})?\s*(?:@|©|®)\s*(.+)$/;
+const DAMAGED_WEIGHT_LINE = /^(?:\S{1,3}\s+)?(\d{1,2}[.,]\d{2,3})\s*(?:KGS?|[KXH][GQY9])\.?\s*([A-Z]{2,4})?\s*(?:@|©|®)\s*(.+)$/;
+const WEIGHT_LINE_DEBRIS = /\d[.,]\d{2,3}\s*(?:KGS?|[KXH][GQY9])\s*(?:N[EF]T\s*)?(?:@|©|®)/;
 const DAMAGED_UNIT_PRICE_MAX_CHARS = 16;
 /** "$3.90/KG", "3.90 PER KG", "0.69 /LB": a unit price OCR read cleanly. */
 const LEGIBLE_UNIT_PRICE = /^[$£€]?\d{1,3}[.,]\d{2}\s*(?:\/|PER\s+)?\s*(?:KGS?|G|LBS?)?$/;
@@ -788,7 +836,8 @@ function parseDamagedWeightLine(upper: string): { qualifier: Qualifier; legibleR
   if (total === null && !m[2]) return null;
   const rate = /(\d{1,3})[.,]([\dOoIl|]{2})(?![\dOo])/.exec(garbage);
   const perKg = rate ? Number(`${rate[1]}.${toDigits(rate[2])}`) : null;
-  const consistent = total !== null && perKg !== null && Math.abs(weightKg * perKg - total) <= Math.max(0.03, total * UNIT_PRICE_TOTAL_TOLERANCE);
+  const off = total !== null && perKg !== null ? Math.abs(weightKg * perKg - total) : Number.POSITIVE_INFINITY;
+  const consistent = total !== null && off <= Math.max(0.03, total * UNIT_PRICE_TOTAL_TOLERANCE);
   return {
     qualifier: { quantity: null, weightKg: round3(weightKg), unitPrice: consistent ? perKg : null, total, implied: null },
     legibleRate: LEGIBLE_UNIT_PRICE.test(garbage),
@@ -994,10 +1043,13 @@ function classifyLine(line: TextLine): LineKind {
     }
     if (TAX_WORD.test(label) || TOTAL_INCLUDES.test(label)) return { kind: "tax", amount: tail.amount };
     if (SUMMARY_SAVINGS.test(label)) return SKIP;
+    if (isGarbledTotalLabel(label)) return { kind: "garbled", amount: tail.amount };
   }
 
   const qualifier = parseQuantityLine(upper) ?? parseWeightLine(upper);
   if (qualifier) return { kind: "qualifier", qualifier };
+  // What is left of a weight line OCR couldn't make sense of ("50.222 kg NET @ ...") is never an item.
+  if (WEIGHT_LINE_DEBRIS.test(upper)) return SKIP;
 
   if (tail) {
     const discount = discountAmount(label, tail.amount);
@@ -1110,10 +1162,18 @@ function handleQualifier(state: AssemblyState, q: Qualifier, raw: string, classi
     applyQualifier(prev, q, raw, "after");
     return;
   }
-  if (!prev || prev.qualified || upcomingMatches) {
+  // A weight or quantity line that prints its own total, with no description above it (OCR lost that line), belongs to nothing here:
+  // attaching it to a neighbour would overwrite that neighbour's price or weight.
+  const orphan = q.total !== null || expected === null;
+  if (upcomingMatches) {
     state.leading = { raw, qualifier: q };
     return;
   }
+  if (!prev || prev.qualified) {
+    if (!orphan) state.leading = { raw, qualifier: q };
+    return;
+  }
+  if (q.total !== null && prev.basePrice !== null) return;
   applyQualifier(prev, q, raw, "after");
 }
 
@@ -1157,6 +1217,11 @@ function isRunningTotal(state: AssemblyState, price: number, classified: readonl
   return matches(price) && classified.slice(index + 1).every((c) => c.kind !== "item" || matches(c.item.price));
 }
 
+function recordRunningTotal(state: AssemblyState, amount: number): void {
+  if (state.subtotal === null) state.subtotal = amount;
+  else state.totals.push({ amount, priority: RUNNING_TOTAL_PRIORITY });
+}
+
 function assemble(lines: TextLine[]): AssemblyState {
   const classified = lines.map(classifyLine);
   const state: AssemblyState = {
@@ -1197,13 +1262,13 @@ function assemble(lines: TextLine[]): AssemblyState {
         break;
       case "item":
         if (state.ended) break;
-        if (isRunningTotal(state, c.item.price, classified, index)) {
-          // An arithmetic subtotal or total whose label was unreadable; not something that was bought.
-          if (state.subtotal === null) state.subtotal = c.item.price;
-          else state.totals.push({ amount: c.item.price, priority: RUNNING_TOTAL_PRIORITY });
-        } else {
-          handleItem(state, c.item, raw);
-        }
+        // An amount that is what the items add up to, on a line whose label was unreadable, is a subtotal or total, not something bought.
+        if (isRunningTotal(state, c.item.price, classified, index)) recordRunningTotal(state, c.item.price);
+        else handleItem(state, c.item, raw);
+        break;
+      case "garbled":
+        // A damaged "TOTAL"/"SUBTOTAL" label: never an item, and its amount only counts when the items add up to it.
+        if (!state.ended && isRunningTotal(state, c.amount, classified, index)) recordRunningTotal(state, c.amount);
         break;
       case "text":
         if (!state.ended) state.pending = { raw, description: c.description, index };
@@ -1224,7 +1289,7 @@ function assemble(lines: TextLine[]): AssemblyState {
 function continuesBelowItems(lines: readonly TextLine[], state: AssemblyState): boolean {
   for (let i = state.lastItemIndex + 1; i < lines.length; i += 1) {
     const c = state.classified[i];
-    if (c.kind === "date" || c.kind === "subtotal" || c.kind === "total" || c.kind === "tender" || c.kind === "tax") return true;
+    if (["date", "subtotal", "total", "tender", "tax", "garbled"].includes(c.kind)) return true;
     const { key } = lines[i];
     if (c.kind === "skip" && SKIP_PATTERNS.some((pattern) => pattern.test(key))) return true;
     if (c.kind === "text" && (TOTAL_WORD.test(key) || SUBTOTAL_WORD.test(key) || TAX_WORD.test(key))) return true;

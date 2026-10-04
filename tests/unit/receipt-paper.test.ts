@@ -26,14 +26,26 @@ const PAPER = { left: 230, top: 0, width: 440 };
  * A receipt photographed on a surface: the fixture receipt scaled to `PAPER.width`, optionally turned a little, laid on a speckled
  * background that is the photo's width and height. Returns the photo and the paper's left/right edges as shares of the width.
  */
-async function photoOnSurface(surface: Surface, options: { angle?: number; speckle?: number; paperTop?: number; paperHeight?: number } = {}) {
+async function photoOnSurface(
+  surface: Surface,
+  options: { angle?: number; speckle?: number; paperTop?: number; paperHeight?: number } = {},
+) {
   const { speckle = 14, angle = 0, paperTop = PAPER.top } = options;
   const paperHeight = options.paperHeight ?? PHOTO.height - paperTop;
-  const paper = await sharp(fixture("woolworths-weekly.png")).resize({ width: PAPER.width, height: paperHeight, fit: "cover", position: "top" }).png().toBuffer();
+  const paper = await sharp(fixture("woolworths-weekly.png"))
+    .resize({ width: PAPER.width, height: paperHeight, fit: "cover", position: "top" })
+    .png()
+    .toBuffer();
   const turned = angle === 0 ? paper : await sharp(paper).rotate(angle, { background: surface }).png().toBuffer();
   const meta = await sharp(turned).metadata();
   const background = await sharp({
-    create: { width: PHOTO.width, height: PHOTO.height, channels: 3, background: surface, noise: { type: "gaussian", mean: 0, sigma: speckle } },
+    create: {
+      width: PHOTO.width,
+      height: PHOTO.height,
+      channels: 3,
+      background: surface,
+      noise: { type: "gaussian", mean: 0, sigma: speckle },
+    },
   })
     .png()
     .toBuffer();
@@ -98,9 +110,19 @@ describe("findReceiptPaper on photos of a receipt on a surface", () => {
   });
 
   it("does not crop when nothing stands out from its surroundings", async () => {
-    const flat = await sharp({ create: { width: 600, height: 900, channels: 3, background: BEIGE_COUNTER } }).jpeg().toBuffer();
+    const flat = await sharp({ create: { width: 600, height: 900, channels: 3, background: BEIGE_COUNTER } })
+      .jpeg()
+      .toBuffer();
     expect(await boxOf(flat)).toBeNull();
-    const grey = await sharp({ create: { width: 600, height: 900, channels: 3, background: { r: 120, g: 120, b: 120 }, noise: { type: "gaussian", mean: 0, sigma: 12 } } })
+    const grey = await sharp({
+      create: {
+        width: 600,
+        height: 900,
+        channels: 3,
+        background: { r: 120, g: 120, b: 120 },
+        noise: { type: "gaussian", mean: 0, sigma: 12 },
+      },
+    })
       .jpeg()
       .toBuffer();
     expect(await boxOf(grey)).toBeNull();
@@ -136,7 +158,10 @@ describe("ocrVariant cropping", () => {
     let sum = 0;
     let count = 0;
     for (let y = 0; y < info.height; y += 1) {
-      for (const [from, to] of [[0, edge], [info.width - edge, info.width]]) {
+      for (const [from, to] of [
+        [0, edge],
+        [info.width - edge, info.width],
+      ]) {
         for (let x = from + 1; x < to; x += 1) {
           sum += Math.abs(data[y * info.width + x] - data[y * info.width + x - 1]);
           count += 1;

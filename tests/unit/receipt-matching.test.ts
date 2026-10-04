@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ACCEPT_MATCH_SCORE, matchProduct, normalizeReceiptLine } from "@/lib/normalize";
+import { parseReceiptText } from "@/lib/receipts/parse";
+
+const FIXTURES = path.resolve(__dirname, "../fixtures/receipts");
 
 /** What a receipt line resolves to: the product's slug when trusted, "plausible:<slug>" when it's only a suggestion, null otherwise. */
 function resolve(raw: string): string | null {
@@ -33,6 +38,7 @@ describe("the same lines as OCR read them", () => {
     ["Mandarin Amoretts Saecless Loos", "mandarin"],
     ["Woolwerths Art Bag", "non-food"],
     ["Woolvorths Art Bag", "non-food"],
+    ["HWoolvorths Art Bag", "non-food"],
     ["Bertoconi Australiandy Swed Ham off Bone", "sliced-ham"],
     ["fHArnotts Salada Original 230g", "crackers"],
     ["5/Pots Macadamia Rst/talt 1209", "macadamias"],
@@ -42,9 +48,18 @@ describe("the same lines as OCR read them", () => {
   });
 
   it("is not sure about a name too damaged to trust, rather than confidently wrong", () => {
-    for (const raw of ["Kawitrait Gold Tap 27 5))g", "Kiwitrait Gold Imp P/F 5))g", "Don Shredded Han KG", "Inghams Turkey Brst Half van Ruast Kg", "Dorsogna Streaky Basor kg"]) {
+    for (const raw of [
+      "Kawitrait Gold Tap 27 5))g",
+      "Kiwitrait Gold Imp P/F 5))g",
+      "Don Shredded Han KG",
+      "Inghams Turkey Brst Half van Ruast Kg",
+      "Dorsogna Streaky Basor kg",
+    ]) {
       const got = resolve(raw);
-      expect(got === null || got.startsWith("plausible:") || ["kiwifruit", "sliced-ham", "turkey-breast", "streaky-bacon"].includes(got), raw).toBe(true);
+      expect(
+        got === null || got.startsWith("plausible:") || ["kiwifruit", "sliced-ham", "turkey-breast", "streaky-bacon"].includes(got),
+        raw,
+      ).toBe(true);
       expect(String(got), raw).not.toMatch(/potato|grated-cheese|chicken/);
     }
   });
@@ -52,14 +67,16 @@ describe("the same lines as OCR read them", () => {
 
 describe("heads and modifiers", () => {
   it("reads 'shredded' as a modifier: shredded ham is ham, shredded cheese is still cheese", () => {
-    for (const raw of ["Don Shredded Ham KG", "Shredded Ham 200g", "WW Shredded Ham", "ham shredded"]) expect(resolve(raw), raw).toBe("sliced-ham");
+    for (const raw of ["Don Shredded Ham KG", "Shredded Ham 200g", "WW Shredded Ham", "ham shredded"])
+      expect(resolve(raw), raw).toBe("sliced-ham");
     expect(resolve("Shredded Tasty Cheese 500g")).toBe("grated-cheese");
     expect(resolve("Grated Parmesan 100g")).toBe("parmesan");
     expect(resolve("Shredded Mozzarella 250g")).toBe("mozzarella");
   });
 
   it("never reads shredded anything-with-an-unknown-word as grated cheese", () => {
-    for (const raw of ["Don Shredded Han KG", "Shredded Zorg 200g", "Grated Zorg"]) expect(String(resolve(raw)), raw).not.toMatch(/grated-cheese/);
+    for (const raw of ["Don Shredded Han KG", "Shredded Zorg 200g", "Grated Zorg"])
+      expect(String(resolve(raw)), raw).not.toMatch(/grated-cheese/);
   });
 
   it("only reads 'pots' as potatoes when nothing else says what the line is", () => {
@@ -91,7 +108,16 @@ describe("heads and modifiers", () => {
 });
 
 describe("carrier bags are not food", () => {
-  it.each(["Woolworths Art Bag", "#Woolworths Art Bag", "Woolwerths Art Bag", "Coles Reusable Bag", "Eco Tote Bag", "CARRY BAG", "Jute Bag"])("%s", (raw) => {
+  it.each([
+    "Woolworths Art Bag",
+    "#Woolworths Art Bag",
+    "Woolwerths Art Bag",
+    "HWoolvorths Art Bag",
+    "Coles Reusable Bag",
+    "Eco Tote Bag",
+    "CARRY BAG",
+    "Jute Bag",
+  ])("%s", (raw) => {
     const line = normalizeReceiptLine(raw);
     expect(line.isFood).toBe(false);
     expect(line.match).toBeNull();
@@ -124,5 +150,44 @@ describe("new catalog entries", () => {
     expect(resolve("Mixed Salad Leaves 120g")).toMatch(/salad/);
     expect(resolve("Hazelnut Spread 400g")).toBe("hazelnut-spread");
     expect(resolve("Almonds 400g")).toBe("almonds");
+  });
+});
+
+describe("the phone photo's OCR text (fixture), end to end", () => {
+  const manifest = JSON.parse(readFileSync(path.join(FIXTURES, "manifest.json"), "utf8")) as Record<
+    string,
+    { text: string; expected: { items: Array<{ description: string; product: string | null; isFood?: boolean }> } }
+  >;
+  const entry = manifest["woolworths-phone-photo"];
+  const lines = parseReceiptText(readFileSync(path.join(FIXTURES, entry.text), "utf8"), { today: "2026-10-04" }).lines;
+
+  it("never confidently matches a line to a product that isn't the one on the receipt", () => {
+    const allowed = new Set(entry.expected.items.map((i) => i.product).filter((p): p is string => Boolean(p)));
+    for (const line of lines) {
+      const n = normalizeReceiptLine(line.description);
+      if (n.isFood && n.match && n.match.score >= ACCEPT_MATCH_SCORE)
+        expect(allowed.has(n.match.product.slug), `${line.description} → ${n.match.product.slug}`).toBe(true);
+      expect(n.match?.product.slug ?? "", line.description).not.toMatch(/^potato$|grated-cheese|baby-potatoes/);
+    }
+  });
+
+  it("resolves at least eight of the ten lines to the right product (or to non-food), the rest to 'not sure'", () => {
+    const right = entry.expected.items.filter((item, i) => {
+      const n = normalizeReceiptLine(lines[i].description);
+      return item.isFood === false ? !n.isFood : n.match?.product.slug === item.product && n.match.score >= 0.55;
+    });
+    expect(right.length).toBeGreaterThanOrEqual(8);
+    entry.expected.items.forEach((item, i) => {
+      const n = normalizeReceiptLine(lines[i].description);
+      if (item.isFood !== false && !(n.match?.product.slug === item.product && n.match.score >= 0.55)) {
+        expect(n.match === null || n.match.score < ACCEPT_MATCH_SCORE, `${lines[i].description} should be 'not sure'`).toBe(true);
+      }
+    });
+  });
+
+  it("treats the carrier bag as not food", () => {
+    const bag = lines.find((l) => /bag/i.test(l.description));
+    expect(bag).toBeDefined();
+    expect(normalizeReceiptLine(bag?.description ?? "").isFood).toBe(false);
   });
 });

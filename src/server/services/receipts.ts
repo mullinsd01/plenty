@@ -6,6 +6,7 @@ import { formatShortDate, isDateString, toDateString, zonedDateTimeToInstant } f
 import { levelPhrase, type Aisle, type StorageLocation } from "@/lib/domain";
 import { aliasKey as toAliasKey, cleanReceiptText, normalizeReceiptLine } from "@/lib/normalize";
 import { receiptFingerprint } from "@/lib/receipts/fingerprint";
+import { READING_SEPARATOR } from "@/lib/receipts/parse";
 import { redactReceiptLine, redactReceiptText, redactStoreLabel } from "@/lib/receipts/redact";
 import { assessReceiptQuality } from "@/lib/receipts/quality";
 import { formatPackQuantity, isContainerUnit, isUnit, unitDimension, type Unit } from "@/lib/units";
@@ -284,6 +285,15 @@ export type ReceiptHousehold = Pick<HouseholdInfo, "id" | "timezone" | "currency
  * Read a stored receipt photo, extract its lines and prepare them for review.
  * Never changes the kitchen — that only happens when the user confirms.
  */
+/**
+ * A poor photo is read several times and merged (the readings arrive separated by a form feed). Only the first full
+ * reading is kept as the receipt's stored text: it's what a person would see, it keeps the stored text a sensible size,
+ * and it leaves it re-readable as one receipt.
+ */
+function primaryReading(text: string): string {
+  return text.split(READING_SEPARATOR).find((part) => part.trim().length > 0) ?? "";
+}
+
 export async function processReceipt(userId: string, household: ReceiptHousehold, receiptId: string): Promise<void> {
   const now = new Date();
   // Claim the receipt: only one attempt at a time, and a stalled attempt can be taken over.
@@ -319,7 +329,7 @@ export async function processReceipt(userId: string, household: ReceiptHousehold
     await withUser(userId, async (tx) => {
       await tx
         .update(receipts)
-        .set({ status: "failed", errorCode: code, errorMessage: FAILURE_MESSAGES[code], rawText: raw ? redactReceiptText(raw) : null, processedAt: new Date() })
+        .set({ status: "failed", errorCode: code, errorMessage: FAILURE_MESSAGES[code], rawText: raw ? redactReceiptText(primaryReading(raw)) : null, processedAt: new Date() })
         .where(stillOurs);
     });
   };
@@ -484,7 +494,7 @@ export async function processReceipt(userId: string, household: ReceiptHousehold
           total,
           currency: extraction.currency ?? household.currency,
           // Card, loyalty and phone numbers, emails, street addresses and names are removed before anything is stored.
-          rawText: redactReceiptText(extraction.rawText).slice(0, 20000),
+          rawText: redactReceiptText(primaryReading(extraction.rawText)).slice(0, 20000),
           provider: extraction.provider,
           contentFingerprint: fingerprint,
           duplicateOfId,

@@ -759,10 +759,42 @@ describe("parseReceiptText — margin noise from photos", () => {
     expect(result.subtotal).toBe(3.1);
   });
 
-  it("reads the photo's printed text from a fixture end to end", () => {
-    const real = parseReceiptText(readFileSync(path.join(FIXTURES, "woolworths-phone-photo.txt"), "utf8"), { today: TODAY });
-    expect(real.lines).toHaveLength(10);
-    expect(real.store).toBe("Woolworths");
+});
+
+describe("parseReceiptText — the OCR text of the Woolworths phone photo (fixture)", () => {
+  interface PhotoEntry {
+    text: string;
+    expected: {
+      store: string;
+      purchasedOn: string | null;
+      items: Array<{ description: string; price: number; weightKg: number | null; isFood?: boolean }>;
+    };
+  }
+  const manifest = JSON.parse(readFileSync(path.join(FIXTURES, "manifest.json"), "utf8")) as Record<string, PhotoEntry & { kind: string }>;
+  const photos = Object.entries(manifest).filter(([, entry]) => entry.kind === "photo");
+  const words = (text: string) => text.toLowerCase().match(/[a-z]{3,}/g) ?? [];
+  const sharesAWord = (a: string, b: string) => words(a).some((w) => words(b).some((v) => v === w || (w.length >= 6 && (w.startsWith(v) || v.startsWith(w)))));
+
+  it("is in the manifest", () => {
+    expect(photos.map(([name]) => name)).toEqual(["woolworths-phone-photo"]);
+  });
+
+  it.each(photos)("finds every item of %s, with the right price for all but the one the OCR could not read", (_name, entry) => {
+    const parsed = parseReceiptText(readFileSync(path.join(FIXTURES, entry.text), "utf8"), { today: TODAY });
+    expect(parsed.store).toBe(entry.expected.store);
+    expect(parsed.purchasedOn).toBe(entry.expected.purchasedOn);
+    expect(parsed.lines).toHaveLength(entry.expected.items.length);
+    const unreadable: string[] = [];
+    entry.expected.items.forEach((item, i) => {
+      const line = parsed.lines[i];
+      // Same order as the receipt, and recognisably the same product wording.
+      expect(sharesAWord(line.description, item.description), `${line.description} vs ${item.description}`).toBe(true);
+      if (line.price !== item.price) unreadable.push(`${item.description}: ${line.price}`);
+      if (item.weightKg !== null) expect(line.weightKg, item.description).toBe(item.weightKg);
+    });
+    // The mandarins' total printed as "103" in this OCR text; it is left empty, not guessed.
+    expect(unreadable).toEqual(["Mandarin Amorette Seedless Loose: null"]);
+    expect(parsed.warnings).toEqual(["total_unreadable", "no_date"]);
   });
 });
 
@@ -916,5 +948,54 @@ describe("parseReceiptText — total lines whose label could not be read", () =>
   it("is not fooled by an amount unlike the sum", () => {
     const parsed = parseReceiptText(text("MYSTERY CHARGE $9.99"), { today: TODAY });
     expect(parsed.lines).toHaveLength(7);
+  });
+});
+
+describe("parseReceiptText — damaged subtotal and total labels", () => {
+  const items = ["Potato Sweet Gold 3.10", "Mandarin Seedless 1.09", "Woolworths Art Bag 2.00", "Kiwifruit Gold 5.90", "Ham off Bone 2.38"];
+
+  it.each(["10 SJBTOTAL", "C10 SHBIOTAL", "10 SUBTOTA", "SBTOTAL", "IOTAL", "TOTAI", "SUBTOTL"])("never makes an item of '%s'", (label) => {
+    const parsed = parseReceiptText(["WOOLWORTHS", ...items, `${label}        $14.47`].join("\n"), { today: TODAY });
+    expect(parsed.lines).toHaveLength(5);
+  });
+
+  it("does not trust the amount of a damaged label unless the items add up to it", () => {
+    const parsed = parseReceiptText(["WOOLWORTHS", ...items, "10 SJBTOTAL     $28.00"].join("\n"), { today: TODAY });
+    expect(parsed.subtotal).toBeNull();
+    expect(parsed.total).toBeNull();
+    // The receipt visibly goes on below the items, so this is a reading problem, not a cut-off.
+    expect(parsed.warnings).toContain("total_unreadable");
+    const adds = parseReceiptText(["WOOLWORTHS", ...items, "10 SJBTOTAL     $14.47"].join("\n"), { today: TODAY });
+    expect(adds.subtotal).toBe(14.47);
+  });
+
+  it("still reads real subtotals, totals and products that merely look like them", () => {
+    const parsed = parseReceiptText("WOOLWORTHS\nTOTAL GREEK YOGHURT 500G 6.50\nSUBTOTAL 6.50\nTOTAL 6.50", { today: TODAY });
+    expect(parsed.lines.map((l) => l.description)).toEqual(["TOTAL GREEK YOGHURT 500G"]);
+    expect(parsed).toMatchObject({ subtotal: 6.5, total: 6.5 });
+    const toTotals = parseReceiptText("WOOLWORTHS\nSUBWAY MELT 9.00\nVITAL WHEAT GLUTEN 200G 4.50\nTOTAL 13.50", { today: TODAY });
+    expect(toTotals.lines).toHaveLength(2);
+  });
+});
+
+describe("parseReceiptText — weight lines that lost their description", () => {
+  it("does not attach an orphan weight line to a neighbouring item or overwrite its price", () => {
+    const text = ["WOOLWORTHS", "Kiwifruit Gold 5.90", "0.632 kg NET @ B4.30rkg   3.10", "Salada Original 250g 4.00", "TOTAL 9.90"].join("\n");
+    const lines = parseReceiptText(text, { today: TODAY }).lines;
+    expect(lines.map((l) => [l.description, l.price, l.weightKg])).toEqual([
+      ["Kiwifruit Gold", 5.9, null],
+      ["Salada Original 250g", 4, null],
+    ]);
+  });
+
+  it("never turns the left-over text of a weight line into an item", () => {
+    const text = ["WOOLWORTHS", "Salada Original 250g 4.00", "50.222 kg NET @ $4.3)/kg   1.09", "C0 0.632 kg NET @ $4.30/kg 3.1O", "TOTAL 4.00"].join("\n");
+    expect(parseReceiptText(text, { today: TODAY }).lines.map((l) => l.description)).toEqual(["Salada Original 250g"]);
+  });
+
+  it("still lets a quantity line printed above its item attach to it", () => {
+    const text = ["KROGER", "2 @ 1.25", "MILK 2.50", "BREAD 3.00", "TOTAL 5.50"].join("\n");
+    const lines = parseReceiptText(text, { today: TODAY }).lines;
+    expect(lines[0]).toMatchObject({ description: "MILK", quantity: 2, price: 2.5 });
   });
 });

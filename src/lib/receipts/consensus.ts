@@ -99,12 +99,26 @@ function mostCommon<T>(values: readonly T[]): { value: T; votes: number } | null
   return best;
 }
 
-/** The member whose description is most like the others' (the first wins ties). */
+/** Weights, packs and sizes legitimately mix digits and letters ("500g", "12pk"). */
+const SIZE_TOKEN = /^\d+(?:[.,]\d+)?(?:x\d+)?(?:g|gm|gms|kg|kgs|ml|l|ltr|pk|pkt|pack|pce|pcs|ea|cm|mm|oz|lb|lbs)?$/i;
+/** Cost, in similarity, of each oddly built word in a description. */
+const ODD_WORD_PENALTY = 0.6;
+
+/** Words with a digit among the letters ("3ag") or stray symbols ("S:edless"): OCR damage, not language. */
+function oddWords(description: string): number {
+  return description.split(/\s+/).filter((word) => {
+    if (SIZE_TOKEN.test(word) || /^[^A-Za-z0-9]*$/.test(word)) return false;
+    return /[A-Za-z]{2,}\d|\d[A-Za-z]{2,}|[A-Za-z][^A-Za-z0-9\s/'&.-]+[A-Za-z]/.test(word);
+  }).length;
+}
+
+/** The member whose description is most like the others', preferring cleanly built words (the first wins ties). */
 function medoid(members: readonly Member[]): Member {
   let best = members[0];
-  let bestScore = -1;
+  let bestScore = Number.NEGATIVE_INFINITY;
   for (const candidate of members) {
-    const score = members.reduce((sum, other) => sum + (other === candidate ? 0 : lineSimilarity(candidate.line, other.line)), 0);
+    const alike = members.reduce((sum, other) => sum + (other === candidate ? 0 : lineSimilarity(candidate.line, other.line)), 0);
+    const score = alike - ODD_WORD_PENALTY * oddWords(candidate.line.description);
     if (score > bestScore) {
       best = candidate;
       bestScore = score;
@@ -176,7 +190,11 @@ function sumOf(lines: readonly ParsedReceiptLine[]): number {
 }
 
 /** A printed amount is believed when two readings agree on it, or when the merged items add up to it. */
-function decideAmount(candidates: ReadonlyArray<number | null>, lines: readonly ParsedReceiptLine[], taxes: readonly number[]): number | null {
+function decideAmount(
+  candidates: ReadonlyArray<number | null>,
+  lines: readonly ParsedReceiptLine[],
+  taxes: readonly number[],
+): number | null {
   const read = candidates.filter((c): c is number => c !== null && c > 0);
   const winner = mostCommon(read);
   if (!winner) return null;
@@ -187,7 +205,16 @@ function decideAmount(candidates: ReadonlyArray<number | null>, lines: readonly 
   return read.find((value) => lines.length > 0 && (close(value) || (taxSum > 0 && close(value - taxSum)))) ?? null;
 }
 
-const EMPTY_READING: Reading = { store: null, purchasedOn: null, dateRejection: null, total: null, subtotal: null, taxes: [], footerSeen: false, lines: [] };
+const EMPTY_READING: Reading = {
+  store: null,
+  purchasedOn: null,
+  dateRejection: null,
+  total: null,
+  subtotal: null,
+  taxes: [],
+  footerSeen: false,
+  lines: [],
+};
 
 /**
  * Merge readings of the same receipt into one. The reading with the most item
@@ -201,7 +228,8 @@ export function mergeReadings(readings: readonly Reading[]): Reading {
   const ordered = [...readings].sort((a, b) => b.lines.length - a.lines.length);
   const clusters = alignLines(ordered);
   // With three or more readings an item needs two of them. With two, one can't outvote the other, so the best reading's items stand.
-  const supported = (c: Cluster) => new Set(c.members.map((m) => m.reading)).size >= 2 || (ordered.length === 2 && c.members.some((m) => m.reading === 0));
+  const supported = (c: Cluster) =>
+    new Set(c.members.map((m) => m.reading)).size >= 2 || (ordered.length === 2 && c.members.some((m) => m.reading === 0));
   const lines = clusters.filter(supported).map(decide);
 
   const taxes = ordered.find((r) => r.taxes.length > 0)?.taxes ?? [];
@@ -210,8 +238,16 @@ export function mergeReadings(readings: readonly Reading[]): Reading {
     store: mostCommon(ordered.map((r) => r.store).filter((s): s is string => s !== null))?.value ?? null,
     purchasedOn: date,
     dateRejection: date ? null : (ordered.find((r) => r.dateRejection)?.dateRejection ?? null),
-    total: decideAmount(ordered.map((r) => r.total), lines, taxes),
-    subtotal: decideAmount(ordered.map((r) => r.subtotal), lines, taxes),
+    total: decideAmount(
+      ordered.map((r) => r.total),
+      lines,
+      taxes,
+    ),
+    subtotal: decideAmount(
+      ordered.map((r) => r.subtotal),
+      lines,
+      taxes,
+    ),
     taxes,
     footerSeen: ordered.some((r) => r.footerSeen),
     lines,

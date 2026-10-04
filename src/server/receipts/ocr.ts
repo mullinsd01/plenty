@@ -38,8 +38,10 @@ export const OCR_JOB_TIMEOUT_MS = 90_000;
 export const OCR_PAGE_SEG_MODE = Tesseract.PSM.SINGLE_BLOCK;
 /** Further readings of a photo that didn't add up the first time, as multiples of the first reading's width. */
 export const OCR_EXTRA_READING_SCALES = [0.8, 1.25, 0.65, 1.5] as const;
-/** No further reading starts once a read of one photo has taken this long (the job timeout still applies to each). */
-export const OCR_EXTRA_READINGS_BUDGET_MS = 25_000;
+/** Further readings of one photo must all finish within this long of the first one starting (each is cut off at the remaining time). */
+export const OCR_EXTRA_READINGS_BUDGET_MS = 30_000;
+/** An extra reading is not started with less time than this left. */
+const MIN_EXTRA_READING_MS = 4_000;
 /** Fewer item lines than this and a second look wouldn't help: the photo isn't of a receipt, or is hopeless. */
 const MIN_LINES_FOR_EXTRA_READINGS = 3;
 /** The integer-quantised "best" LSTM model: accurate and small (2.9 MB). */
@@ -169,10 +171,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function recognise(image: Buffer): Promise<OcrResult> {
+async function recognise(image: Buffer, timeoutMs = OCR_JOB_TIMEOUT_MS): Promise<OcrResult> {
   try {
     const worker = await getWorker();
-    const { data } = await withTimeout(worker.recognize(image), OCR_JOB_TIMEOUT_MS);
+    const { data } = await withTimeout(worker.recognize(image), timeoutMs);
     const confidence = Number.isFinite(data.confidence) ? Math.min(100, Math.max(0, data.confidence)) : 0;
     return { text: data.text ?? "", confidence };
   } catch (err) {
@@ -198,9 +200,10 @@ async function readWithExtraReadings(image: Buffer): Promise<OcrResult> {
   const texts = [first.text];
   let confidence = first.confidence;
   for (const scale of OCR_EXTRA_READING_SCALES) {
-    if (Date.now() - started > OCR_EXTRA_READINGS_BUDGET_MS) break;
+    const remaining = OCR_EXTRA_READINGS_BUDGET_MS - (Date.now() - started);
+    if (remaining < MIN_EXTRA_READING_MS) break;
     try {
-      const again = await recognise(await rescaledVariant(image, scale));
+      const again = await recognise(await rescaledVariant(image, scale), Math.min(OCR_JOB_TIMEOUT_MS, remaining));
       texts.push(again.text);
       confidence = Math.max(confidence, again.confidence);
     } catch {

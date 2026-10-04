@@ -98,7 +98,10 @@ const FORM_WORDS: ReadonlySet<string> = new Set(["shredded", "grated"]);
  */
 const DEFINING_FOODS: ReadonlySet<string> = new Set(["turkey"]);
 const DEFINING_WORD_PENALTY = 0.4;
-/** …and a token-similarity match on such a word ("turkey stuffing" ~ turkey breast) is never better than plausible; only a name or alias hit is trusted. */
+/**
+ * …and a token-similarity match on such a word ("turkey stuffing" ~ turkey breast) is never better than plausible; only a name or alias
+ * hit is trusted.
+ */
 const DEFINING_FUZZY_CAP = 0.7;
 
 const TYPO_MIN_LENGTH = 4;
@@ -660,7 +663,8 @@ const TRUNCATED_DESCRIPTOR_MIN_SHARE = 0.75;
 function truncatedDescriptor(index: ProductIndex, surface: string): string | null {
   if (surface.length < PREFIX_MIN_LENGTH || index.surfaces.has(surface)) return null;
   for (const word of DESCRIPTORS) {
-    if (word.length > surface.length && word.startsWith(surface) && surface.length / word.length >= TRUNCATED_DESCRIPTOR_MIN_SHARE) return word;
+    const keepsEnough = surface.length / word.length >= TRUNCATED_DESCRIPTOR_MIN_SHARE;
+    if (word.length > surface.length && word.startsWith(surface) && keepsEnough) return word;
   }
   return null;
 }
@@ -670,7 +674,8 @@ function resolveToken(index: ProductIndex, surface: string, singular: string, is
   const cutOff = isLast ? truncatedDescriptor(index, surface) : null;
   if (cutOff) {
     const known = index.surfaces.get(cutOff);
-    return { ...base, canon: known ? [known] : [], strength: PREFIX_STRENGTH_SINGLE, weight: known ? (index.weights.get(known) ?? UNKNOWN_TOKEN_WEIGHT) : 0, descriptor: true };
+    const weight = known ? (index.weights.get(known) ?? UNKNOWN_TOKEN_WEIGHT) : 0;
+    return { ...base, canon: known ? [known] : [], strength: PREFIX_STRENGTH_SINGLE, weight, descriptor: true };
   }
   const known = index.surfaces.get(surface) ?? index.surfaces.get(singular);
   if (known) return { ...base, canon: [known], strength: 1, weight: index.weights.get(known) ?? UNKNOWN_TOKEN_WEIGHT };
@@ -936,7 +941,8 @@ function rankCandidates(rawText: string, cleaned: CleanedReceiptText, opts: Matc
     if (words.tokens.length > 0) {
       const exact = exactMatch(index, words.tokens);
       if (exact) found.push(exact);
-      const query = words.tokens.map((token, i) => resolveToken(index, words.surfaces[i], token, words.tokens.length > 1 && i === words.tokens.length - 1));
+      const last = words.tokens.length - 1;
+      const query = words.tokens.map((token, i) => resolveToken(index, words.surfaces[i], token, last > 0 && i === last));
       const fuzzy = scoreProducts(index, query);
       found.push(...fuzzy);
       const bestFuzzy = fuzzy.reduce((max, s) => Math.max(max, s.score), 0);
@@ -1277,12 +1283,4 @@ export function normalizeReceiptLine(raw: string, opts?: MatchOptions): Normaliz
     isFood: !(accepted?.product.nonFood ?? false),
     aliasKey: key,
   };
-}
-
-export function __debugQuery(text: string) {
-  const cleaned = cleanReceiptText(text);
-  const index = indexFor(undefined);
-  const words = queryWords(cleaned);
-  const query = words.tokens.map((token, i) => resolveToken(index, words.surfaces[i], token));
-  return { query, head: queryHead(query)?.surface, scored: scoreProducts(index, query).sort((a, b) => b.score - a.score).slice(0, 4).map((s) => `${index.products[s.productIndex].slug}:${s.score.toFixed(3)}`) };
 }

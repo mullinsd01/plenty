@@ -14,7 +14,7 @@
  * are fixed (late September 2026).
  */
 
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 
@@ -580,6 +580,14 @@ async function main(): Promise<void> {
   manifest["not-a-receipt"] = { file: "not-a-receipt.png", text: null, kind: "not_a_receipt", demo: false, width: 1200, height: 900, expected: null };
   console.log("✓ not-a-receipt.png");
 
+  // Real phone photos are added by hand (their expected readings were checked by eye): keep them when the synthetic
+  // fixtures are regenerated.
+  try {
+    const previous = JSON.parse(await readFile(path.join(FIXTURE_DIR, "manifest.json"), "utf8")) as Record<string, { kind?: string }>;
+    for (const [name, entry] of Object.entries(previous)) if (entry.kind === "photo") manifest[name] = entry as unknown as ManifestEntry;
+  } catch {
+    // No manifest yet: nothing to keep.
+  }
   await writeFile(path.join(FIXTURE_DIR, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`✓ manifest.json (${Object.keys(manifest).length} fixtures)`);
 }
