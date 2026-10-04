@@ -3,15 +3,23 @@
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspace",
-  "forwardPorts": [3000],
+  "forwardPorts": [
+    3000
+  ],
   "portsAttributes": {
-    "3000": { "label": "Plenty", "onAutoForward": "openBrowser" }
+    "3000": {
+      "label": "Plenty",
+      "onAutoForward": "openBrowser"
+    }
   },
-  "postCreateCommand": "bash -c 'cp -n .env.example .env; until (echo > /dev/tcp/db/5432) 2>/dev/null; do echo waiting for the database; sleep 2; done; npm install && npm run setup && npm run db:seed && npm run db:seed-roles'",
+  "postCreateCommand": "bash scripts/codespace.sh setup",
   "postStartCommand": "bash -c 'nohup npm run dev > /tmp/plenty-dev.log 2>&1 &'",
   "customizations": {
     "vscode": {
-      "extensions": ["dbaeumer.vscode-eslint", "bradlc.vscode-tailwindcss"]
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "bradlc.vscode-tailwindcss"
+      ]
     }
   }
 }
