@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ACCEPT_MATCH_SCORE, normalizeReceiptLine } from "@/lib/normalize";
 import { parseReceiptText, type ParsedReceipt } from "@/lib/receipts/parse";
 import { assessReceiptQuality, type ReceiptQualityAssessment } from "@/lib/receipts/quality";
 import { ocrVariant, prepareReceiptImage } from "@/server/receipts/image";
@@ -17,9 +18,9 @@ const OCR_TIMEOUT_MS = 90_000;
 
 interface ExpectedReceipt {
   store: string;
-  purchasedOn: string;
+  purchasedOn: string | null;
   total: number;
-  items: Array<{ description: string; price: number }>;
+  items: Array<{ description: string; price: number; weightKg?: number | null; product?: string | null; isFood?: boolean }>;
 }
 
 const manifest = JSON.parse(readFileSync(path.join(FIXTURES, "manifest.json"), "utf8")) as Record<string, { file: string; kind: string; expected: ExpectedReceipt | null }>;
@@ -64,6 +65,14 @@ function similar(a: string, b: string): boolean {
   return editDistance(x, y) <= Math.max(1, Math.floor(Math.max(x.length, y.length) * 0.15));
 }
 
+/** The OCR'd description shares a distinctive word (4+ letters, within one slip) with the real one, or is close to it overall. */
+function likeAnyWord(a: string, b: string): boolean {
+  if (similar(a, b)) return true;
+  const words = (text: string) => text.toLowerCase().match(/[a-z]{4,}/g) ?? [];
+  const other = words(b);
+  return words(a).some((w) => other.some((o) => editDistance(w, o) <= (o.length >= 7 ? 2 : 1)));
+}
+
 const readings = new Map<string, Reading>();
 
 beforeAll(async () => {
@@ -92,6 +101,10 @@ describe("ocrReceipt on the sample receipts", () => {
     expect(found.length / expected.items.length).toBeGreaterThanOrEqual(0.9);
     expect(reading.parsed.lines.length).toBeLessThanOrEqual(expected.items.length + 1);
     expect(reading.quality.ok).toBe(true);
+  });
+
+  it("reads a clean receipt once: no extra readings are made when the total vouches for the items", () => {
+    for (const name of CLEAN_RECEIPTS) expect(readings.get(name)?.text, name).not.toContain("\f");
   });
 
   it("recalls the item descriptions in the raw text", () => {
@@ -130,6 +143,82 @@ describe("ocrReceipt on the sample receipts", () => {
       await terminateOcrWorker();
       const again = await readFixture("coles-topup");
       expect(again.parsed.total).toBe(manifest["coles-topup"].expected?.total);
+    },
+    OCR_TIMEOUT_MS,
+  );
+});
+
+describe("a phone photo of a Woolworths receipt (angled, shadowed, on a speckled bench top)", () => {
+  const NAME = "woolworths-phone-photo";
+  const PHOTO_TIME_LIMIT_MS = 60_000;
+
+  function photo(): { reading: Reading; expected: ExpectedReceipt } {
+    const reading = readings.get(NAME);
+    const expected = manifest[NAME].expected;
+    if (!reading || !expected) throw new Error(`missing reading for ${NAME}`);
+    return { reading, expected };
+  }
+
+  it("finds at least 9 of the 10 items with the right prices", () => {
+    const { reading, expected } = photo();
+    const found = expected.items.filter((item) => reading.parsed.lines.some((line) => line.price === item.price && likeAnyWord(line.description, item.description)));
+    expect(found.length).toBeGreaterThanOrEqual(9);
+    // Nothing made up: at most one more line than there are items.
+    expect(reading.parsed.lines.length).toBeLessThanOrEqual(expected.items.length + 1);
+  });
+
+  it("reads the store, finds no date, and keeps the lines even though the total was not read", () => {
+    const { reading, expected } = photo();
+    expect(reading.parsed.store).toBe(expected.store);
+    expect(reading.parsed.purchasedOn).toBeNull();
+    expect(reading.parsed.warnings).toContain("no_date");
+    // A total, if one was read, is the printed one (the subtotal 29.02 and total 29.00 agree to within rounding).
+    if (reading.parsed.total !== null) expect(reading.parsed.total).toBe(expected.total);
+    if (reading.parsed.subtotal !== null) expect(reading.parsed.subtotal).toBe(29.02);
+  });
+
+  it("does not say the receipt is cut off, since ten item lines and the footer were read", () => {
+    const { reading } = photo();
+    expect(reading.parsed.lines.length).toBeGreaterThanOrEqual(9);
+    expect(reading.parsed.warnings).not.toContain("no_total");
+    expect(reading.quality.warnings).not.toContain("partial");
+  });
+
+  it("matches no item to a clearly wrong product, and treats the carrier bag as not food", () => {
+    const { reading, expected } = photo();
+    const allowed = new Set(expected.items.map((i) => i.product).filter((p): p is string => Boolean(p)));
+    for (const line of reading.parsed.lines) {
+      const n = normalizeReceiptLine(line.description);
+      if (n.isFood && n.match && n.match.score >= ACCEPT_MATCH_SCORE) {
+        expect(allowed.has(n.match.product.slug), `${line.description} → ${n.match.product.slug}`).toBe(true);
+      }
+      // The words that once led to potatoes and grated cheese.
+      if (/macadamia|pots/i.test(line.description)) expect(n.match?.product.slug).not.toMatch(/potato/);
+      if (/shredded/i.test(line.description)) expect(n.match?.product.slug).not.toBe("grated-cheese");
+    }
+    const bag = reading.parsed.lines.find((l) => /art\s*bag|bag/i.test(l.description));
+    if (bag) expect(normalizeReceiptLine(bag.description).isFood).toBe(false);
+  });
+
+  it("resolves most of the items to the right product", () => {
+    const { reading, expected } = photo();
+    const right = expected.items.filter((item) => {
+      const line = reading.parsed.lines.find((l) => l.price === item.price && likeAnyWord(l.description, item.description));
+      if (!line) return false;
+      const n = normalizeReceiptLine(line.description);
+      if (item.isFood === false) return !n.isFood;
+      return n.match?.product.slug === item.product && n.match.score >= 0.55;
+    });
+    expect(right.length).toBeGreaterThanOrEqual(7);
+  });
+
+  it(
+    "is read within the on-device allowance, extra readings included",
+    async () => {
+      const started = Date.now();
+      const again = await readFixture(NAME);
+      expect(Date.now() - started).toBeLessThan(PHOTO_TIME_LIMIT_MS);
+      expect(again.parsed.lines.length).toBeGreaterThanOrEqual(8);
     },
     OCR_TIMEOUT_MS,
   );

@@ -10,8 +10,9 @@
  * readings to agree).
  *
  * Lines are aligned across readings by description (and price, weight), in
- * receipt order; a line is kept when two readings found it or when it comes from
- * the best reading; prices, weights and descriptions are decided by vote.
+ * receipt order; a line is kept when two readings found it (or, with only two
+ * readings, when it is in the best one); prices, weights and descriptions are
+ * decided by vote.
  * Pure and deterministic.
  */
 
@@ -190,8 +191,8 @@ const EMPTY_READING: Reading = { store: null, purchasedOn: null, dateRejection: 
 
 /**
  * Merge readings of the same receipt into one. The reading with the most item
- * lines is the best one (earlier readings win ties): a line needs a second
- * reading to enter the result unless the best reading has it.
+ * lines is the best one (earlier readings win ties). With three or more readings
+ * a line needs two of them to enter the result.
  */
 export function mergeReadings(readings: readonly Reading[]): Reading {
   if (readings.length === 0) return EMPTY_READING;
@@ -199,7 +200,9 @@ export function mergeReadings(readings: readonly Reading[]): Reading {
 
   const ordered = [...readings].sort((a, b) => b.lines.length - a.lines.length);
   const clusters = alignLines(ordered);
-  const lines = clusters.filter((c) => new Set(c.members.map((m) => m.reading)).size >= 2 || c.members.some((m) => m.reading === 0)).map(decide);
+  // With three or more readings an item needs two of them. With two, one can't outvote the other, so the best reading's items stand.
+  const supported = (c: Cluster) => new Set(c.members.map((m) => m.reading)).size >= 2 || (ordered.length === 2 && c.members.some((m) => m.reading === 0));
+  const lines = clusters.filter(supported).map(decide);
 
   const taxes = ordered.find((r) => r.taxes.length > 0)?.taxes ?? [];
   const date = mostCommon(ordered.map((r) => r.purchasedOn).filter((d): d is string => d !== null))?.value ?? null;

@@ -653,3 +653,268 @@ describe("assessReceiptQuality", () => {
     expect(result.warnings).toEqual(["low_resolution", "partial"]);
   });
 });
+
+// ─── Photographed receipts ──────────────────────────────────────────────────
+
+/** A phone photo of a receipt on a speckled bench top: junk before each line, junk words after each price. */
+const NOISY_PHOTO = `
+~~   Woolworths                                       ©
+©.   Potato Sweet Gold
+CET 0.632 kg NET @ B4.30rkg               3.10     nal
+Co #Woolworths Art Bag                     2.00    re,
+CT Kiwifruit Gold Imp P/P 500g              5.90 ©]
+|    ~~ Inghams Turkey Brst Half Oven Roast Kg          1.92     RAVE
+~ +  Don Shredded Ham KG                      0.88     SE
+_ f  Dorsogna Streaky Bacon ky                 0.75     SSRN
+     © #S/Pots Macadamia Rst/Salt 120g                7.00     Se
+  10 SUBTOTAL                          $29.02
+`;
+
+describe("parseReceiptText — margin noise from photos", () => {
+  const parsed = parseReceiptText(NOISY_PHOTO, { today: TODAY });
+
+  it("strips junk symbols and fragments before a line and junk words after its price", () => {
+    expect(items(parsed)).toEqual([
+      { description: "Potato Sweet Gold", price: 3.1 },
+      { description: "Woolworths Art Bag", price: 2 },
+      { description: "Kiwifruit Gold Imp P/P 500g", price: 5.9 },
+      { description: "Inghams Turkey Brst Half Oven Roast Kg", price: 1.92 },
+      { description: "Don Shredded Ham KG", price: 0.88 },
+      { description: "Dorsogna Streaky Bacon kg", price: 0.75 },
+      { description: "S/Pots Macadamia Rst/Salt 120g", price: 7 },
+    ]);
+    expect(parsed.store).toBe("Woolworths");
+    expect(parsed.subtotal).toBe(29.02);
+  });
+
+  it("keeps the original line text in `raw`", () => {
+    expect(parsed.lines[1].raw).toBe("Co #Woolworths Art Bag                     2.00    re,");
+  });
+
+  it("keeps a real # marker out of the name and never reads the junk as part of the name", () => {
+    for (const l of parsed.lines) expect(l.description).not.toMatch(/^[#~©|_+]|^(?:Co|CT|CET)\b|\b(?:nal|re,|RAVE|SSRN)$/);
+  });
+
+  it("attaches a weighed line with a mangled unit price to the description above it", () => {
+    expect(parsed.lines[0]).toMatchObject({ description: "Potato Sweet Gold", weightKg: 0.632, price: 3.1 });
+    expect(parsed.lines[0].raw).toContain("0.632 kg NET @ B4.30rkg");
+  });
+
+  it("changes nothing in text without photo noise", () => {
+    const clean = "WOOLWORTHS\nST AGNES BRANDY 29.00\nWW WHITE BREAD 700G 2.70 A\nA2 MILK 2L 4.00 T\nGF PASTA 500G 3.50\nCHK BRST FLT 1KG 12.00\nTOTAL 51.20";
+    expect(items(parseReceiptText(clean))).toEqual([
+      { description: "ST AGNES BRANDY", price: 29 },
+      { description: "WW WHITE BREAD 700G", price: 2.7 },
+      { description: "A2 MILK 2L", price: 4 },
+      { description: "GF PASTA 500G", price: 3.5 },
+      { description: "CHK BRST FLT 1KG", price: 12 },
+    ]);
+  });
+
+  it("keeps real short words at the start of a line even in noisy text", () => {
+    const text = ["© ST AGNES BRANDY     29.00   ", "~~ WW WHITE BREAD 700G     2.70   ", "| GF PASTA 500G    3.50  ", "| CHK BRST FLT 1KG    12.00  ", "TOTAL 47.20"].join("\n");
+    expect(items(parseReceiptText(text)).map((i) => i.description)).toEqual(["ST AGNES BRANDY", "WW WHITE BREAD 700G", "GF PASTA 500G", "CHK BRST FLT 1KG"]);
+  });
+
+  it("drops two-letter junk before a line only in noisy text", () => {
+    expect(items(parseReceiptText("CT MILK 2L 3.10\nTOTAL 3.10"))[0].description).toBe("CT MILK 2L");
+    const noisy = "~~ MILK 2L 3.10 ©\n© EGGS 6.00 ~\nCT BREAD 3.00   x\nTOTAL 12.10";
+    expect(items(parseReceiptText(noisy)).map((i) => i.description)).toEqual(["MILK 2L", "EGGS", "BREAD"]);
+  });
+
+  it("only strips words after a price when they are set apart from it", () => {
+    const text = "WOOLWORTHS\nMILK 2L 3.10 A\nBREAD 3.00 T\nSPECIAL OFFER 2.00 EACH\nTOTAL 8.10";
+    expect(items(parseReceiptText(text))).toEqual([
+      { description: "MILK 2L", price: 3.1 },
+      { description: "BREAD", price: 3 },
+    ]);
+    // A minus sign next to the price is a discount; the same dash far off in the margin is junk.
+    expect(parseReceiptText("COLES\nMILK 2L 3.50\nLESS SPECIAL   1.00 -\nTOTAL 2.50").lines[0]).toMatchObject({ price: 2.5, discount: 1 });
+    expect(items(parseReceiptText("COLES\nMILK 2L        3.50      -\nTOTAL 3.50"))).toEqual([{ description: "MILK 2L", price: 3.5 }]);
+  });
+
+  it("never strips real trailing words from a line without a price", () => {
+    const text = "~~ WOOLWORTHS ©\n© BANANAS KG\n  0.842 kg NET @ $3.90/kg      3.28\n| FREE RANGE EGGS LARGE\n  2 @ $3.00 EACH      6.00\nTOTAL 9.28";
+    const lines = parseReceiptText(text).lines;
+    expect(lines.map((l) => [l.description, l.price])).toEqual([
+      ["BANANAS", 3.28],
+      ["FREE RANGE EGGS LARGE", 6],
+    ]);
+  });
+
+  it("does not turn totals, payments, tax or footer lines into items", () => {
+    const text = [
+      "~~ Woolworths",
+      "© Milk 2L                 3.10   re,",
+      "CT 1 SUBTOTAL            $3.10",
+      "~ TOTAL                  $3.10   x",
+      "© Cash                  $5.00  ©",
+      "| Change                $1.90  Se",
+      "  TOTAL includes GST     $0.28   ",
+      "~~ You could have collected at least 30 points   EN",
+    ].join("\n");
+    const result = parseReceiptText(text, { today: TODAY });
+    expect(items(result)).toEqual([{ description: "Milk 2L", price: 3.1 }]);
+    expect(result.total).toBe(3.1);
+    expect(result.subtotal).toBe(3.1);
+  });
+
+  it("reads the photo's printed text from a fixture end to end", () => {
+    const real = parseReceiptText(readFileSync(path.join(FIXTURES, "woolworths-phone-photo.txt"), "utf8"), { today: TODAY });
+    expect(real.lines).toHaveLength(10);
+    expect(real.store).toBe("Woolworths");
+  });
+});
+
+describe("parseReceiptText — weighed items with a damaged unit price", () => {
+  const weighed = (line: string) => parseReceiptText(`WOOLWORTHS\nPotato Sweet Gold\n${line}\nMandarin Loose\n 0.222 kg NET @ $4.90/kg   1.09\nTOTAL 4.19`, { today: TODAY }).lines[0];
+
+  it.each([
+    ["0.632 kg NET @ B4.30rkg 3.10", "a letter for the dollar sign and 'r' for the slash"],
+    ["0.632 kg NET @ $4.3)/kg 3.10", "a bracket for a digit"],
+    ["0.632 kg NET @ $4.xxkg      3.10", "an unreadable rate"],
+    ["0.632 KG NET @ S4.9Okg 3.10", "S for $ and O for 0"],
+    ["0.632 kq NET @ $4.90/kq 3.10", "q for g"],
+    ["0.632 ky NET © $4.90/ky 3.10", "© for @"],
+    ["CET 0.632 kg NET @ B4.30rkg 3.10     nal", "margin junk on both sides"],
+  ])("takes the right-most price as the total: %s (%s)", (line) => {
+    expect(weighed(line)).toMatchObject({ description: "Potato Sweet Gold", weightKg: 0.632, price: 3.1 });
+  });
+
+  it("does not price the item as weight × total when the unit price is unreadable", () => {
+    // 0.632 × 3.10 = 1.96 was once reported as the price.
+    const line = weighed("0.632 kg NET @ $4.3)/kg 3.10");
+    expect(line.price).toBe(3.1);
+    expect(line.unitPrice).toBeNull();
+  });
+
+  it("keeps a unit price that agrees with weight and total, and drops one that doesn't", () => {
+    expect(weighed("0.632 kg NET @ S4.9Okg 3.10").unitPrice).toBe(4.9);
+    expect(weighed("0.632 kg NET @ B4.30rkg 3.10").unitPrice).toBeNull();
+  });
+
+  it("leaves the price empty rather than guessing it when the total is unreadable", () => {
+    const text = "WOOLWORTHS\nMandarin Amorette Seedless Loose\n 0.222 kg NET @ $4.30rkg    103   ar\nTotal 4.00";
+    const line = parseReceiptText(text, { today: TODAY }).lines[0];
+    expect(line).toMatchObject({ description: "Mandarin Amorette Seedless Loose", weightKg: 0.222, price: null, unitPrice: null });
+  });
+
+  it("reads clean weight lines as before", () => {
+    const line = parseReceiptText("WOOLWORTHS\nBANANAS KG\n 0.842 kg NET @ $3.90/kg   3.28\nTOTAL 3.28", { today: TODAY }).lines[0];
+    expect(line).toMatchObject({ description: "BANANAS", weightKg: 0.842, unitPrice: 3.9, price: 3.28 });
+  });
+});
+
+describe("parseReceiptText — kg misreads on item lines", () => {
+  it("reads a trailing 'ky' or 'kq' as kg when the line has a price", () => {
+    const parsed = parseReceiptText("WOOLWORTHS\nDorsogna Streaky Bacon ky 0.75\nDON SHREDDED HAM KQ 0.88\nInghams Turkey Roast Kg 1.92\nTOTAL 3.55", { today: TODAY });
+    expect(parsed.lines.map((l) => l.description)).toEqual(["Dorsogna Streaky Bacon kg", "DON SHREDDED HAM KG", "Inghams Turkey Roast Kg"]);
+  });
+
+  it("leaves other words alone", () => {
+    const parsed = parseReceiptText("WOOLWORTHS\nKY JELLY 5.00\nSKY BLUE TEA 3.00\nTOTAL 8.00", { today: TODAY });
+    expect(parsed.lines.map((l) => l.description)).toEqual(["KY JELLY", "SKY BLUE TEA"]);
+  });
+});
+
+describe("parseReceiptText — a total that could not be read", () => {
+  const items3 = "WOOLWORTHS\nMILK 2L 3.10\nBREAD 3.00\nEGGS 6.20";
+
+  it("warns 'no_total' when the items run into the end of the text (the receipt may be cut off)", () => {
+    expect(parseReceiptText(items3, { today: TODAY }).warnings).toEqual(["no_total", "no_date"]);
+  });
+
+  it("warns 'total_unreadable' instead when the receipt carries on below the items", () => {
+    const below = `${items3}\nSUBTOT   \nTOTAL includes GS\nYou could have collected at least 30 points`;
+    expect(parseReceiptText(below, { today: TODAY }).warnings).toEqual(["total_unreadable", "no_date"]);
+    expect(parseReceiptText(`${items3}\nEFTPOS\n`, { today: TODAY }).warnings).toEqual(["total_unreadable", "no_date"]);
+    expect(parseReceiptText(`${items3}\n26/09/2026 17:42  STORE 1234`, { today: TODAY }).warnings).toEqual(["total_unreadable"]);
+  });
+
+  it("warns 'total_unreadable' when a subtotal was read and matches the items", () => {
+    const parsed = parseReceiptText(`${items3}\nSUBTOTAL 12.30`, { today: TODAY });
+    expect(parsed.warnings).toEqual(["total_unreadable", "no_date"]);
+    expect(parsed.subtotal).toBe(12.3);
+  });
+
+  it("warns 'total_mismatch' only when a total was read that the items don't match", () => {
+    const parsed = parseReceiptText(`${items3}\nTOTAL 40.00`, { today: TODAY });
+    expect(parsed.warnings).toEqual(["total_mismatch", "no_date"]);
+  });
+
+  it("says nothing when the items add up to a total that was read", () => {
+    expect(parseReceiptText(`${items3}\nTOTAL 12.30\n26/09/2026`, { today: TODAY }).warnings).toEqual([]);
+  });
+});
+
+describe("assessReceiptQuality — a total that could not be read", () => {
+  const photoText = readFileSync(path.join(FIXTURES, "woolworths-phone-photo.txt"), "utf8");
+  const photoParse = parseReceiptText(photoText, { today: TODAY });
+  const assess = (parsed: ParsedReceipt) =>
+    assessReceiptQuality({ ocrConfidence: 80, text: photoText, blurScore: 3000, width: 1500, height: 2000, parsed });
+
+  it("does not claim the receipt is cut off when ten clean items were read and the receipt carries on below them", () => {
+    expect(photoParse.lines).toHaveLength(10);
+    expect(photoParse.warnings).toContain("total_unreadable");
+    const result = assess(photoParse);
+    expect(result.warnings).not.toContain("partial");
+    expect(result.warnings).toEqual(["unclear"]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("still says part of the receipt may be missing when the items run into the end of the text", () => {
+    const cut = parseReceiptText("WOOLWORTHS\nMILK 2L 3.10\nBREAD 3.00\nEGGS 6.20", { today: TODAY });
+    expect(cut.warnings).toContain("no_total");
+    expect(assess(cut).warnings).toEqual(["partial"]);
+  });
+
+  it("stays quiet when a subtotal that matches the items was read", () => {
+    const parsed = parseReceiptText("WOOLWORTHS\nMILK 2L 3.10\nBREAD 3.00\nSUBTOTAL 6.10\n26/09/2026", { today: TODAY });
+    expect(assess(parsed).warnings).toEqual([]);
+  });
+});
+
+describe("parseReceiptText — total lines whose label could not be read", () => {
+  const ITEMS = ["Potato Sweet Gold 3.10", "Mandarin Seedless 1.09", "Woolworths Art Bag 2.00", "Kiwifruit Gold 5.90", "Ham off Bone 2.38", "Salada Original 250g 4.00"];
+  const text = (...footer: string[]) => ["WOOLWORTHS", ...ITEMS, ...footer].join("\n");
+
+  it("does not turn a garbled subtotal line into an item when its amount is what the items add up to", () => {
+    const parsed = parseReceiptText(text("C10 SBIUTAL        $18.47", "TOTAL includes G3     $1.68"), { today: TODAY });
+    expect(parsed.lines).toHaveLength(6);
+    expect(parsed.subtotal).toBe(18.47);
+    expect(parsed.warnings).not.toContain("total_mismatch");
+  });
+
+  it("reads a second such amount, within cash rounding, as the total", () => {
+    const parsed = parseReceiptText(text("C10 SBIUTAL        $18.47", "IOTAL               $18.45", "Cash $20.00", "Change $1.55"), { today: TODAY });
+    expect(parsed.lines).toHaveLength(6);
+    expect(parsed.subtotal).toBe(18.47);
+    expect(parsed.total).toBe(18.45);
+    expect(parsed.warnings).toEqual(["no_date"]);
+  });
+
+  it("prefers a total whose label was read over one found by arithmetic", () => {
+    const parsed = parseReceiptText(text("C10 SBIUTAL        $18.47", "IOTAL               $18.45", "TOTAL $18.45"), { today: TODAY });
+    expect(parsed.total).toBe(18.45);
+  });
+
+  it("reads 'TOTAL includes GST' with a mangled last word as tax, not an item", () => {
+    for (const label of ["TOTAL includes G3", "TOTAL 1ncludes GS1", "Total lncludes GST", "TOTAL includes GST"]) {
+      const parsed = parseReceiptText(text(`SUBTOTAL $18.47`, `TOTAL $18.47`, `${label}   $1.68`), { today: TODAY });
+      expect(parsed.lines, label).toHaveLength(6);
+      expect(parsed.warnings, label).toEqual(["no_date"]);
+    }
+  });
+
+  it("leaves an item alone when fewer than four items came before it, or items follow it", () => {
+    const few = parseReceiptText("WOOLWORTHS\nMILK 2L 3.10\nBREAD 3.00\nEGGS 6.20\nXQZ 12.30", { today: TODAY });
+    expect(few.lines).toHaveLength(4);
+    const followed = parseReceiptText("WOOLWORTHS\nGRAPES 1.00\nPEARS 1.00\nPLUMS 1.00\nCHERRIES 1.00\nFRUIT BOX 4.00\nKIWI 2.00\nTOTAL 10.00", { today: TODAY });
+    expect(followed.lines.map((l) => l.description)).toEqual(["GRAPES", "PEARS", "PLUMS", "CHERRIES", "FRUIT BOX", "KIWI"]);
+  });
+
+  it("is not fooled by an amount unlike the sum", () => {
+    const parsed = parseReceiptText(text("MYSTERY CHARGE $9.99"), { today: TODAY });
+    expect(parsed.lines).toHaveLength(7);
+  });
+});

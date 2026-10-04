@@ -106,6 +106,15 @@ const DISCOUNT_RESIDUAL_MAX_LETTERS = 3;
 const TOTAL_RESIDUAL_MAX_LETTERS = 2;
 const LB_IN_KG = 0.45359237;
 
+/**
+ * An amount on a line OCR couldn't label ("C10 SBIUTAL 29.02") that equals the sum of at least this many
+ * earlier items (give or take cash rounding) with no items after it is their subtotal, not an item.
+ */
+const RUNNING_TOTAL_MIN_ITEMS = 4;
+const RUNNING_TOTAL_TOLERANCE = 0.05;
+/** Totals found by arithmetic alone rank below any labelled total. */
+const RUNNING_TOTAL_PRIORITY = 4;
+
 /** Stores whose receipts print dates month-first (MM/DD/YY). */
 const MONTH_FIRST_STORES: ReadonlySet<string> = new Set<StoreName>(["Walmart", "Kroger", "Trader Joe's", "Whole Foods", "Target"]);
 
@@ -213,10 +222,14 @@ function toKey(upper: string): string {
 
 /** Symbols a photographed margin turns into; never part of an item. `#`, `*`, `-`, `@`, `$` and brackets are meaningful and kept. */
 const JUNK_SYMBOLS = /^[©®™°§¶•·~_|\\^=+<>«»{}[\]!;:,.'"`´¬¦†‡¡¿…]+$/;
-/** A junk word: a few letters with at most a little punctuation stuck to it ("re,", "Tal,", "©"-free). */
+/** A junk word: a few letters with at most a little punctuation stuck to it ("re,", "Tal,"). */
 const JUNK_FRAGMENT = /^[^A-Za-z0-9]{0,2}[A-Za-z]{1,5}[^A-Za-z0-9]{0,2}$/;
 /** Real short words that may start an item line (store brands, abbreviations). */
-const REAL_SHORT_WORDS: ReadonlySet<string> = new Set(["WW", "WM", "CB", "CC", "HB", "GV", "KS", "JS", "TJ", "ST", "QTY", "WT", "NET", "PK", "KG", "EA", "NZ", "UK", "US"]);
+const REAL_SHORT_WORDS: ReadonlySet<string> = new Set([
+  ...["WW", "WM", "CB", "CC", "HB", "GV", "KS", "JS", "TJ", "ST", "MM", "DB", "NZ", "UK", "US"], // brands and places
+  ...["GF", "DF", "LF", "FF", "SR", "HP", "PB", "XL", "PK", "EA", "KG"], // product abbreviations
+  ...["QTY", "WT", "NET"], // quantity and weight prefixes
+]);
 /** Words that legitimately follow a price. */
 const PRICE_SUFFIX_WORD = /^(?:EA|EACH|KGS?|G|GMS?|LBS?|PER|GST|TAX|TX|NET|AUD|NZD|USD|GBP|EUR|CAD)$/i;
 const WEIGHT_NUMBER = /^\d{1,3}[.,]\d{1,3}$/;
@@ -264,7 +277,8 @@ function isLeadingFragment(tokens: readonly RawToken[]): boolean {
   const letters = token.text.replace(/[^A-Za-z]/g, "");
   if (/\d/.test(token.text) || letters.length === 0 || letters.length > 3 || token.text.length > letters.length + 2) return false;
   if (REAL_SHORT_WORDS.has(letters.toUpperCase())) return false;
-  if (letters.length === 1 || !/[AEIOUY]/i.test(letters)) return true;
+  // Two letters with no vowel ("CT", "RN") are no word; three can be a receipt abbreviation ("CHK", "BBQ"), so they need more evidence.
+  if (letters.length === 1 || (letters.length === 2 && !/[AEIOUY]/i.test(letters))) return true;
   if (next?.text.startsWith("#")) return true;
   if (next && third && WEIGHT_NUMBER.test(next.text) && KG_LIKE.test(third.text.replace(/[^A-Za-z0-9]/g, ""))) return true;
   // "CoD", "cT": capitals in odd places are not a word.
@@ -661,6 +675,8 @@ const AMOUNT_DUE_WORDS = /\bBALANCE\s+DUE\b|\bAMOUNT\s+DUE\b|\bTO\s+PAY\b|\bPAYA
 const BALANCE_WORD = /\bBALANCE\b/;
 const TAX_WORD = /\b(?:GST|VAT|HST|PST|TAX(?:ES)?)\b/;
 const TAX_INCLUSIVE = /\bINC(?:L|LUDING|LUSIVE)?\.?\s*(?:OF\s+)?(?:GST|VAT|TAX)\b/;
+/** "TOTAL includes GST" whose last word OCR has mangled ("TOTAL 1ncludes G3"): the amount is the tax inside the total. */
+const TOTAL_INCLUDES = /^\W*TOTAL\s+[I1L]NCL?\w*/;
 /** Words that may accompany a total without making it something else. */
 const TOTAL_QUALIFIERS =
   /\b(?:GRAND|SUB|TOTAL|SUBTOTAL|BALANCE|DUE|AMOUNT|AMT|TO|PAY|PAYABLE|FOR|ITEMS?|INC|INCL|INCLUDING|INCLUSIVE|OF|GST|VAT|TAX|AUD|NZD|GBP|USD|EUR|CAD|SALE|PURCHASE|NET|FINAL|THE)\b/g;
@@ -770,8 +786,8 @@ function parseDamagedWeightLine(upper: string): { qualifier: Qualifier; legibleR
   if (garbage.length > DAMAGED_UNIT_PRICE_MAX_CHARS || !(/\d/.test(garbage) || /K[GQY9]/.test(garbage))) return null;
   // Without a total, only a line that says "NET" is trusted to be a weight line.
   if (total === null && !m[2]) return null;
-  const rate = /(\d{1,3})[.,](\d{2})(?!\d)/.exec(garbage);
-  const perKg = rate ? Number(`${rate[1]}.${rate[2]}`) : null;
+  const rate = /(\d{1,3})[.,]([\dOoIl|]{2})(?![\dOo])/.exec(garbage);
+  const perKg = rate ? Number(`${rate[1]}.${toDigits(rate[2])}`) : null;
   const consistent = total !== null && perKg !== null && Math.abs(weightKg * perKg - total) <= Math.max(0.03, total * UNIT_PRICE_TOTAL_TOLERANCE);
   return {
     qualifier: { quantity: null, weightKg: round3(weightKg), unitPrice: consistent ? perKg : null, total, implied: null },
@@ -976,7 +992,7 @@ function classifyLine(line: TextLine): LineKind {
     if (total && tail.amount >= 0 && tail.amount <= MAX_TOTAL) {
       return total.kind === "subtotal" ? { kind: "subtotal", amount: tail.amount } : { kind: "total", amount: tail.amount, priority: total.priority };
     }
-    if (TAX_WORD.test(label)) return { kind: "tax", amount: tail.amount };
+    if (TAX_WORD.test(label) || TOTAL_INCLUDES.test(label)) return { kind: "tax", amount: tail.amount };
     if (SUMMARY_SAVINGS.test(label)) return SKIP;
   }
 
@@ -1133,6 +1149,14 @@ function handleDiscount(state: AssemblyState, amount: number, raw: string): void
   prev.raw.push(raw);
 }
 
+/** True when `price` is what the items so far add up to, with no item line after it (but another such amount: a total after a subtotal). */
+function isRunningTotal(state: AssemblyState, price: number, classified: readonly LineKind[], index: number): boolean {
+  if (state.lines.length < RUNNING_TOTAL_MIN_ITEMS || price <= 0) return false;
+  const sum = round2(state.lines.reduce((acc, l) => acc + Math.max(0, (l.basePrice ?? 0) - l.discount), 0));
+  const matches = (amount: number) => Math.abs(amount - sum) <= RUNNING_TOTAL_TOLERANCE;
+  return matches(price) && classified.slice(index + 1).every((c) => c.kind !== "item" || matches(c.item.price));
+}
+
 function assemble(lines: TextLine[]): AssemblyState {
   const classified = lines.map(classifyLine);
   const state: AssemblyState = {
@@ -1172,7 +1196,14 @@ function assemble(lines: TextLine[]): AssemblyState {
         if (!state.ended) handleDiscount(state, c.amount, raw);
         break;
       case "item":
-        if (!state.ended) handleItem(state, c.item, raw);
+        if (state.ended) break;
+        if (isRunningTotal(state, c.item.price, classified, index)) {
+          // An arithmetic subtotal or total whose label was unreadable; not something that was bought.
+          if (state.subtotal === null) state.subtotal = c.item.price;
+          else state.totals.push({ amount: c.item.price, priority: RUNNING_TOTAL_PRIORITY });
+        } else {
+          handleItem(state, c.item, raw);
+        }
         break;
       case "text":
         if (!state.ended) state.pending = { raw, description: c.description, index };

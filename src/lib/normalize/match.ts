@@ -83,13 +83,21 @@ const UNSTOCKED_FOOD_WEIGHT = 4;
 const UNSTOCKED_FOOD_PENALTY = 0.12;
 
 /**
+ * Words for how food is cut, not what it is. A line whose only recognised words
+ * are these ("SHREDDED ZORG") says nothing about the product, so it must not
+ * land on the one product that happens to carry them in its name ("shredded
+ * cheese").
+ */
+const FORM_WORDS: ReadonlySet<string> = new Set(["shredded", "grated"]);
+
+/**
  * Foods the catalog stocks in one form only (turkey breast): a line naming
  * them must not drift to another product ("turkey mince" is not beef mince,
  * "turkey drumsticks" are not chicken drumsticks), so a product that never
  * mentions the word pays this much.
  */
 const DEFINING_FOODS: ReadonlySet<string> = new Set(["turkey"]);
-const DEFINING_WORD_PENALTY = 0.25;
+const DEFINING_WORD_PENALTY = 0.4;
 /** …and a token-similarity match on such a word ("turkey stuffing" ~ turkey breast) is never better than plausible; only a name or alias hit is trusted. */
 const DEFINING_FUZZY_CAP = 0.7;
 
@@ -817,7 +825,14 @@ function unexplainedPenalty(query: readonly QueryToken[], vocab: ReadonlySet<str
   );
 }
 
+/** Nothing recognised in the query identifies a product: only descriptors and how-it's-cut words. */
+function identifiesNothing(query: readonly QueryToken[]): boolean {
+  const recognised = query.filter((t) => t.canon.length > 0 && !t.descriptor);
+  return recognised.length > 0 && recognised.every((t) => t.canon.every((c) => FORM_WORDS.has(c)));
+}
+
 function scoreProducts(index: ProductIndex, query: readonly QueryToken[]): Scored[] {
+  if (identifiesNothing(query)) return [];
   const candidates = new Set<number>();
   for (const token of query) for (const c of token.canon) for (const p of index.postings.get(c) ?? []) candidates.add(p);
 
@@ -926,7 +941,7 @@ function rankCandidates(rawText: string, cleaned: CleanedReceiptText, opts: Matc
       found.push(...fuzzy);
       const bestFuzzy = fuzzy.reduce((max, s) => Math.max(max, s.score), 0);
       // Text naming a real food isn't mangled, so there's nothing for the character fallback to repair.
-      const mangled = !query.some((t) => t.unstocked);
+      const mangled = !query.some((t) => t.unstocked || t.canon.some((c) => DEFINING_FOODS.has(c))) && !identifiesNothing(query);
       if (!exact && mangled && bestFuzzy < TRIGRAM_FALLBACK_BELOW) found.push(...trigramFallback(index, words.tokens));
     }
   }

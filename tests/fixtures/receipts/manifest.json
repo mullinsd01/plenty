@@ -413,72 +413,84 @@
           "price": 3.1,
           "quantity": null,
           "weightKg": 0.632,
-          "discount": null
+          "discount": null,
+          "product": "sweet-potato"
         },
         {
           "description": "Mandarin Amorette Seedless Loose",
           "price": 1.09,
           "quantity": null,
           "weightKg": 0.222,
-          "discount": null
+          "discount": null,
+          "product": "mandarin"
         },
         {
           "description": "Woolworths Art Bag",
           "price": 2,
           "quantity": null,
           "weightKg": null,
-          "discount": null
+          "discount": null,
+          "product": null,
+          "isFood": false
         },
         {
           "description": "Kiwifruit Gold Imp P/P 500g",
           "price": 5.9,
           "quantity": null,
           "weightKg": null,
-          "discount": null
+          "discount": null,
+          "product": "kiwifruit"
         },
         {
           "description": "Bertocchi Australian Db Smkd Ham off Bone",
           "price": 2.38,
           "quantity": null,
           "weightKg": null,
-          "discount": null
+          "discount": null,
+          "product": "sliced-ham"
         },
         {
           "description": "Arnotts Salada Original 250g",
           "price": 4,
           "quantity": null,
           "weightKg": null,
-          "discount": null
+          "discount": null,
+          "product": "crackers"
         },
         {
           "description": "Inghams Turkey Brst Half Oven Roast Kg",
           "price": 1.92,
           "quantity": null,
           "weightKg": null,
-          "discount": null
+          "discount": null,
+          "product": "turkey-breast"
         },
         {
           "description": "Don Shredded Ham KG",
           "price": 0.88,
           "quantity": null,
           "weightKg": null,
-          "discount": null
+          "discount": null,
+          "product": "sliced-ham"
         },
         {
           "description": "Dorsogna Streaky Bacon kg",
           "price": 0.75,
           "quantity": null,
           "weightKg": null,
-          "discount": null
+          "discount": null,
+          "product": "streaky-bacon"
         },
         {
           "description": "S/Pots Macadamia Rst/Salt 120g",
           "price": 7,
           "quantity": null,
           "weightKg": null,
-          "discount": null
+          "discount": null,
+          "product": "macadamias"
         }
       ]
-    }
+    },
+    "note": "Phone photo (angled, shadow across it, speckled bench top); no date is visible. The .txt is what the first on-device OCR read gave, kept as the parser's input. Total, subtotal and GST are the printed values; the OCR text does not contain them."
   }
 }
