@@ -18,7 +18,7 @@ export default async function JoinPage({ params }: PageProps<"/join/[code]">) {
   const [preview, user] = await Promise.all([allowed ? getInvitationPreview(clean) : null, getAuthUser()]);
   const next = encodeURIComponent(`/join/${clean}`);
   return (
-    <div className="flex min-h-dvh flex-col items-center px-6 py-10">
+    <div className="flex min-h-dvh flex-col items-center px-6 pb-[max(2.5rem,calc(env(safe-area-inset-bottom)+1rem))] pt-[max(2.5rem,calc(env(safe-area-inset-top)+0.75rem))]">
       <PlentyLogo className="h-7" />
       <main className="flex w-full max-w-sm flex-1 flex-col justify-center text-center">
         {preview ? (

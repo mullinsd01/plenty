@@ -10,7 +10,7 @@ export default async function LandingPage() {
   if (await getAuthUser()) redirect("/home");
 
   return (
-    <div className="min-h-dvh">
+    <div className="pt-safe pb-safe min-h-dvh">
       <header className="mx-auto flex h-20 max-w-6xl items-center justify-between px-6">
         <PlentyLogo className="h-7" />
         <nav className="flex items-center gap-2">

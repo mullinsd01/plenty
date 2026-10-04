@@ -26,7 +26,7 @@ export function LegalFooterLinks({ className }: { className?: string }) {
 /** The public pages' frame: no sign-in needed, readable on a phone, calm. */
 export function LegalFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-dvh bg-canvas">
+    <div className="pt-safe pb-safe min-h-dvh bg-canvas">
       <header className="mx-auto flex h-16 max-w-3xl items-center justify-between px-5">
         <Link href="/" aria-label="Plenty home">
           <PlentyLogo className="h-6" />

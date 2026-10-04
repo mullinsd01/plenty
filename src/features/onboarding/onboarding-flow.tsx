@@ -114,7 +114,7 @@ export function OnboardingFlow({ initial }: { initial: OnboardingInitial }) {
   }));
 
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col px-5 pb-8 pt-5">
+    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col px-5 pb-[max(2rem,calc(env(safe-area-inset-bottom)+1rem))] pt-[max(1.25rem,calc(env(safe-area-inset-top)+0.5rem))]">
       <div className="flex h-10 items-center gap-3">
         {index > (initial.hasHousehold ? 2 : 0) && step !== "done" ? (
           <button
