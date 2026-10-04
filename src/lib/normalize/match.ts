@@ -82,6 +82,17 @@ const UNSTOCKED_FOOD_WEIGHT = 4;
 /** Penalty per unstocked food word the product can't explain ("turkey mince" is not beef mince). */
 const UNSTOCKED_FOOD_PENALTY = 0.12;
 
+/**
+ * Foods the catalog stocks in one form only (turkey breast): a line naming
+ * them must not drift to another product ("turkey mince" is not beef mince,
+ * "turkey drumsticks" are not chicken drumsticks), so a product that never
+ * mentions the word pays this much.
+ */
+const DEFINING_FOODS: ReadonlySet<string> = new Set(["turkey"]);
+const DEFINING_WORD_PENALTY = 0.25;
+/** …and a token-similarity match on such a word ("turkey stuffing" ~ turkey breast) is never better than plausible; only a name or alias hit is trusted. */
+const DEFINING_FUZZY_CAP = 0.7;
+
 const TYPO_MIN_LENGTH = 4;
 const TYPO_STRENGTH_ONE_EDIT = 0.9;
 const TYPO_STRENGTH_TWO_EDITS = 0.8;
@@ -133,6 +144,7 @@ const DESCRIPTORS = new Set([
   "tin",
   "jar",
   "pouch",
+  "pot",
   "sachet",
   "carton",
   "block",
@@ -329,6 +341,9 @@ const MODIFIERS = new Set([
   "roasted",
   "toasted",
   "quick",
+  // How it is cut: "SHREDDED HAM" is ham, "GRATED CHEESE" is cheese.
+  "shredded",
+  "grated",
 ]);
 
 // ─── Index ──────────────────────────────────────────────────────────────────
@@ -639,14 +654,31 @@ function resolveToken(index: ProductIndex, surface: string, singular: string): Q
         : prefixed.length <= FEW_PREFIX_CANDIDATES
           ? PREFIX_STRENGTH_FEW
           : PREFIX_STRENGTH_MANY;
-    return { ...base, canon: prefixed, strength, weight: maxWeight(index, prefixed) };
+    // A truncated descriptor or variant word ("LOOS" for "loose") is still just a descriptor or variant word.
+    return {
+      ...base,
+      canon: prefixed,
+      strength,
+      weight: maxWeight(index, prefixed),
+      descriptor: prefixed.every(isDescriptor),
+      modifier: prefixed.every(isModifier),
+    };
   }
 
   // A real food Plenty doesn't stock is exactly what it says, never a typo of something it does.
   if (UNSTOCKED_FOODS.has(singular)) return { ...base, canon: [], strength: 0, weight: UNSTOCKED_FOOD_WEIGHT, unstocked: true };
 
   const typo = typoCandidates(index, singular);
-  if (typo) return { ...base, canon: typo.canon, strength: typo.strength, weight: maxWeight(index, typo.canon) };
+  if (typo) {
+    return {
+      ...base,
+      canon: typo.canon,
+      strength: typo.strength,
+      weight: maxWeight(index, typo.canon),
+      descriptor: typo.canon.every(isDescriptor),
+      modifier: typo.canon.every(isModifier),
+    };
+  }
 
   return { ...base, canon: [], strength: 0, weight: UNKNOWN_TOKEN_WEIGHT };
 }
@@ -756,9 +788,11 @@ function scoreEntry(index: ProductIndex, context: ProductContext, entry: Entry):
 function unexplainedPenalty(query: readonly QueryToken[], vocab: ReadonlySet<string>): number {
   const unexplained = query.filter((t) => t.canon.length > 0 && !t.descriptor && !t.modifier && !tokenIn(t, vocab)).length;
   const unstocked = query.filter((t) => t.unstocked).length;
+  const defining = query.some((t) => t.canon.some((c) => DEFINING_FOODS.has(c)) && !tokenIn(t, vocab));
   return (
     Math.min(unexplained, MAX_UNEXPLAINED_PENALTIES) * UNEXPLAINED_WORD_PENALTY +
-    Math.min(unstocked, MAX_UNEXPLAINED_PENALTIES) * UNSTOCKED_FOOD_PENALTY
+    Math.min(unstocked, MAX_UNEXPLAINED_PENALTIES) * UNSTOCKED_FOOD_PENALTY +
+    (defining ? DEFINING_WORD_PENALTY : 0)
   );
 }
 
@@ -774,6 +808,7 @@ function scoreProducts(index: ProductIndex, query: readonly QueryToken[]): Score
     const covQ = queryCoverage(query, vocab);
     if (covQ === 0) continue;
     const context: ProductContext = { query, head, vocab, covQ, unexplainedPenalty: unexplainedPenalty(query, vocab) };
+    const definingHit = query.some((t) => t.canon.some((c) => DEFINING_FOODS.has(c)) && tokenIn(t, vocab));
     let best = 0;
     let bestEntry: Entry | null = null;
     for (const entry of index.entriesByProduct[productIndex]) {
@@ -785,7 +820,7 @@ function scoreProducts(index: ProductIndex, query: readonly QueryToken[]): Score
     }
     if (bestEntry) {
       const method = bestEntry.tokens.length === 1 && contentTokens >= 2 ? "keyword" : "fuzzy";
-      results.push({ productIndex, score: best, method });
+      results.push({ productIndex, score: definingHit ? Math.min(best, DEFINING_FUZZY_CAP) : best, method });
     }
   }
   return results;
@@ -1206,4 +1241,12 @@ export function normalizeReceiptLine(raw: string, opts?: MatchOptions): Normaliz
     isFood: !(accepted?.product.nonFood ?? false),
     aliasKey: key,
   };
+}
+
+export function __debugQuery(text: string) {
+  const cleaned = cleanReceiptText(text);
+  const index = indexFor(undefined);
+  const words = queryWords(cleaned);
+  const query = words.tokens.map((token, i) => resolveToken(index, words.surfaces[i], token));
+  return { query, head: queryHead(query)?.surface, scored: scoreProducts(index, query).sort((a, b) => b.score - a.score).slice(0, 4).map((s) => `${index.products[s.productIndex].slug}:${s.score.toFixed(3)}`) };
 }

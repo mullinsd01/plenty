@@ -32,7 +32,7 @@ const MIN_PRICE_TOKENS = 3;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export const RECEIPT_QUALITY_WARNINGS = ["empty", "not_a_receipt", "blurry", "low_resolution", "partial"] as const;
+export const RECEIPT_QUALITY_WARNINGS = ["empty", "not_a_receipt", "blurry", "low_resolution", "partial", "unclear"] as const;
 export type ReceiptQualityWarning = (typeof RECEIPT_QUALITY_WARNINGS)[number];
 
 export interface ReceiptQualityInput {
@@ -62,6 +62,7 @@ export const RECEIPT_QUALITY_MESSAGES: Record<ReceiptQualityWarning, string> = {
   blurry: "This photo looks a bit blurry — try again in better light, holding the phone steady.",
   low_resolution: "This photo is quite small, so some prices may be misread. Move closer so the receipt fills the frame.",
   partial: "Part of this receipt might be missing — make sure the whole receipt, including the total, is in the photo.",
+  unclear: "Parts of this receipt were hard to read, so double-check the items below. The total couldn't be made out.",
 };
 
 // ─── Signals ────────────────────────────────────────────────────────────────
@@ -102,6 +103,8 @@ function parseIsConsistent(parsed: ParsedReceipt): boolean {
  * - "blurry": low blur score or low OCR confidence.
  * - "low_resolution": the photo is small.
  * - "partial": items found but no total, or they don't add up to it.
+ * - "unclear": items found and the receipt continues below them, but no total
+ *   could be read (a garbled total isn't a cut-off receipt).
  *
  * `ok` is false for "empty" and "not_a_receipt", and for "blurry" /
  * "low_resolution" unless the parse still came out consistent (items that add
@@ -115,7 +118,12 @@ export function assessReceiptQuality(input: ReceiptQualityInput): ReceiptQuality
   const lowResolution = Math.max(input.width, input.height) < MIN_LONG_EDGE_PX || input.width * input.height < MIN_PIXELS;
   const empty = readableWords(text) < MIN_READABLE_WORDS && parsed.lines.length === 0;
   const notAReceipt = !empty && !blurry && receiptSignals(text, parsed) < MIN_RECEIPT_SIGNALS;
-  const partial = parsed.lines.length > 0 && (parsed.total === null || parsed.warnings.includes("total_mismatch"));
+  // No total was read: that only suggests a cut-off receipt when the items run into the end of the text. When the receipt visibly
+  // carries on below them ("total_unreadable") nothing is missing from the photo; the total was just illegible.
+  const totalUnreadable = parsed.total === null && parsed.warnings.includes("total_unreadable");
+  const partial = parsed.lines.length > 0 && ((parsed.total === null && !totalUnreadable) || parsed.warnings.includes("total_mismatch"));
+  // A subtotal that matched the items is a reading success, not a problem worth a warning.
+  const unclear = parsed.lines.length > 0 && totalUnreadable && parsed.subtotal === null;
 
   const flags: Record<ReceiptQualityWarning, boolean> = {
     empty,
@@ -123,6 +131,7 @@ export function assessReceiptQuality(input: ReceiptQualityInput): ReceiptQuality
     blurry,
     low_resolution: lowResolution,
     partial,
+    unclear,
   };
   const warnings = RECEIPT_QUALITY_WARNINGS.filter((w) => flags[w]);
   const consistent = parseIsConsistent(parsed);

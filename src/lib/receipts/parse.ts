@@ -27,6 +27,7 @@
 
 import { addDays, isDateString } from "@/lib/dates";
 import { SUPERMARKETS } from "@/lib/domain";
+import { mergeReadings, type Reading } from "@/lib/receipts/consensus";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -199,15 +200,149 @@ function toKey(upper: string): string {
     .join(" ");
 }
 
+// ─── Margin noise ───────────────────────────────────────────────────────────
+
+/**
+ * Photos of receipts lying on a speckled surface pick up characters from the
+ * margins: fake symbols and short junk words in front of a line ("©. ", "~~ ",
+ * "Co ", "CT ") and junk after its price ("3.10     nal", "5.90 ©]"). They are
+ * stripped before a line is classified. Symbols and wide-gapped junk after a
+ * price are always removed; short junk words at the start of a line (which could
+ * be real abbreviations) only when the text is clearly noisy.
+ */
+
+/** Symbols a photographed margin turns into; never part of an item. `#`, `*`, `-`, `@`, `$` and brackets are meaningful and kept. */
+const JUNK_SYMBOLS = /^[©®™°§¶•·~_|\\^=+<>«»{}[\]!;:,.'"`´¬¦†‡¡¿…]+$/;
+/** A junk word: a few letters with at most a little punctuation stuck to it ("re,", "Tal,", "©"-free). */
+const JUNK_FRAGMENT = /^[^A-Za-z0-9]{0,2}[A-Za-z]{1,5}[^A-Za-z0-9]{0,2}$/;
+/** Real short words that may start an item line (store brands, abbreviations). */
+const REAL_SHORT_WORDS: ReadonlySet<string> = new Set(["WW", "WM", "CB", "CC", "HB", "GV", "KS", "JS", "TJ", "ST", "QTY", "WT", "NET", "PK", "KG", "EA", "NZ", "UK", "US"]);
+/** Words that legitimately follow a price. */
+const PRICE_SUFFIX_WORD = /^(?:EA|EACH|KGS?|G|GMS?|LBS?|PER|GST|TAX|TX|NET|AUD|NZD|USD|GBP|EUR|CAD)$/i;
+const WEIGHT_NUMBER = /^\d{1,3}[.,]\d{1,3}$/;
+const KG_LIKE = /^(?:KGS?|KQ|KY|K9)$/i;
+/** At most this many junk tokens are stripped from one end of a line. */
+const MAX_JUNK_TOKENS = 4;
+/** Whitespace between a price (or the end of the text) and trailing junk that marks it as margin noise. */
+const JUNK_GAP_AFTER_PRICE = 2;
+const JUNK_GAP_AFTER_TEXT = 3;
+const JUNK_GAP_DASH = 3;
+/** This many lines with symbol junk at an end (or long junk words after a price) make the text "noisy". */
+const NOISY_TEXT_LINES = 2;
+
+interface RawToken {
+  text: string;
+  /** Whitespace characters before the token (OCR keeps column gaps, so wide gaps separate margin junk from the line). */
+  gap: number;
+}
+
+function rawTokens(line: string): RawToken[] {
+  return [...line.replace(/\t/g, "    ").matchAll(/(\s*)(\S+)/g)].map((m) => ({ text: m[2], gap: m[1].length }));
+}
+
+const isJunkSymbol = (token: RawToken): boolean => JUNK_SYMBOLS.test(token.text);
+
+function isPriceToken(text: string): boolean {
+  return parseAmount(repairToken(text).split(" ")[0]) !== null;
+}
+
+function lastPriceIndex(tokens: readonly RawToken[]): number {
+  for (let i = tokens.length - 1; i >= 0; i -= 1) if (isPriceToken(tokens[i].text)) return i;
+  return -1;
+}
+
+function isJunkWord(token: RawToken, afterPrice: boolean): boolean {
+  if (isJunkSymbol(token)) return true;
+  // A lone dash is a minus sign when it hugs the price ("1.00 -"), margin noise when it sits far off ("5.90      -").
+  if (/^[-–—]+$/.test(token.text)) return !afterPrice || token.gap >= JUNK_GAP_DASH;
+  return JUNK_FRAGMENT.test(token.text) && !PRICE_SUFFIX_WORD.test(token.text.replace(/[^A-Za-z]/g, ""));
+}
+
+/** A short fragment at the start of a line that no real line would begin with. Only trusted in noisy text. */
+function isLeadingFragment(tokens: readonly RawToken[]): boolean {
+  const [token, next, third] = tokens;
+  const letters = token.text.replace(/[^A-Za-z]/g, "");
+  if (/\d/.test(token.text) || letters.length === 0 || letters.length > 3 || token.text.length > letters.length + 2) return false;
+  if (REAL_SHORT_WORDS.has(letters.toUpperCase())) return false;
+  if (letters.length === 1 || !/[AEIOUY]/i.test(letters)) return true;
+  if (next?.text.startsWith("#")) return true;
+  if (next && third && WEIGHT_NUMBER.test(next.text) && KG_LIKE.test(third.text.replace(/[^A-Za-z0-9]/g, ""))) return true;
+  // "CoD", "cT": capitals in odd places are not a word.
+  return /[a-z]/.test(letters) && /[A-Z]/.test(letters) && !/^[A-Z][a-z]+$/.test(letters);
+}
+
+function leadingJunkCount(tokens: readonly RawToken[], noisy: boolean): number {
+  let i = 0;
+  while (i < tokens.length - 1) {
+    if (isJunkSymbol(tokens[i]) || (noisy && isLeadingFragment(tokens.slice(i)))) i += 1;
+    else break;
+  }
+  return i;
+}
+
+/**
+ * Index where trailing junk starts (`tokens.length` when there is none).
+ *
+ * After a price, everything that follows must be junk: symbols, or short words
+ * set apart from the price by a wide gap. Without a price (a description above
+ * a weight line) the junk is the run of fragments after the line's last wide
+ * gap, which can only be told from real trailing words in noisy text.
+ */
+function trailingJunkStart(tokens: readonly RawToken[], noisy: boolean): number {
+  const price = lastPriceIndex(tokens);
+  if (price >= 0) {
+    const trailing = tokens.slice(price + 1);
+    if (trailing.length === 0 || trailing.length > MAX_JUNK_TOKENS || !trailing.every((t) => isJunkWord(t, true))) return tokens.length;
+    return trailing[0].gap >= JUNK_GAP_AFTER_PRICE || trailing.every(isJunkSymbol) ? price + 1 : tokens.length;
+  }
+  if (!noisy) return tokens.length;
+  let start = tokens.length;
+  let wide = tokens.length;
+  while (start > 1 && tokens.length - start < MAX_JUNK_TOKENS && isJunkWord(tokens[start - 1], false)) {
+    start -= 1;
+    if (tokens[start].gap >= JUNK_GAP_AFTER_TEXT) wide = start;
+  }
+  // Never leave nothing but fragments behind.
+  return wide < tokens.length && tokens.slice(0, wide).some((t) => /[A-Za-z]{3,}|\d/.test(t.text)) ? wide : tokens.length;
+}
+
+function cleanMargins(source: string, tokens: readonly RawToken[], noisy: boolean): string {
+  if (tokens.length < 2) return source;
+  const start = leadingJunkCount(tokens, noisy);
+  const rest = tokens.slice(start);
+  const end = trailingJunkStart(rest, noisy);
+  return start === 0 && end === rest.length ? source : rest.slice(0, end).map((t) => t.text).join(" ");
+}
+
+/** Evidence of photographic margin noise: symbol junk at a line end, or long junk words after a price. */
+function isNoisyText(lines: ReadonlyArray<readonly RawToken[]>): boolean {
+  let evidence = 0;
+  for (const tokens of lines) {
+    if (tokens.length < 2 || tokens.every(isJunkSymbol)) continue;
+    if (isJunkSymbol(tokens[0]) || isJunkSymbol(tokens[tokens.length - 1])) {
+      evidence += 1;
+      continue;
+    }
+    const price = lastPriceIndex(tokens);
+    const trailing = price >= 0 ? tokens.slice(price + 1) : [];
+    if (trailing.length > 0 && trailing[0].gap >= JUNK_GAP_AFTER_PRICE && trailing.every((t) => isJunkWord(t, true)) && trailing.some((t) => t.text.replace(/[^A-Za-z]/g, "").length >= 3)) {
+      evidence += 1;
+    }
+  }
+  return evidence >= NOISY_TEXT_LINES;
+}
+
 function prepareLines(text: string): TextLine[] {
+  const sources = text.split(/\r\n|\r|\n/).map((source) => source.trim());
+  const tokenised = sources.map(rawTokens);
+  const noisy = isNoisyText(tokenised);
   const out: TextLine[] = [];
-  for (const source of text.split(/\r\n|\r|\n/)) {
-    const raw = source.trim();
-    const normalised = normaliseText(raw);
-    if (!normalised) continue;
+  sources.forEach((raw, i) => {
+    const normalised = normaliseText(cleanMargins(raw, tokenised[i], noisy));
+    if (!normalised) return;
     const upper = normalised.toUpperCase();
     out.push({ raw, text: normalised, upper, key: toKey(upper) });
-  }
+  });
   return out;
 }
 
@@ -577,7 +712,7 @@ function parseQuantityLine(upper: string): Qualifier | null {
 }
 
 /** "0.842 kg NET @ $3.90/kg 3.28", "1.34 lb @ 0.69 /lb", "2.13 lb @ 1 lb /0.58". */
-function parseWeightLine(upper: string): Qualifier | null {
+function parseCleanWeightLine(upper: string): Qualifier | null {
   const start = WEIGHT_START.exec(upper);
   if (!start) return null;
   const rest = upper.slice(start[0].length);
@@ -602,6 +737,45 @@ function parseWeightLine(upper: string): Qualifier | null {
   const unitPrice = unitRaw !== null && unitRaw > 0 ? round2(unitRaw / perUnitKg) : null;
   const implied = unitRaw !== null ? round2((weightKg / perUnitKg) * unitRaw) : null;
   return { quantity: null, weightKg: round3(weightKg), unitPrice, total: total !== null && total > 0 ? total : null, implied };
+}
+
+/**
+ * A weighed-item line whose unit price OCR has mangled: "0.632 kg NET @ B4.30rkg 3.10",
+ * "0.222 kg NET © $4.3)/kg 1.09". Shape: weight, kg (or a misread "kq"/"ky"), an
+ * optional "NET", "@", unit-price garbage, then the line total as the right-most price.
+ * A short junk fragment before the weight ("CET 0.632 kg …") is tolerated.
+ */
+const DAMAGED_WEIGHT_LINE = /^(?:[^\sA-Z0-9]{0,2}[A-Z]{1,3}\s+)?(\d{1,2}[.,]\d{2,3})\s*(?:KGS?|KQ|KY|K9)\.?\s*([A-Z]{2,4})?\s*(?:@|©|®)\s*(.+)$/;
+const DAMAGED_UNIT_PRICE_MAX_CHARS = 16;
+/** The unit price read from the garbage is only believed when weight × price reproduces the printed total this closely. */
+const UNIT_PRICE_TOTAL_TOLERANCE = 0.03;
+
+/**
+ * The total is the right-most price. The unit price is kept only when it is
+ * legible and consistent with weight and total; a misread one ("4.30" for
+ * "4.90") would otherwise be reported as fact, and a total that is itself
+ * unreadable is left empty rather than guessed from a damaged unit price.
+ */
+function parseDamagedWeightLine(upper: string): Qualifier | null {
+  const m = DAMAGED_WEIGHT_LINE.exec(upper);
+  if (!m) return null;
+  const weightKg = Number(m[1].replace(",", "."));
+  if (!(weightKg > 0) || weightKg > MAX_WEIGHT_KG) return null;
+  const tokens = m[3].trim().split(" ");
+  const rightmost = parseAmount(tokens[tokens.length - 1]);
+  const total = rightmost !== null && rightmost > 0 ? rightmost : null;
+  const garbage = (total !== null ? tokens.slice(0, -1) : tokens).join(" ");
+  if (garbage.length > DAMAGED_UNIT_PRICE_MAX_CHARS || !(/\d/.test(garbage) || /K[GQY9]/.test(garbage))) return null;
+  // Without a total, only a line that says "NET" is trusted to be a weight line.
+  if (total === null && !m[2]) return null;
+  const rate = /(\d{1,3})[.,](\d{2})(?!\d)/.exec(garbage);
+  const perKg = rate ? Number(`${rate[1]}.${rate[2]}`) : null;
+  const consistent = total !== null && perKg !== null && Math.abs(weightKg * perKg - total) <= Math.max(0.03, total * UNIT_PRICE_TOTAL_TOLERANCE);
+  return { quantity: null, weightKg: round3(weightKg), unitPrice: consistent ? perKg : null, total, implied: null };
+}
+
+function parseWeightLine(upper: string): Qualifier | null {
+  return parseCleanWeightLine(upper) ?? parseDamagedWeightLine(upper);
 }
 
 // Discounts ─────────────────────────────────────────────────────────────────
@@ -692,6 +866,8 @@ const INLINE_WEIGHT = new RegExp(
 const TRAILING_UNIT_PRICE = new RegExp(String.raw`^(.*?)\s+(?:(\d{1,3})\s+)?(${AMOUNT_SOURCE})$`);
 const LEADING_QUANTITY = /^(\d{1,2})\s*[X@×]\s*(?=[A-Za-z])/i;
 const WEIGHED_SUFFIX = /\s*(?:\/|PER\s+)?(?:KG|KILO)$/i;
+/** OCR often reads the "g" of a trailing "kg" as "y" or "q" ("Streaky Bacon ky"). Only used on lines that have a price. */
+const MISREAD_KG_SUFFIX = /\s(K[YQ])$/i;
 
 /** Remove markers, item codes, barcodes and dangling symbols from a description. */
 function cleanDescription(head: string): string {
@@ -762,7 +938,7 @@ function parseItemLine(head: string, price: number): ItemReading | null {
     }
   }
 
-  let description = cleanDescription(text);
+  let description = cleanDescription(text).replace(MISREAD_KG_SUFFIX, (_, k: string) => (k === k.toUpperCase() ? " KG" : " kg"));
   if (weightKg !== null) description = description.replace(WEIGHED_SUFFIX, "").trim() || description;
   if (!isDescription(description)) return null;
   return { description, price, quantity, weightKg, unitPrice };
@@ -836,6 +1012,9 @@ interface AssemblyState {
   totals: Array<{ amount: number; priority: number }>;
   tenders: number[];
   taxes: number[];
+  classified: LineKind[];
+  /** Index (in the text lines) of the last line that produced or completed an item; -1 when there is none. */
+  lastItemIndex: number;
 }
 
 function expectedTotal(q: Qualifier): number | null {
@@ -943,9 +1122,21 @@ function handleDiscount(state: AssemblyState, amount: number, raw: string): void
 
 function assemble(lines: TextLine[]): AssemblyState {
   const classified = lines.map(classifyLine);
-  const state: AssemblyState = { lines: [], pending: null, leading: null, ended: false, subtotal: null, totals: [], tenders: [], taxes: [] };
+  const state: AssemblyState = {
+    lines: [],
+    pending: null,
+    leading: null,
+    ended: false,
+    subtotal: null,
+    totals: [],
+    tenders: [],
+    taxes: [],
+    classified,
+    lastItemIndex: -1,
+  };
   classified.forEach((c, index) => {
     const raw = lines[index].raw;
+    const before = state.lines.length;
     switch (c.kind) {
       case "subtotal":
         if (state.subtotal === null) state.subtotal = c.amount;
@@ -976,8 +1167,25 @@ function assemble(lines: TextLine[]): AssemblyState {
       default:
         break;
     }
+    if (state.lines.length > before) state.lastItemIndex = index;
   });
   return state;
+}
+
+/**
+ * True when the receipt visibly carries on below its last item: a total,
+ * payment, tax, date, loyalty or courtesy line (even one whose amount couldn't
+ * be read). Items that run straight into the end of the text may be cut off.
+ */
+function continuesBelowItems(lines: readonly TextLine[], state: AssemblyState): boolean {
+  for (let i = state.lastItemIndex + 1; i < lines.length; i += 1) {
+    const c = state.classified[i];
+    if (c.kind === "date" || c.kind === "subtotal" || c.kind === "total" || c.kind === "tender" || c.kind === "tax") return true;
+    const { key } = lines[i];
+    if (c.kind === "skip" && SKIP_PATTERNS.some((pattern) => pattern.test(key))) return true;
+    if (c.kind === "text" && (TOTAL_WORD.test(key) || SUBTOTAL_WORD.test(key) || TAX_WORD.test(key))) return true;
+  }
+  return false;
 }
 
 function finaliseLine(draft: DraftLine): ParsedReceiptLine {
@@ -1013,31 +1221,62 @@ function totalsDisagree(lines: ParsedReceiptLine[], total: number | null, subtot
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
+/** The form feed OCR engines put between pages; here it separates several readings of the same receipt. */
+export const READING_SEPARATOR = "\f";
+
+/** Everything one reading of the text yields, before warnings are worked out. */
+function readText(text: string, today: string | null): Reading {
+  const lines = prepareLines(text);
+  const store = detectStore(lines);
+  const { date, rejection } = detectDate(lines, store, today);
+  const state = assemble(lines);
+  return {
+    store,
+    purchasedOn: date,
+    dateRejection: rejection,
+    total: pickTotal(state),
+    subtotal: state.subtotal,
+    taxes: state.taxes,
+    footerSeen: continuesBelowItems(lines, state),
+    lines: state.lines.map(finaliseLine),
+  };
+}
+
 /**
  * Parse receipt text into store, date, totals and item lines.
  *
  * Never throws: problems are reported in `warnings` ("no_items_found",
- * "total_mismatch", "no_date", "date_in_future", "date_too_old", "no_store").
+ * "total_mismatch", "no_total", "total_unreadable", "no_date", "date_in_future",
+ * "date_too_old", "no_store").
  * With `opts.today`, dates in the future or more than two years old are
  * rejected (and 2-digit years resolve to the current century).
+ *
+ * The text may hold several readings of the same receipt separated by form
+ * feeds (`READING_SEPARATOR`), as the on-device reader produces for a poor photo.
+ * Each is parsed on its own and they are merged by consensus (see
+ * `mergeReadings`): a price, weight or total needs two readings to agree, and an
+ * item needs two readings unless it is in the best one.
  */
 export function parseReceiptText(text: string, opts: ParseReceiptOptions = {}): ParsedReceipt {
   const today = opts.today && isDateString(opts.today) ? opts.today : null;
-  const lines = prepareLines(text ?? "");
-  const store = detectStore(lines);
-  const { date, rejection } = detectDate(lines, store, today);
-  const state = assemble(lines);
-  const parsedLines = state.lines.map(finaliseLine);
-  const total = pickTotal(state);
+  const texts = (text ?? "").split(READING_SEPARATOR).filter((t, i, all) => all.length === 1 || t.trim().length > 0);
+  const reading = mergeReadings(texts.map((t) => readText(t, today)));
+  const { store, purchasedOn: date, total, subtotal, lines } = reading;
 
   const warnings: ReceiptParseWarning[] = [];
-  if (parsedLines.length === 0) warnings.push("no_items_found");
-  if (totalsDisagree(parsedLines, total, state.subtotal, state.taxes)) warnings.push("total_mismatch");
+  const mismatch = totalsDisagree(lines, total, subtotal, reading.taxes);
+  if (lines.length === 0) warnings.push("no_items_found");
+  if (mismatch) warnings.push("total_mismatch");
+  if (lines.length > 0 && total === null && !mismatch) {
+    // No total amount was read. If the receipt visibly goes on below the items, or a subtotal read from it matches them, nothing is
+    // missing from the photo: the total just wasn't legible. Otherwise the items run into the end of the text and it may be cut off.
+    warnings.push(subtotal !== null || reading.footerSeen ? "total_unreadable" : "no_total");
+  }
   if (!date) warnings.push("no_date");
-  if (!date && rejection) warnings.push(rejection);
+  if (!date && reading.dateRejection) warnings.push(reading.dateRejection);
   if (!store) warnings.push("no_store");
 
-  return { store, purchasedOn: date, total, subtotal: state.subtotal, lines: parsedLines, warnings };
+  return { store, purchasedOn: date, total, subtotal, lines, warnings };
 }
 
 /** Sum of the parsed line prices (after discounts), rounded to cents. */

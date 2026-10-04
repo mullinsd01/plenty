@@ -680,6 +680,9 @@ const NATIONAL_BRANDS = compilePhrases(
     "peters",
     "sara lee",
     "don",
+    "dorsogna",
+    "bertocchi",
+    "hans",
     "primo",
     "steggles",
     "inghams",
@@ -805,6 +808,7 @@ const ABBREVIATIONS: Record<string, string> = {
   ckn: "chicken",
   chkin: "chicken",
   brst: "breast",
+  smkd: "smoked",
   brest: "breast",
   bst: "breast",
   thgh: "thigh",
@@ -1172,6 +1176,37 @@ function isNumericToken(text: string): boolean {
   return NUMERIC_TOKEN.test(text);
 }
 
+/** Long, distinctive store names, matched with one OCR error allowed. */
+const MISREAD_STORE_NAMES = ["woolworths", "sainsburys", "morrisons", "countdown", "waitrose"];
+
+/** True when `a` and `b` differ by at most one substitution, insertion or deletion. */
+function withinOneEdit(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (a.length > b.length) i += 1;
+    else if (b.length > a.length) j += 1;
+    else {
+      i += 1;
+      j += 1;
+    }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+
+function isMisreadStoreName(word: string): boolean {
+  return /^[a-z]{8,12}$/.test(word) && !MISREAD_STORE_NAMES.includes(word) && MISREAD_STORE_NAMES.some((name) => withinOneEdit(word, name));
+}
+
 /**
  * Remove store brands and multi-category national brands anywhere, and
  * range words ("SELECT", "GOLD") only in the leading run. Never removes
@@ -1192,6 +1227,12 @@ function stripBrandTokens(tokens: Token[]): { tokens: Token[]; removed: string[]
       i += rule.from.length;
       continue;
     }
+    // A long store name with one misread letter ("WOOLWERTHS ART BAG") is still the store.
+    if (!tokens[i].locked && isMisreadStoreName(tokens[i].text)) {
+      removed.push(tokens[i].text);
+      i += 1;
+      continue;
+    }
     // Product codes before the description don't end the leading brand run.
     if (!isNumericToken(tokens[i].text)) leading = false;
     out.push(tokens[i]);
@@ -1201,11 +1242,26 @@ function stripBrandTokens(tokens: Token[]): { tokens: Token[]; removed: string[]
   return meaningful ? { tokens: out, removed } : { tokens, removed: [] };
 }
 
+/**
+ * Abbreviations that are only trusted when nothing else on the line says what
+ * the product is: "POTS WASHED 2KG" is potatoes, but "S/POTS MACADAMIA" is a pot
+ * (pack) of macadamias. The words that may accompany them without changing that.
+ */
+const CONTEXTUAL_ABBREVIATIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+  pots: new Set([
+    "washed", "brushed", "white", "red", "new", "baby", "dutch", "cream", "sebago", "desiree", "pontiac", "royal", "blue", "gold", "bag", "loose",
+    "kg", "kilo", "fresh", "organic", "prepacked", "pack", "packed", "pre", "per", "each", "ea", "australian", "aussie", "local", "large", "small",
+    "medium", "premium", "value", "select", "selected", "nicola", "kipfler", "coliban", "spud",
+  ]),
+};
+
 function expandAbbreviations(tokens: Token[]): Token[] {
-  return tokens.flatMap((token) => {
+  return tokens.flatMap((token, i) => {
     if (token.locked) return [token];
     const expansion = ABBREVIATIONS[token.text];
     if (!expansion) return [token];
+    const companions = CONTEXTUAL_ABBREVIATIONS[token.text];
+    if (companions && tokens.some((other, j) => j !== i && /^[a-z]{3,}$/.test(other.text) && !companions.has(other.text))) return [token];
     return expansion.split(" ").map((text) => ({ text, locked: false }));
   });
 }
@@ -1267,6 +1323,12 @@ export function cleanReceiptText(raw: string, options: CleanOptions = {}): Clean
 const NON_ITEM_VOCABULARY = new Set([
   "bag",
   "bags",
+  // Reusable bag ranges ("Woolworths Art Bag", "Eco Tote").
+  "art",
+  "eco",
+  "tote",
+  "jute",
+  "hessian",
   "carry",
   "carrier",
   "reusable",
