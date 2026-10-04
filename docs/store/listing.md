@@ -23,7 +23,7 @@ Facts used: Plans **Free**, **Plus** ($4.99/month, $49.99/year) and **Family** (
 
 ## 2. Full description (draft)
 
-Only the lines that exist today. Two Plus features, **barcode scanning** and **photo recognition**, are built. Barcode scanning works in the browser camera of the web app and needs a camera on the device; **photo recognition only works when the operator has configured an AI service and the household has consented**, so describe it that way ("with your permission") and do not show it in screenshots from a build without an AI service. Neither has been tried in an iOS or Android shell.
+Only the lines that exist today. **Barcode scanning** and **photo recognition** are both built (Plus). Barcode scanning uses the phone's camera inside the app; unknown barcodes are looked up in a public product database, which sees only the number. **Photo recognition only works when the operator has configured an AI service and the household has consented**, so describe it that way ("with your permission") and do not show it in screenshots.
 
 > Plenty keeps track of what's in your kitchen, so you know what you have, what's running low and what to buy.
 >
@@ -140,14 +140,15 @@ Group both plans in one subscription group so a person can't hold two (Apple 3.1
 > **What the app is:** a household grocery and meal planner. Sign-up is email and password only (no third-party login). There is no public or cross-household content: people only see their own household.
 > **Camera:** used only when you tap "Take a photo" on Scan a receipt, to photograph a receipt. "Choose a photo" works without the camera.
 > **AI:** optional and off by default. The first time a Plus household opens Scan a receipt it is asked for permission, with what is sent, to whom and how to turn it off (Settings → Privacy & data). Without permission receipts are read on Plenty's own server.
-> **Purchases:** Plenty Plus and Plenty Family are auto-renewing subscriptions bought only through in-app purchase in this app, with Restore Purchases. [Describe where the reviewer finds them and sandbox steps.] No web checkout or external purchase link appears in the app.
+> **Purchases:** Plenty Plus and Plenty Family are auto-renewing subscriptions bought only through in-app purchase in this app (one subscription group, four products), with Restore Purchases. The demo account is on the top plan so every feature can be seen, which means its Plan screen has nothing left to buy. **To test a purchase:** tap "Create account" (use any email), finish the short setup, then Settings → Plan & billing → "Subscribe to Plus" (or Family). Sign in to the App Store with a sandbox Apple ID. Restore Purchases is on the same screen. The plan applies to the whole household and works on every device. No web checkout or external purchase link appears anywhere in the app.
+> **Why this isn't just a website (4.2):** the app uses the native camera to photograph receipts and scan barcodes, StoreKit for subscriptions and restore, and a native shell with its own launch screen, safe-area layout and offline screen. Everything else is Plenty's own interface, kept in one place so the app and the website always match.
 > **Privacy:** Settings → Privacy & data; public pages: privacy, terms, support, delete-account.
 
 ## 9. Needs a human or an external credential
 
 * Apple Developer Program (organisation account recommended), App Store Connect app record, subscription group and four auto-renewing products, sandbox testers, App Store Server Notification URLs, root certificates, `APPLE_BUNDLE_ID`, `APPLE_APP_ID` (see `docs/billing.md`).
 * Google Play developer account, app record, four subscription products, a service account with Play permissions, Pub/Sub push subscription, `GOOGLE_PLAY_PACKAGE_NAME`, Data safety, content rating, target audience, account-deletion URL.
-* Native shells (not in this repository): purchase sheets, Restore Purchases, camera permission string, platform header, no web checkout; Play Billing Library 8+, target API 36 (verified requirement as of 2026-10-01).
+* iPhone app: the Capacitor project is in `mobile/` (build and TestFlight upload run on GitHub Actions, see `docs/ios-release.md`). It needs an Apple Developer account, an App Store Connect app record and the API-key secrets. Not built: the Android shell (Play Billing Library 8+, target API 36, verified requirement as of 2026-10-01).
 * Stripe account and webhook for web purchases.
 * Production environment: `LEGAL_ENTITY_NAME`, `SUPPORT_EMAIL`, `PRIVACY_CONTACT_EMAIL`, `ANALYTICS_SECRET` (without it production records no analytics), `CRON_SECRET` plus a scheduler calling `/api/cron/notifications` at least hourly (it also deletes expired receipt photos and old analytics), `SMTP_URL`, `ANTHROPIC_API_KEY` (only if AI is offered; Plus only), `DEMO_MODE=true` for review.
 * Legal review of Privacy Policy and Terms; a decision on analytics consent (opt-in), child accounts, and the AI "report" action (audit decisions 1–3).
