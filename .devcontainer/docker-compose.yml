@@ -1,0 +1,26 @@
+# Development environment for GitHub Codespaces / VS Code Dev Containers: the app's tools plus a Postgres 16 database.
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm
+    volumes:
+      - ..:/workspace:cached
+    command: sleep infinity
+    environment:
+      DATABASE_URL: postgres://plenty:plenty@db:5432/plenty
+      APP_URL: http://localhost:3000
+      AI_PROVIDER: local
+      DEMO_MODE: "true"
+    depends_on:
+      - db
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: plenty
+      POSTGRES_PASSWORD: plenty
+      POSTGRES_DB: plenty
+    volumes:
+      - plenty-db:/var/lib/postgresql/data
+      - ../scripts/docker-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+volumes:
+  plenty-db:

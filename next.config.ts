@@ -15,6 +15,8 @@ const nextConfig: NextConfig = {
   output: "standalone",
   // The floating dev badge covers the bottom navigation on phones.
   devIndicators: false,
+  // Lets the dev server be previewed through a GitHub Codespaces forwarded port (see .devcontainer). No effect in production.
+  allowedDevOrigins: ["*.app.github.dev"],
   poweredByHeader: false,
   // Native / WASM packages that must not be bundled into server chunks.
   serverExternalPackages: [
@@ -26,6 +28,30 @@ const nextConfig: NextConfig = {
     "pg",
     "nodemailer",
   ],
+  // The standalone server only gets the files that tracing can see. tesseract.js starts its OCR worker from a
+  // file path and loads its WASM engine and English model with fs, which tracing can't follow, so name them.
+  // Only the LSTM engine is shipped (the app never asks for the legacy one); the server picks the variant for its CPU.
+  outputFileTracingIncludes: {
+    "/*": [
+      "./node_modules/tesseract.js/package.json",
+      "./node_modules/tesseract.js/src/**/*",
+      "./node_modules/tesseract.js-core/package.json",
+      "./node_modules/tesseract.js-core/index.js",
+      "./node_modules/tesseract.js-core/tesseract-core-lstm.js",
+      "./node_modules/tesseract.js-core/tesseract-core-lstm.wasm",
+      "./node_modules/tesseract.js-core/tesseract-core-simd-lstm.js",
+      "./node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm",
+      "./node_modules/tesseract.js-core/tesseract-core-relaxedsimd-lstm.js",
+      "./node_modules/tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm",
+      "./node_modules/@tesseract.js-data/eng/package.json",
+      "./node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz",
+      "./node_modules/wasm-feature-detect/package.json",
+      "./node_modules/wasm-feature-detect/dist/cjs/**/*",
+      "./node_modules/bmp-js/package.json",
+      "./node_modules/bmp-js/index.js",
+      "./node_modules/bmp-js/lib/**/*",
+    ],
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",

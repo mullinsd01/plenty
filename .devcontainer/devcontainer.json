@@ -1,0 +1,16 @@
+{
+  "name": "Plenty",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspace",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "Plenty", "onAutoForward": "notify" }
+  },
+  "postCreateCommand": "cp -n .env.example .env; npm install && npm run setup && npm run db:seed && npm run db:seed-roles",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "bradlc.vscode-tailwindcss"]
+    }
+  }
+}

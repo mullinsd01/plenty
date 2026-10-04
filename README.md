@@ -36,6 +36,10 @@ Sign up to start your own household, or click **Explore the demo household** on 
 
 > Using your own Postgres? The role in `DATABASE_URL` needs `CREATEROLE` (or superuser) the first time `npm run setup` runs, because the migrations create the restricted `plenty_app` role used for row-level security.
 
+### Try it in the browser (GitHub Codespaces)
+
+Nothing to install: on the repository's GitHub page choose **Code → Codespaces → Create codespace on this branch**. The first start takes a few minutes while it installs the packages, creates the database and loads the demo household. When it finishes, open the terminal, run `npm run dev`, and open the **Plenty** link under the **Ports** tab (port 3000). Sign in as `demo@plenty.app` / `plenty-demo`, or with one of the role accounts (`family@plenty.test`, `mate@plenty.test`, `kid@plenty.test`, `free@plenty.test`; password `plenty-tour`). The setup lives in `.devcontainer/`.
+
 ### Environment
 
 | Variable | Required | What it does |
