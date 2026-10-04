@@ -50,6 +50,8 @@ Nothing to install: on the repository's GitHub page choose **Code → Codespaces
 | `AI_PROVIDER` | no | `auto` (default), `local` or `anthropic`. |
 | `ANTHROPIC_MODEL` | no | Defaults to `claude-opus-5-5`. |
 | `SMTP_URL` / `EMAIL_FROM` | no | Real email delivery. Without SMTP, emails go to the dev outbox at `/dev/outbox` (disabled in production). |
+| `STORAGE_DRIVER` | no | `local` (default: the server's own disk, `STORAGE_DIR`) or `s3` (any S3-compatible bucket; also set `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, and for R2/B2/MinIO `S3_ENDPOINT`, `S3_REGION`). Keep the bucket private. |
+| Going live | | `docs/deploy.md` (Docker image, Fly.io and Compose paths, hourly job, backups) and `npm run check:prod` before launch. |
 | `BARCODE_LOOKUP` | no | `openfoodfacts` (default) or `off`. When a scanned barcode isn't one the household has already told Plenty about, Plenty can ask [Open Food Facts](https://world.openfoodfacts.org), a public product database, what it is. **That discloses the barcode number (and nothing else) to openfoodfacts.org.** Set `off` to never do that; Plenty then asks the person to name the product and remembers it. Barcode scanning is a Plus feature. |
 | `STORAGE_DIR` | no | Where receipt photos are stored (private; served only to household members). |
 | `CRON_SECRET` | no | Protects the scheduled notifications endpoint. In production it must be at least 24 characters. |

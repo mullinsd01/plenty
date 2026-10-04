@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import sharp, { type Metadata, type Sharp } from "sharp";
+import { findReceiptPaper, type PaperBox } from "@/lib/receipts/paper";
 
 /**
  * Receipt photo handling.
@@ -12,7 +13,8 @@ import sharp, { type Metadata, type Sharp } from "sharp";
  * flagged before any OCR or AI work is spent on them.
  *
  * `ocrVariant` turns a prepared photo into the high-contrast greyscale PNG
- * that Tesseract reads best.
+ * that Tesseract reads best, cropped to the receipt paper when the photo shows
+ * the table or counter around it.
  */
 
 // ─── Tunables ───────────────────────────────────────────────────────────────
@@ -39,6 +41,8 @@ const FLAT_FIELD_DOWNSCALE = 8;
 /** Contrast stretch after flattening (out = in × a + b): darkens faint strokes, whitens paper. */
 const OCR_CONTRAST_MULTIPLIER = 1.4;
 const OCR_CONTRAST_OFFSET = -60;
+/** The paper is looked for on a copy this wide (see `findReceiptPaper`). */
+const PAPER_PROBE_EDGE_PX = 200;
 
 // ─── Errors ─────────────────────────────────────────────────────────────────
 
@@ -245,24 +249,60 @@ async function estimateBackground(pixels: Buffer, width: number, height: number)
   return sharp(blurred, raw(smallWidth, smallHeight)).resize(width, height, { fit: "fill", kernel: "linear" }).raw().toBuffer();
 }
 
+export interface OcrVariantOptions {
+  /** Crop to the receipt paper when it can be found (default true). False keeps the whole photo. */
+  crop?: boolean;
+}
+
+/** Where the receipt paper is in a photo (as shares of its upright size), or null when it can't be told from its surroundings. */
+export async function detectReceiptPaper(input: Buffer): Promise<PaperBox | null> {
+  try {
+    const { data, info } = await sharp(input, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS })
+      .autoOrient()
+      .flatten({ background: "#ffffff" })
+      .resize({ width: PAPER_PROBE_EDGE_PX, height: PAPER_PROBE_EDGE_PX, fit: "inside" })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    return findReceiptPaper(data, info.width, info.height, info.channels);
+  } catch {
+    return null;
+  }
+}
+
 /**
- * An OCR-friendly copy of a (prepared) receipt photo, as PNG: greyscale,
- * upscaled to at least `OCR_MIN_WIDTH_PX` wide, illumination flattened,
- * contrast normalised and stretched.
+ * An OCR-friendly copy of a (prepared) receipt photo, as PNG: cropped to the
+ * receipt paper (with a margin) when the photo shows what is around it,
+ * greyscale, upscaled to at least `OCR_MIN_WIDTH_PX` wide, illumination
+ * flattened, contrast normalised and stretched.
+ *
+ * Cropping matters: on a photo of a receipt lying on a speckled bench top,
+ * Tesseract read the speckle as text in the margins and mangled the lines next
+ * to it (fake characters in front of items, extra "words" after prices). The
+ * paper is only cropped to when it clearly stands out (see `findReceiptPaper`);
+ * photos that are all paper, like scans, are read whole.
  *
  * No sharpening: measured on the sample receipts with simulated shadows and
  * soft focus, sharpening amplified noise and cost more words than it saved,
  * while flat-field correction recovered shadowed prices.
  * Throws `ReceiptImageError("corrupt")` if the image can't be decoded.
  */
-export async function ocrVariant(input: Buffer): Promise<Buffer> {
+export async function ocrVariant(input: Buffer, options: OcrVariantOptions = {}): Promise<Buffer> {
   try {
     const meta = await sharp(input, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS }).metadata();
-    const width = meta.autoOrient?.width ?? meta.width;
-    let pipeline = sharp(input, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS })
-      .autoOrient()
-      .flatten({ background: "#ffffff" })
-      .greyscale();
+    const upright = { width: meta.autoOrient?.width ?? meta.width, height: meta.autoOrient?.height ?? meta.height };
+    const box = options.crop === false ? null : await detectReceiptPaper(input);
+    let pipeline = sharp(input, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS }).autoOrient().flatten({ background: "#ffffff" });
+    let width = upright.width;
+    if (box && upright.width && upright.height) {
+      const left = Math.floor(box.left * upright.width);
+      const top = Math.floor(box.top * upright.height);
+      const cropWidth = Math.min(upright.width - left, Math.ceil((box.right - box.left) * upright.width));
+      const cropHeight = Math.min(upright.height - top, Math.ceil((box.bottom - box.top) * upright.height));
+      pipeline = pipeline.extract({ left, top, width: cropWidth, height: cropHeight });
+      width = cropWidth;
+    }
+    pipeline = pipeline.greyscale();
     if (width < OCR_MIN_WIDTH_PX) pipeline = pipeline.resize({ width: OCR_MIN_WIDTH_PX, kernel: "lanczos3" });
     const { data, info } = await pipeline.extractChannel(0).raw().toBuffer({ resolveWithObject: true });
     const background = await estimateBackground(data, info.width, info.height);

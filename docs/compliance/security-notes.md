@@ -24,7 +24,7 @@ What protects Plenty's data today, and what doesn't yet. Written from the code o
 
 ## Known gaps and limits
 
-1. **Encryption in transit and at rest relies on hosting.** Plenty sets `Secure` cookies in production but doesn't terminate TLS; serve it only over HTTPS. Neither the database nor the stored receipt photos are encrypted by the app: use an encrypted volume or managed database. `STORAGE_DIR` is the local disk; for more than one server, swap `src/server/storage/files.ts` for object storage.
+1. **Encryption in transit and at rest relies on hosting.** Plenty sets `Secure` cookies in production but doesn't terminate TLS; serve it only over HTTPS. Neither the database nor the stored receipt photos are encrypted by the app: use an encrypted volume or managed database, and a private bucket with server-side encryption. Receipt photos live on local disk (`STORAGE_DIR`, one server) or in any S3-compatible bucket (`STORAGE_DRIVER=s3`; keep the bucket private and give the key only put, get, list and delete). See `docs/deploy.md`.
 2. **No `script-src` Content-Security-Policy.** The CSP above blocks framing, base-tag and form-action abuse, but not inline or injected scripts. React escapes output and the code has no `dangerouslySetInnerHTML` on user data (check before adding any), but a CSP with nonces would be a real second layer.
 3. **A deleted receipt photo may remain in a browser's cache for up to an hour** (`Cache-Control: private, max-age=3600` on the image route).
 4. **Backups are the operator's.** Deleted data leaves the live database immediately but ages out of any backups on the provider's schedule; Plenty can't purge them.

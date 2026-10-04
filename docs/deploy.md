@@ -93,7 +93,7 @@ Either path uses the same Docker image, built from the `Dockerfile` in this repo
 * The English text-recognition (OCR) engine and model, and the native modules for the platform the image was built on. **Tested:** the build reads a sample receipt as its last step and fails if it can't.
 * Receipt reading works without any AI service. With `ANTHROPIC_API_KEY` set, households that consent can use Claude instead.
 
-**Building for arm64 as well as amd64.** `docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/plenty:<tag> --push .` works from any machine with buildx. Each platform runs `npm ci` itself, so it fetches that platform's native modules, and each platform's build runs the receipt-reading check. Most hosts (Fly.io, Render, a typical server) are amd64: build amd64 unless you know you need arm64 (for example an Ampere or Graviton server). See [section 17](#17-what-was-not-tested) for how far the arm64 build was tested.
+**Building for arm64 as well as amd64.** The same Dockerfile builds either platform. Each platform runs `npm ci` itself, so it fetches that platform's native modules, and each platform's build ends with the receipt-reading check. `docker buildx build --platform linux/amd64,linux/arm64 -t <registry>/plenty:<tag> --push .` combines them (I built the two platforms with separate commands, not that one). Most hosts (Fly.io, Render, a typical server) are amd64: build amd64 unless you know you need arm64 (for example an Ampere or Graviton server). See [section 17](#17-what-was-not-tested) for how far the arm64 build was tested.
 
 ## 3. Choose a Postgres host (important)
 
@@ -118,7 +118,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f deploy/probe-database.sql
 docker run --rm -i postgres:16 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 < deploy/probe-database.sql
 ```
 
-It ends with `OK: this database user can do everything the first migration needs`, or stops at the first thing the host refuses.
+It ends with `OK: this database user can do everything the first migration needs`, or stops at the first thing the host refuses. Stopping at `permission denied to create role` is not the end of the road if someone with admin rights on the database can run two statements once: see the last row of the table below.
 
 **What was tested** (Postgres 16.13, a fresh cluster, a database user that is not a superuser):
 
@@ -515,7 +515,7 @@ Written on 2026-10-04 from a Linux sandbox with Docker, Postgres 16 and Node 22,
 
 **Tested**
 
-* The Docker image (linux/amd64): built from the `Dockerfile` (the build in the sandbox needed two extra lines trusting the sandbox's proxy certificate for `npm ci`; they are not in the repository's Dockerfile and don't affect the result). The build's last step ran the receipt-reading check inside the final image as the unprivileged user, and it caught a real packaging mistake during development (the OCR engine files tracing missed).
+* The Docker image (linux/amd64, and linux/arm64 under emulation): built from the `Dockerfile` (the build in the sandbox needed two extra lines trusting the sandbox's proxy certificate for `npm ci`; they are not in the repository's Dockerfile and don't affect the result). The build's last step ran the receipt-reading check inside the final image as the unprivileged user, and it caught a real packaging mistake during development (the OCR engine files tracing missed).
 * Running that image: `setup` on an empty database, `seed`, `check`, `serve` with health checks passing, `PLENTY_SETUP_ON_START`, uploading a receipt over HTTP and having it read, stored, fetched back (and refused without a session), the hourly endpoint with and without its secret, and a bind-mounted photo folder owned by root being taken over by the entrypoint.
 * The S3 driver: unit tests with a mocked client (save, read, delete, listing in pages, missing object, invalid keys, failures), and the real driver and SDK against a local S3-compatible server (moto), through the app in the container as well, including 1,500 photos in one household.
 * Docker Compose (Postgres, `migrate`, `app` and their health conditions), `seed` and `check` run through it.
@@ -524,7 +524,7 @@ Written on 2026-10-04 from a Linux sandbox with Docker, Postgres 16 and Node 22,
 
 **Not tested: do these yourself**
 
-* **linux/arm64.** If an arm64 build was run, it is described in the notes that came with this change; otherwise: the lockfile has the arm64 native packages, and the Dockerfile has no platform-specific step, but no arm64 image was built or run.
+* **linux/arm64 on real hardware.** The arm64 image was built and run under QEMU emulation on an amd64 machine (the in-image receipt-reading check passed, the server answered health checks, and a receipt was uploaded, read and stored). Emulation can hide differences in CPU features and speed that a real arm64 server has.
 * **Any real provider:** Fly.io (`fly deploy`, `release_command`, certificates, secrets), Neon (the probe on its role, pooler behaviour, idle suspend), Cloudflare R2, Backblaze, AWS S3 (only a local S3-compatible server was used), your email provider, GitHub Actions scheduling, Stripe, App Store Connect notifications, Google Play.
 * **Caddy and https** in the Compose file, and any proxy that rewrites the `Host` header (Next.js refuses sign-in forms then).
 * **Postgres hosts other than a local server**, including every statement in section 3 about which hosts allow `CREATE ROLE`. Run the probe.

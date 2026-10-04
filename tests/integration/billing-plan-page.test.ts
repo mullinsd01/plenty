@@ -194,7 +194,7 @@ describe("plan page data", () => {
     expect(overview.purchase).toMatchObject({ platform: "android", canStartCheckout: false });
     expect(overview.purchase.store).toMatchObject({ provider: "google", available: true });
     const model = buildComparison(overview, disclosures);
-    expect(model.cards[1].actions.monthly).toEqual({ kind: "store" });
+    expect(model.cards[1].actions.monthly).toMatchObject({ kind: "store", plan: "plus", period: "monthly" });
     expect(model.cards[1].disclosure.monthly).toMatch(/Billed by Google Play/);
     expect(JSON.stringify(model)).not.toMatch(/portal|checkout/i);
 

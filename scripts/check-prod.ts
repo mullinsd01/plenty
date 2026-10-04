@@ -127,6 +127,10 @@ async function main(): Promise<number> {
       console.error("--env-file needs a path.");
       return 2;
     }
+    if (typeof process.loadEnvFile !== "function") {
+      console.error("--env-file needs Node 20.12 or newer. Update Node, or export the settings into the environment instead.");
+      return 2;
+    }
     try {
       process.loadEnvFile(envFile);
     } catch {

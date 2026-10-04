@@ -392,5 +392,93 @@
     "width": 1200,
     "height": 900,
     "expected": null
+  },
+  "woolworths-phone-photo": {
+    "file": "woolworths-phone-photo.jpg",
+    "text": "woolworths-phone-photo.txt",
+    "kind": "photo",
+    "demo": false,
+    "width": 768,
+    "height": 1024,
+    "expected": {
+      "store": "Woolworths",
+      "purchasedOn": null,
+      "currency": "AUD",
+      "subtotal": 29.02,
+      "total": 29,
+      "gst": 1.18,
+      "items": [
+        {
+          "description": "Potato Sweet Gold",
+          "price": 3.1,
+          "quantity": null,
+          "weightKg": 0.632,
+          "discount": null
+        },
+        {
+          "description": "Mandarin Amorette Seedless Loose",
+          "price": 1.09,
+          "quantity": null,
+          "weightKg": 0.222,
+          "discount": null
+        },
+        {
+          "description": "Woolworths Art Bag",
+          "price": 2,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Kiwifruit Gold Imp P/P 500g",
+          "price": 5.9,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Bertocchi Australian Db Smkd Ham off Bone",
+          "price": 2.38,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Arnotts Salada Original 250g",
+          "price": 4,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Inghams Turkey Brst Half Oven Roast Kg",
+          "price": 1.92,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Don Shredded Ham KG",
+          "price": 0.88,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "Dorsogna Streaky Bacon kg",
+          "price": 0.75,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        },
+        {
+          "description": "S/Pots Macadamia Rst/Salt 120g",
+          "price": 7,
+          "quantity": null,
+          "weightKg": null,
+          "discount": null
+        }
+      ]
+    }
   }
 }
