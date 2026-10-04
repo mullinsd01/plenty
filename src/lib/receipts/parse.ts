@@ -747,6 +747,8 @@ function parseCleanWeightLine(upper: string): Qualifier | null {
  */
 const DAMAGED_WEIGHT_LINE = /^(?:[^\sA-Z0-9]{0,2}[A-Z]{1,3}\s+)?(\d{1,2}[.,]\d{2,3})\s*(?:KGS?|KQ|KY|K9)\.?\s*([A-Z]{2,4})?\s*(?:@|©|®)\s*(.+)$/;
 const DAMAGED_UNIT_PRICE_MAX_CHARS = 16;
+/** "$3.90/KG", "3.90 PER KG", "0.69 /LB": a unit price OCR read cleanly. */
+const LEGIBLE_UNIT_PRICE = /^[$£€]?\d{1,3}[.,]\d{2}\s*(?:\/|PER\s+)?\s*(?:KGS?|G|LBS?)?$/;
 /** The unit price read from the garbage is only believed when weight × price reproduces the printed total this closely. */
 const UNIT_PRICE_TOTAL_TOLERANCE = 0.03;
 
@@ -756,7 +758,7 @@ const UNIT_PRICE_TOTAL_TOLERANCE = 0.03;
  * "4.90") would otherwise be reported as fact, and a total that is itself
  * unreadable is left empty rather than guessed from a damaged unit price.
  */
-function parseDamagedWeightLine(upper: string): Qualifier | null {
+function parseDamagedWeightLine(upper: string): { qualifier: Qualifier; legibleRate: boolean } | null {
   const m = DAMAGED_WEIGHT_LINE.exec(upper);
   if (!m) return null;
   const weightKg = Number(m[1].replace(",", "."));
@@ -771,11 +773,22 @@ function parseDamagedWeightLine(upper: string): Qualifier | null {
   const rate = /(\d{1,3})[.,](\d{2})(?!\d)/.exec(garbage);
   const perKg = rate ? Number(`${rate[1]}.${rate[2]}`) : null;
   const consistent = total !== null && perKg !== null && Math.abs(weightKg * perKg - total) <= Math.max(0.03, total * UNIT_PRICE_TOTAL_TOLERANCE);
-  return { quantity: null, weightKg: round3(weightKg), unitPrice: consistent ? perKg : null, total, implied: null };
+  return {
+    qualifier: { quantity: null, weightKg: round3(weightKg), unitPrice: consistent ? perKg : null, total, implied: null },
+    legibleRate: LEGIBLE_UNIT_PRICE.test(garbage),
+  };
 }
 
+/**
+ * A weight line with a damaged unit price must not be read the ordinary way: with
+ * "@ $4.3)/kg 3.10" the only amount left is the line total, which the ordinary
+ * reading mistakes for a rate (and then prices the item at weight × total). When
+ * the unit price is legible the ordinary reading applies.
+ */
 function parseWeightLine(upper: string): Qualifier | null {
-  return parseCleanWeightLine(upper) ?? parseDamagedWeightLine(upper);
+  const damaged = parseDamagedWeightLine(upper);
+  if (damaged && !damaged.legibleRate) return damaged.qualifier;
+  return parseCleanWeightLine(upper) ?? damaged?.qualifier ?? null;
 }
 
 // Discounts ─────────────────────────────────────────────────────────────────
