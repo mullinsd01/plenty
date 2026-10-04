@@ -16,7 +16,11 @@
  *     boilerplate) is skipped, capturing store, date, subtotal and total.
  *
  * It tolerates common OCR noise: O/0, S/5, l/1 confusions inside prices, stray
- * punctuation, broken spacing ("4 .20", "$ 4.20") and lower case.
+ * punctuation, broken spacing ("4 .20", "$ 4.20") and lower case. Photos of
+ * receipts add margin noise (fake characters before the line and short junk
+ * words after the price), which is stripped before a line is classified, and
+ * weighed-item lines whose unit price OCR has mangled ("@ B4.30rkg 3.10") are
+ * still understood.
  *
  * Pure and deterministic: no clock, no I/O. Pass `today` for date sanity checks.
  */
@@ -58,6 +62,10 @@ export interface ParsedReceipt {
 export const RECEIPT_PARSE_WARNINGS = [
   "no_items_found",
   "total_mismatch",
+  /** Items found but no total or subtotal was read, and nothing follows the items: the receipt may be cut off. */
+  "no_total",
+  /** Items found and no total amount was read, but the receipt carries on below the items (or a subtotal matches them): it is a reading problem, not a missing part. */
+  "total_unreadable",
   "no_date",
   "date_in_future",
   "date_too_old",

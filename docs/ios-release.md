@@ -4,7 +4,7 @@ A plain-language runbook for getting Plenty onto the App Store. You do not need 
 
 Written 2026-10-04. Read [`docs/store/ship-plan.md`](store/ship-plan.md) for the calendar and [`docs/billing.md`](billing.md) for how subscriptions work on the server. Apple's screens and rules move; where this guide names a button it describes what was true when it was written, so trust Apple's current wording over this page if they differ.
 
-**Important, in one paragraph.** The iPhone app is a thin native shell around the website: it opens your hosted Plenty site in a web view, adds the camera permission, the "Can't reach Plenty" screen, and Apple's purchase sheet (in-app purchase). Nothing here has been compiled or run yet. It was written on a Linux machine that cannot run Xcode, so **the first real build is the first GitHub Actions run, and the first real test is on your iPhone.** Section 9 lists exactly what is unverified. Expect a round or two of fixes after the first build; that is normal and is what the calendar's buffer is for.
+**Important, in one paragraph.** The iPhone app is a thin native shell around the website: it opens your hosted Plenty site in a web view, adds the camera permission, the "Can't reach Plenty" screen, and Apple's purchase sheet (in-app purchase). It was written on a Linux machine that cannot run Xcode, so the first compile was left to GitHub's Mac machines. **That first Build check passed (4 Oct 2026, Xcode 26.6, simulator, no signing): `BUILD SUCCEEDED`, and the built app's Info.plist, privacy manifest, offline page and user-agent token checked out.** It has still never run on a phone, and signing, export and upload have never run. **The first real test is on your iPhone.** Section 9 lists exactly what is unverified. Expect a round or two of fixes after the first TestFlight build; that is normal and is what the calendar's buffer is for.
 
 Contents: [1 What you need](#1-what-you-need-and-two-decisions) · [2 Apple accounts](#2-apple-developer-account-and-app-record) · [3 GitHub secrets](#3-github-secrets-and-variables) · [4 Build and upload](#4-build-and-upload-to-testflight) · [5 Install on your iPhone](#5-install-on-your-iphone) · [6 What to test](#6-what-to-test-on-the-phone) · [7 Subscriptions](#7-subscriptions-app-store-connect-and-sandbox-testing) · [8 Submit for review](#8-submit-for-review) · [9 Not verified](#9-what-has-not-been-verified-and-needs-a-real-device) · [10 Day-to-day](#10-changing-things-later) · [11 Technical notes](#11-technical-notes-for-developers)
 
@@ -279,7 +279,7 @@ The code was written without Xcode and has **never been compiled or run**. What 
 
 | **Not** verified | What will tell you |
 |---|---|
-| Swift compiles (types, API names and availability, StoreKit 2 calls, delegate signatures) | The first **Build check** run. |
+| ~~Swift compiles (types, API names and availability, StoreKit 2 calls, delegate signatures)~~ | **Done:** the first Build check run succeeded (simulator build, Xcode 26.6). A device build with signing is still unproven until the first Release run. |
 | The Xcode project opens and the storyboards compile (`ibtool`) | Same run. |
 | The app launches and loads the site; the user-agent really reaches the server | TestFlight on a phone: the plan screen must show no web checkout. |
 | Camera permission wording, getUserMedia in the barcode scanner, camera is refused for anything but Plenty's own page | Section 6, Camera. |
