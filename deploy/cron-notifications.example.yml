@@ -1,0 +1,43 @@
+# EXAMPLE: call Plenty's scheduled jobs every hour from GitHub Actions.
+#
+# Copy to .github/workflows/plenty-hourly-jobs.yml in a repository you control, then in that repository:
+#   Settings > Secrets and variables > Actions
+#     Secret    CRON_SECRET   the same value as the CRON_SECRET your Plenty server uses
+#     Variable  PLENTY_URL    your site's address, https, no trailing slash (for example https://plenty.example.com)
+#
+# What the jobs do: pick up receipts whose reading was interrupted, create notifications, delete receipt photos whose
+# retention time is up, and delete expired sign-in records and old analytics. If they stop running, photos are kept
+# longer than people were told, so check now and then that this workflow is still running.
+#
+# GitHub runs scheduled workflows on a best-effort basis (they can start late, and on a public repository GitHub
+# disables them after 60 days without any repository activity). An external scheduler such as cron-job.org or a
+# server's own crontab can make the same call:
+#   curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/notifications"
+
+name: Plenty hourly jobs
+
+on:
+  schedule:
+    # Minute 17 rather than :00, when GitHub is busiest.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Call the jobs endpoint
+        env:
+          PLENTY_URL: ${{ vars.PLENTY_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -eu
+          test -n "$PLENTY_URL" || { echo "Set the PLENTY_URL variable."; exit 1; }
+          test -n "$CRON_SECRET" || { echo "Set the CRON_SECRET secret."; exit 1; }
+          # The endpoint answers with counts only (no personal data). A non-200 answer fails the run, so GitHub emails you.
+          curl --fail --silent --show-error --max-time 290 --retry 2 --retry-delay 15 \
+            -X POST -H "Authorization: Bearer $CRON_SECRET" "$PLENTY_URL/api/cron/notifications"
+          echo

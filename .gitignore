@@ -68,3 +68,8 @@ xcuserdata/
 
 # bundled operational scripts (npm run build:tools)
 /dist-tools/
+
+# Real production settings are never committed (only deploy/production.env.example is)
+/production.env
+/*.production.env
+/deploy/production.env

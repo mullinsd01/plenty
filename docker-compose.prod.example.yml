@@ -1,0 +1,102 @@
+# EXAMPLE ONLY: a production setup for ONE server with Docker Compose: Plenty, Postgres 16, a one-shot step that
+# prepares the database, and Caddy for automatic https. Nothing in the repository uses this file. The development
+# database is docker-compose.yml. Read docs/deploy.md ("Path B") before using it.
+#
+# 1. cp deploy/production.env.example production.env      (fill it in; keep it out of git)
+# 2. docker compose --env-file production.env -f docker-compose.prod.example.yml up -d --build
+# 3. docker compose --env-file production.env -f docker-compose.prod.example.yml run --rm app seed     (App Review demo)
+# 4. docker compose --env-file production.env -f docker-compose.prod.example.yml run --rm app check    (go-live check)
+#
+# Upgrading: git pull, then repeat step 2. The `migrate` step runs first on every `up`, so the database is always
+# ready for the new version before it starts.
+
+name: plenty
+
+x-plenty: &plenty
+  # Built from the Dockerfile in this folder. To use an image from a registry instead, set PLENTY_IMAGE in production.env
+  # and delete the build line.
+  image: ${PLENTY_IMAGE:-plenty:latest}
+  build: .
+  env_file: production.env
+  environment:
+    # These two come from PLENTY_DOMAIN and POSTGRES_PASSWORD, so a typo in the env file can't point the app elsewhere.
+    DATABASE_URL: postgres://plenty:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in production.env}@postgres:5432/plenty
+    APP_URL: https://${PLENTY_DOMAIN:?Set PLENTY_DOMAIN in production.env}
+    # Caddy is the one proxy in front of the app.
+    TRUSTED_PROXY_HOPS: "1"
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: plenty
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in production.env}
+      POSTGRES_DB: plenty
+    volumes:
+      - plenty-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plenty -d plenty"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    # No ports: only the other services on this compose network can reach the database.
+
+  # Runs once, then exits: migrations + product catalog + recipe library. Safe to repeat.
+  migrate:
+    <<: *plenty
+    command: ["setup"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    <<: *plenty
+    init: true
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    expose:
+      - "3000"
+    volumes:
+      # Receipt photos when STORAGE_DRIVER=local (the default). With STORAGE_DRIVER=s3 this volume is simply unused.
+      - plenty-photos:/data/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    # Logs can contain email addresses (see docs/compliance/security-notes.md): keep few and small.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # Terminates https (certificates from Let's Encrypt, renewed automatically) and passes requests to the app.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: ["caddy", "reverse-proxy", "--from", "${PLENTY_DOMAIN:?Set PLENTY_DOMAIN in production.env}", "--to", "app:3000"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # Certificates live here: keep it, or Caddy asks for new ones on every restart and Let's Encrypt rate limits you.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  plenty-db:
+  plenty-photos:
+  caddy-data:
+  caddy-config:
