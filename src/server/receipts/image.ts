@@ -316,3 +316,23 @@ export async function ocrVariant(input: Buffer, options: OcrVariantOptions = {})
     throw new ReceiptImageError("corrupt", MESSAGES.corrupt);
   }
 }
+
+/** Narrowest and widest an OCR copy may be made by `rescaledVariant`. */
+const RESCALE_MIN_WIDTH_PX = 900;
+const RESCALE_MAX_WIDTH_PX = 2400;
+
+/**
+ * The same OCR copy at another size (`factor` × its width, kept between 900 and
+ * 2400 px). Tesseract's reading of a small, soft photo changes from size to
+ * size, so a second look at a different scale makes different mistakes; see
+ * `ocrReceipt`.
+ */
+export async function rescaledVariant(variant: Buffer, factor: number): Promise<Buffer> {
+  try {
+    const { width } = await sharp(variant).metadata();
+    const target = Math.min(RESCALE_MAX_WIDTH_PX, Math.max(RESCALE_MIN_WIDTH_PX, Math.round((width ?? OCR_MIN_WIDTH_PX) * factor)));
+    return await sharp(variant).resize({ width: target, kernel: "lanczos3" }).png({ compressionLevel: 1 }).toBuffer();
+  } catch {
+    throw new ReceiptImageError("corrupt", MESSAGES.corrupt);
+  }
+}

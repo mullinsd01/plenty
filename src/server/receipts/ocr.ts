@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import Tesseract from "tesseract.js";
+import { parseReceiptText, READING_SEPARATOR } from "@/lib/receipts/parse";
+import { rescaledVariant } from "@/server/receipts/image";
 
 /**
  * Local, fully offline OCR with tesseract.js.
@@ -14,6 +16,11 @@ import Tesseract from "tesseract.js";
  *   worker is terminated after a minute of inactivity to free ~100 MB.
  * - Language data caching is disabled (the data is already local), so nothing
  *   is written to the working directory.
+ * - A clean receipt is read once. A photo whose first reading doesn't add up
+ *   (no total, or items that disagree with it) is read again at other sizes,
+ *   because Tesseract's mistakes on a small or soft photo change with the scale;
+ *   the readings come back together, separated by form feeds, for the parser to
+ *   merge by consensus (see `mergeReadings`).
  */
 
 // ─── Tunables ───────────────────────────────────────────────────────────────
@@ -29,6 +36,12 @@ export const OCR_JOB_TIMEOUT_MS = 90_000;
  * item; PSM 6 keeps each printed line together.
  */
 export const OCR_PAGE_SEG_MODE = Tesseract.PSM.SINGLE_BLOCK;
+/** Further readings of a photo that didn't add up the first time, as multiples of the first reading's width. */
+export const OCR_EXTRA_READING_SCALES = [0.8, 1.25, 0.65, 1.5] as const;
+/** No further reading starts once a read of one photo has taken this long (the job timeout still applies to each). */
+export const OCR_EXTRA_READINGS_BUDGET_MS = 25_000;
+/** Fewer item lines than this and a second look wouldn't help: the photo isn't of a receipt, or is hopeless. */
+const MIN_LINES_FOR_EXTRA_READINGS = 3;
 /** The integer-quantised "best" LSTM model: accurate and small (2.9 MB). */
 const TRAINED_DATA_DIR = "4.0.0_best_int";
 const LANGUAGE = "eng";
@@ -170,17 +183,48 @@ async function recognise(image: Buffer): Promise<OcrResult> {
   }
 }
 
+/** True when the text holds item lines that no total vouches for: worth reading the photo again. */
+function needsAnotherReading(text: string): boolean {
+  const parsed = parseReceiptText(text);
+  const vouched = parsed.total !== null && !parsed.warnings.includes("total_mismatch");
+  return parsed.lines.length >= MIN_LINES_FOR_EXTRA_READINGS && !vouched;
+}
+
+async function readWithExtraReadings(image: Buffer): Promise<OcrResult> {
+  const started = Date.now();
+  const first = await recognise(image);
+  if (!needsAnotherReading(first.text)) return first;
+
+  const texts = [first.text];
+  let confidence = first.confidence;
+  for (const scale of OCR_EXTRA_READING_SCALES) {
+    if (Date.now() - started > OCR_EXTRA_READINGS_BUDGET_MS) break;
+    try {
+      const again = await recognise(await rescaledVariant(image, scale));
+      texts.push(again.text);
+      confidence = Math.max(confidence, again.confidence);
+    } catch {
+      break; // The first reading stands; a failed extra one must never lose it.
+    }
+    if (texts.length >= 3 && !needsAnotherReading(texts.join(`\n${READING_SEPARATOR}\n`))) break;
+  }
+  return { text: texts.join(`\n${READING_SEPARATOR}\n`), confidence };
+}
+
 /**
  * Read the text on a receipt image with local Tesseract OCR.
  *
  * Pass the output of `ocrVariant()` for best results (greyscale, normalised,
- * ≥ 1600 px wide). Jobs are serialised on one shared worker. Throws
- * `OcrError` ("unavailable" | "timeout" | "failed").
+ * ≥ 1600 px wide). Jobs are serialised on one shared worker. A photo whose
+ * first reading doesn't add up is read again at other sizes within a time
+ * budget, and the result holds every reading separated by form feeds
+ * (`parseReceiptText` merges them). Throws `OcrError`
+ * ("unavailable" | "timeout" | "failed") when the first reading fails.
  */
 export function ocrReceipt(image: Buffer): Promise<OcrResult> {
   pendingJobs += 1;
   clearIdleTimer();
-  const job = queue.then(() => recognise(image));
+  const job = queue.then(() => readWithExtraReadings(image));
   queue = job.then(
     () => undefined,
     () => undefined,
