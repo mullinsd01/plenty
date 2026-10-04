@@ -27,6 +27,28 @@ function optionalEmail() {
     });
 }
 
+/** An optional http(s) URL; blank means not set. */
+function optionalUrl() {
+  return z
+    .string()
+    .trim()
+    .optional()
+    .transform((v, ctx) => {
+      if (!v) return undefined;
+      if (!z.url({ protocol: /^https?$/ }).safeParse(v).success) ctx.addIssue({ code: "custom", message: "must be a web address starting with http:// or https://" });
+      return v;
+    });
+}
+
+/** An optional string; blank means not set. */
+function optionalText() {
+  return z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v : undefined));
+}
+
 /**
  * Server-side environment, validated once. Never import this from client
  * components — secrets must stay on the server.
@@ -45,7 +67,33 @@ const schema = z.object({
     .string()
     .optional()
     .transform((v) => v === "true" || v === "1"),
-  STORAGE_DIR: z.string().default(".data/uploads"),
+  /**
+   * Where receipt photos live: the server's own disk (the default; one server, with the directory on a
+   * volume that survives redeploys) or S3-compatible object storage (AWS S3, Cloudflare R2, MinIO, Backblaze B2…).
+   */
+  STORAGE_DRIVER: z.preprocess((v) => (typeof v === "string" ? v.trim() || undefined : v), z.enum(["local", "s3"]).default("local")),
+  /** Local driver: the directory for photos, relative to the working directory or absolute. Blank means the default. */
+  STORAGE_DIR: z
+    .string()
+    .optional()
+    .transform((v) => v?.trim() || ".data/uploads"),
+  /** S3 driver, optional: the service's own address (R2, MinIO, Backblaze). Leave unset for AWS S3. */
+  S3_ENDPOINT: optionalUrl(),
+  /** S3 driver: the bucket's region. AWS needs the real one (e.g. `ap-southeast-2`); R2 accepts `auto`. */
+  S3_REGION: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => v || "us-east-1"),
+  /** S3 driver: the bucket that holds receipt photos. Keep it private (no public access). */
+  S3_BUCKET: optionalText(),
+  S3_ACCESS_KEY_ID: optionalText(),
+  S3_SECRET_ACCESS_KEY: optionalText(),
+  /** S3 driver: address the bucket as `endpoint/bucket` instead of `bucket.endpoint`. MinIO and some self-hosted services need it. */
+  S3_FORCE_PATH_STYLE: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
   /**
    * Whether Plenty may look an unknown barcode up in Open Food Facts, a public product database. That
    * discloses the barcode number (and nothing else) to openfoodfacts.org. Unset: on, except in tests.
@@ -130,6 +178,12 @@ const schema = z.object({
       if (v.length < 16) ctx.addIssue({ code: "custom", message: "must be at least 16 characters" });
       return v;
     }),
+}).superRefine((value, ctx) => {
+  // Object storage needs somewhere to put the photos and a way in. (No guessing at IAM roles or ambient credentials.)
+  if (value.STORAGE_DRIVER !== "s3") return;
+  for (const name of ["S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"] as const) {
+    if (!value[name]) ctx.addIssue({ code: "custom", path: [name], message: "is required when STORAGE_DRIVER=s3" });
+  }
 });
 
 export type Env = z.infer<typeof schema>;

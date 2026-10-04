@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#faf8f5">
+<title>Plenty</title>
+<style>
+  :root {
+    --canvas: #faf8f5;
+    --ink: #1e2735;
+    --ink-2: #4a5465;
+    --brand: #f46e4f;
+    --brand-strong: #dd5537;
+    --on-brand: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --canvas: #111214;
+      --ink: #f3f0eb;
+      --ink-2: #c2bdb5;
+      --brand: #f47a5f;
+      --brand-strong: #f68d75;
+      --on-brand: #111214;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-text-size-adjust: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right))
+      max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  }
+  main { width: 100%; max-width: 360px; text-align: center; }
+  svg { width: 88px; height: 88px; fill: var(--brand); margin-bottom: 20px; }
+  h1 { margin: 0 0 8px; font-size: 24px; line-height: 1.2; font-weight: 700; }
+  p { margin: 0 0 28px; color: var(--ink-2); }
+  button {
+    appearance: none;
+    -webkit-appearance: none;
+    border: 0;
+    border-radius: 14px;
+    background: var(--brand);
+    color: var(--on-brand);
+    font: inherit;
+    font-weight: 600;
+    min-height: 50px;
+    padding: 0 32px;
+    width: 100%;
+  }
+  button:active { background: var(--brand-strong); }
+  button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+  .status { margin: 16px 0 0; min-height: 1.45em; font-size: 15px; }
+</style>
+</head>
+<body>
+<main>
+  <svg viewBox="0 0 400 420" aria-hidden="true" focusable="false">
+    <path d="M0 100C0 45 45 0 105 0h45q8 0 8 8v124q0 22-22 22H62c-26 0-42 12-50 28q-6 12-12 4Z"/>
+    <circle cx="248" cy="76" r="75"/>
+    <path d="M0 258c0-45 34-80 78-80h32q42 0 42 42v146c0 14-12 22-27 28-30 11-45 36-63 58-12 14-22 20-32 20-18 0-30-12-30-32Z"/>
+    <path d="M174 190q0-14 14-14h74c23 0 43-4 53-10q8-4 8 6v68c0 65-45 110-113 120l-24 4q-12 2-12-10Z"/>
+  </svg>
+  <h1>Can&rsquo;t reach Plenty</h1>
+  <p>Check your internet connection, then try again. Nothing is lost: your kitchen is safe on our server.</p>
+  <button id="retry" type="button">Try again</button>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+</main>
+<script>
+  // This page ships inside the app and is shown only when the hosted site
+  // cannot be loaded. It does not know the site's address: the native shell
+  // does (it is PLENTY_URL), so "Try again" asks the shell to load it again
+  // through the PlentyShell plugin (ios/App/App/PlentyShell.swift).
+  (function () {
+    var button = document.getElementById("retry");
+    var status = document.getElementById("status");
+    var busy = false;
+
+    function retry() {
+      if (busy) return;
+      var shell = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PlentyShell;
+      if (!shell || typeof shell.retry !== "function") {
+        status.textContent = "Close and reopen Plenty to try again.";
+        return;
+      }
+      busy = true;
+      button.disabled = true;
+      status.textContent = "Trying…";
+      shell.retry().catch(function () {
+        status.textContent = "Still can’t reach Plenty.";
+      }).then(function () {
+        // If the load works this page is replaced; if it fails the shell shows
+        // this page again, freshly loaded. Either way allow another attempt.
+        setTimeout(function () {
+          busy = false;
+          button.disabled = false;
+        }, 1500);
+      });
+    }
+
+    button.addEventListener("click", retry);
+    // Try once more by itself when the phone says it is back online.
+    window.addEventListener("online", retry);
+  })();
+</script>
+</body>
+</html>

@@ -11,6 +11,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // A self-contained server (.next/standalone) for the Docker image: see Dockerfile and docs/deploy.md.
+  output: "standalone",
   // The floating dev badge covers the bottom navigation on phones.
   devIndicators: false,
   poweredByHeader: false,
