@@ -14,6 +14,21 @@
 # one instance starting at once, run `setup` as a separate step instead (docs/deploy.md).
 set -eu
 
+# Started as root (the default), fix the ownership of the receipt-photo folder, then carry on as the unprivileged
+# `node` user. Volumes and bind mounts (Fly volumes, Render disks, a host folder) usually arrive owned by root, and
+# the app couldn't save photos into them. Started as another user (docker run --user ...), this is skipped.
+if [ "$(id -u)" = "0" ]; then
+  if [ "${STORAGE_DRIVER:-local}" = "local" ]; then
+    dir="${STORAGE_DIR:-/data/uploads}"
+    mkdir -p "$dir" 2>/dev/null || true
+    # Only when the folder isn't already node's: a recursive chown on every start would be slow with many photos.
+    if [ "$(stat -c %U "$dir" 2>/dev/null || echo node)" != "node" ]; then
+      chown -R node:node "$dir" 2>/dev/null || echo "Warning: couldn't give the user 'node' ownership of $dir; saving receipt photos may fail." >&2
+    fi
+  fi
+  exec setpriv --reuid=node --regid=node --init-groups "$0" "$@"
+fi
+
 cmd="${1:-serve}"
 
 case "$cmd" in
