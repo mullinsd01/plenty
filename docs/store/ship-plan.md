@@ -10,6 +10,7 @@ The critical path is not code. These are slow, and only the account holder can s
 |---|---|---|
 | Apple Developer Program enrolment | Identity checks. An organisation account also needs a D-U-N-S number, which can take weeks: if the account must be in a company name, start today or enrol as an individual and move later | Day 1 |
 | Paid Applications agreement, banking and tax in App Store Connect | Apple verifies them before subscriptions can be sold | Day 1 |
+| Apple Small Business Program (cuts Apple's commission from 30% to 15%) | Not automatic: you apply in App Store Connect, and it only applies from the point Apple approves it. Confirm the current terms on developer.apple.com | As soon as the Paid Applications agreement is Active, before the first sale |
 | Subscription products in App Store Connect | They are reviewed with the first build, so they must be complete and "Ready to Submit" before you submit | Day 3 |
 | Lawyer's read of the Privacy Policy and Terms | Needed before launch (audit item 4) | Day 1 |
 
