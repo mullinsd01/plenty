@@ -8,6 +8,8 @@ import { UNITS } from "@/lib/units";
 import { enforceRateLimit } from "@/server/auth/rate-limit";
 import { householdAction } from "@/server/action";
 import { parseInput } from "@/server/errors";
+import { withUser } from "@/server/db/client";
+import { learningProgressFor } from "@/server/services/dashboard";
 import * as receipts from "@/server/services/receipts";
 
 const id = z.uuid({ error: "That receipt couldn't be found." });
@@ -51,10 +53,19 @@ const confirmSchema = z.object({
 export async function confirmReceiptAction(receiptId: string, input: z.input<typeof confirmSchema>) {
   return householdAction(
     "receipts.confirm",
-    async (ctx) => receipts.confirmReceipt(ctx, parseInput(id, receiptId), parseInput(confirmSchema, input)),
+    async (ctx) => {
+      const result = await receipts.confirmReceipt(ctx, parseInput(id, receiptId), parseInput(confirmSchema, input));
+      // Plenty learns a household's rhythm from a few shops: say how far along it is, and what helps.
+      const progress = await withUser(ctx.user.id, (tx) => learningProgressFor(ctx, tx));
+      return { ...result, progress };
+    },
     {
-      message: (r) =>
-        `${r.added} ${r.added === 1 ? "thing" : "things"} added to your kitchen${r.tickedOff > 0 ? ` · ${r.tickedOff} ticked off your list` : ""}`,
+      message: (r) => {
+        const added = `${r.added} ${r.added === 1 ? "thing" : "things"} added to your kitchen${r.tickedOff > 0 ? ` · ${r.tickedOff} ticked off your list` : ""}`;
+        return r.progress
+          ? `${added}. That's ${r.progress.receipts} of ${r.progress.target} shops for Plenty to learn from: scan an older one next (oldest first works best).`
+          : added;
+      },
     },
   );
 }

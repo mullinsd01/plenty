@@ -5,8 +5,10 @@ import { PREDICTION_BASIS_LABELS, type Confidence, type PredictionBasis } from "
 import { pluralNoun } from "@/lib/format";
 import { spendSummary, wasteInsights } from "@/lib/insights";
 import type { HouseholdContext } from "@/server/auth/context";
-import { withUser } from "@/server/db/client";
+import { withUser, type Queryable } from "@/server/db/client";
 import { mealPlanItems, predictions, receiptItems, receipts, shoppingListItems, preferences } from "@/server/db/schema";
+import { INTERVAL_MIN_SHOPS } from "@/lib/insights/rhythm";
+import { can, isRestricted } from "@/lib/members/permissions";
 import { HOUSEHOLD_SCOPE, learningKey, scopeOf } from "@/lib/members/scope";
 import { itemViewOptions, toItemView } from "./inventory";
 import { computeLiveState, householdNameFor, itemScope, persistPredictions, type LiveState } from "./learning";
@@ -61,6 +63,23 @@ export interface CheckInView {
   name: string;
 }
 
+/** How many scanned shops it takes before Plenty can spot a household's rhythm and the things it keeps buying. */
+export const TEACH_RECEIPTS_TARGET = INTERVAL_MIN_SHOPS;
+/** What a plan without predictions is shown about what Plus would flag: things due to run out within this many days. */
+const PREVIEW_WITHIN_DAYS = 7;
+
+/** A taste of Plus for a household that doesn't have it: what Plenty can already see, without when or the automatic list. */
+export interface PredictionPreview {
+  count: number;
+  /** A few of the household's own names for things, soonest first. */
+  names: string[];
+}
+
+export interface LearningProgress {
+  receipts: number;
+  target: number;
+}
+
 export interface DashboardView {
   greeting: string;
   firstName: string;
@@ -78,6 +97,21 @@ export interface DashboardView {
   receiptsNeedingReview: Array<{ id: string; status: string; store: string | null }>;
   insights: string[];
   hasAnyReceipt: boolean;
+  /** Set while fewer than {@link TEACH_RECEIPTS_TARGET} shops have been scanned (and the person can scan). */
+  learningProgress: LearningProgress | null;
+  /** Set for a household without predictions, once Plenty can see something that is about to run out. */
+  predictionPreview: PredictionPreview | null;
+}
+
+/** How many confirmed receipts the household has, against what Plenty needs to learn from. Null once there are enough. */
+export async function learningProgressFor(ctx: HouseholdContext, db: Queryable): Promise<LearningProgress | null> {
+  if (!can(ctx.role, "view_receipts_and_prices")) return null;
+  const [row] = await db
+    .select({ n: count() })
+    .from(receipts)
+    .where(and(eq(receipts.householdId, ctx.household.id), eq(receipts.status, "confirmed"), isNull(receipts.deletedAt)));
+  const n = Number(row?.n ?? 0);
+  return n < TEACH_RECEIPTS_TARGET ? { receipts: n, target: TEACH_RECEIPTS_TARGET } : null;
 }
 
 /** At or below this level (what someone set in the kitchen), an item counts as nearly finished on plans without predictions. */
@@ -270,6 +304,19 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
       .limit(3);
     const [anyReceipt] = await tx.select({ id: receipts.id }).from(receipts).where(eq(receipts.householdId, ctx.household.id)).limit(1);
 
+    const learningProgress = await learningProgressFor(ctx, tx);
+    // A household on a plan without predictions is shown what Plus would flag. The predictions are worked out
+    // for this view only: nothing is stored, listed or sent, so the plan's limits are exactly as they were.
+    let predictionPreview: PredictionPreview | null = null;
+    if (!ctx.household.predictive && !isRestricted(ctx.role)) {
+      const preview = await computeLiveState(tx, { ...ctx.household, predictive: true }, now);
+      const soon = [...preview.predictions.values()]
+        .filter((p) => !p.paused && p.prediction.daysRemaining <= PREVIEW_WITHIN_DAYS)
+        .sort((a, b) => a.prediction.daysRemaining - b.prediction.daysRemaining);
+      const names = [...new Set(soon.map((p) => householdNameFor(p)))];
+      if (names.length > 0) predictionPreview = { count: names.length, names: names.slice(0, 3) };
+    }
+
     // A couple of genuinely useful learned facts.
     const insights: string[] = [];
     if (rhythm.label && rhythm.basis === "history") insights.push(rhythm.label);
@@ -338,6 +385,8 @@ export async function getDashboard(ctx: HouseholdContext, now = new Date(), live
       receiptsNeedingReview: pending.map((p) => ({ id: p.id, status: p.status, store: p.store })),
       insights: insights.slice(0, 3),
       hasAnyReceipt: Boolean(anyReceipt),
+      learningProgress,
+      predictionPreview,
     };
   });
 }

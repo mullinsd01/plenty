@@ -6,6 +6,7 @@ import { BasisLabel } from "@/components/food/confidence";
 import { MealArt } from "@/components/food/meal-art";
 import { Button } from "@/components/ui/button";
 import { Card, SectionTitle } from "@/components/ui/card";
+import { UpgradeNote } from "@/components/ui/upgrade-note";
 import { AddToListButton, CheckInList, PastDateCard, PlanTonightButton, TonightActions } from "@/features/home/home-client";
 import { PersonChip } from "@/components/ui/person-chip";
 import { cn } from "@/lib/cn";
@@ -77,6 +78,8 @@ export default async function HomePage() {
         </div>
       )}
 
+      {d.learningProgress && !(kitchenEmpty && !d.hasAnyReceipt) && <LearningProgressCard receipts={d.learningProgress.receipts} target={d.learningProgress.target} />}
+
       {kitchenEmpty && !d.hasAnyReceipt ? (
         <WelcomeCard />
       ) : (
@@ -95,7 +98,11 @@ export default async function HomePage() {
               </SectionTitle>
               {d.runningLow.length === 0 ? (
                 <QuietCard>
-                  {allClear ? "Nothing's about to run out. Plenty is keeping an eye on things." : "Nothing's about to run out."}
+                  {d.predictionPreview
+                    ? "Nothing's marked as nearly empty."
+                    : allClear
+                      ? "Nothing's about to run out. Plenty is keeping an eye on things."
+                      : "Nothing's about to run out."}
                 </QuietCard>
               ) : (
                 <Card className="divide-y divide-line">
@@ -140,6 +147,14 @@ export default async function HomePage() {
                     </div>
                   ))}
                 </Card>
+              )}
+              {d.predictionPreview && (
+                <UpgradeNote plan="plus" feature="predictions" className="mt-3">
+                  Plenty can already see{" "}
+                  {d.predictionPreview.count === 1 ? "something" : `${d.predictionPreview.count} things`} you&apos;ll probably need soon:{" "}
+                  <span className="font-semibold text-ink">{d.predictionPreview.names.join(", ")}</span>
+                  {d.predictionPreview.count > d.predictionPreview.names.length ? " and more" : ""}. With Plus it tells you when, and adds them to your list for you.
+                </UpgradeNote>
               )}
             </section>
 
@@ -373,16 +388,50 @@ function QuietCard({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl border border-dashed border-line-strong px-4 py-4 text-[14px] text-ink-3">{children}</div>;
 }
 
+/** Plenty needs a few shops to see a pattern: how far along the household is, and the next step. */
+function LearningProgressCard({ receipts, target }: { receipts: number; target: number }) {
+  const left = target - receipts;
+  return (
+    <Card className="mb-6 p-4 sm:p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-ink">
+          <Sprout className="size-[18px]" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[15px] font-semibold">
+            Teach Plenty your rhythm: {receipts} of {target} shops
+          </p>
+          <div className="mt-2 flex gap-1.5" role="img" aria-label={`${receipts} of ${target} shops scanned`}>
+            {Array.from({ length: target }, (_, i) => (
+              <span key={i} className={cn("h-1.5 flex-1 rounded-full", i < receipts ? "bg-fresh" : "bg-line-strong")} />
+            ))}
+          </div>
+          <p className="mt-2 text-[14px] leading-relaxed text-ink-3">
+            {left === 1 ? "One more shop" : `${left} more shops`} and Plenty can start to see how often you shop and what you keep buying. Scan your older
+            receipts first, oldest to newest.
+          </p>
+          <Button asChild variant="brand" size="sm" className="mt-3">
+            <Link href="/receipts/new">
+              <ScanLine /> {receipts === 0 ? "Scan a receipt" : "Scan another receipt"}
+            </Link>
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function WelcomeCard() {
   return (
     <Card className="overflow-hidden">
       <div className="p-6 sm:p-8">
         <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-brand-ink">Let&apos;s fill your kitchen</p>
         <h2 className="mt-2 max-w-md text-balance text-[24px] font-semibold leading-tight tracking-[-0.025em]">
-          Scan your latest receipt and Plenty will do the rest.
+          Scan your last few receipts and Plenty will do the rest.
         </h2>
         <p className="mt-3 max-w-md text-[15px] leading-relaxed text-ink-3">
-          It reads the receipt, tidies up the names, works out where things live and when they&apos;ll likely run out. You just confirm.
+          It reads each receipt, tidies up the names and works out where things live. Scan your last three shops, oldest first, and it starts to see how fast
+          your household gets through things. You just confirm.
         </p>
         <div className="mt-6 flex flex-wrap gap-2">
           <Button asChild variant="brand" size="lg">

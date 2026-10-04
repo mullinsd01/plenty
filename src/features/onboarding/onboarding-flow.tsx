@@ -308,8 +308,8 @@ export function OnboardingFlow({ initial }: { initial: OnboardingInitial }) {
         {step === "done" && (
           <Screen title="You're all set." body="Here's how Plenty gets to know your household — no pantry spreadsheets required.">
             <ol className="space-y-4">
-              <DoneStep n={1} title="Scan your next receipt">
-                Plenty reads it and fills your kitchen. You just confirm.
+              <DoneStep n={1} title="Scan your last few receipts">
+                Plenty reads each one and fills your kitchen. Do your last three shops, oldest first, and it starts to see your rhythm straight away.
               </DoneStep>
               <DoneStep n={2} title="Tell it when something's finished">
                 One tap. Plenty learns how fast your household gets through things.
