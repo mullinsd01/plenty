@@ -303,7 +303,7 @@ describe("what each plan card offers", () => {
       products: [{ plan: "plus" as const, period: "monthly" as const, productId: "p", priceText: "$4.99 a month" }],
     };
     const o = overview({ purchase: { platform: "android", canStartCheckout: false, store } });
-    expect(planAction(o, "plus", "monthly")).toEqual({ kind: "store" });
+    expect(planAction(o, "plus", "monthly")).toMatchObject({ kind: "store", plan: "plus", period: "monthly" });
     expect(planAction(o, "plus", "annual")).toEqual({ kind: "none" });
     const web = webSub(
       {
@@ -380,7 +380,7 @@ describe("comparison", () => {
     };
     const m = buildComparison(overview({ purchase: { platform: "ios", canStartCheckout: false, store } }), {});
     expect(m.showPrices).toBe(true);
-    expect(m.cards[1].actions.monthly).toEqual({ kind: "store" });
+    expect(m.cards[1].actions.monthly).toMatchObject({ kind: "store", plan: "plus", period: "monthly" });
     expect(m.cards[1].disclosure.monthly).toBe(storeDisclosure("apple", "plus", "monthly"));
     expect(JSON.stringify(m)).not.toMatch(/portal|checkout/i);
     const noStore = buildComparison(overview({ purchase: { platform: "ios", canStartCheckout: false } }), {});

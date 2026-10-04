@@ -25,6 +25,28 @@ export async function postForUrl(path: "/api/billing/checkout" | "/api/billing/p
   return url;
 }
 
+/** A JSON request to a billing route from the browser. Failures carry the server's plain-language message. */
+export async function requestJson<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: "same-origin",
+      cache: "no-store",
+    });
+  } catch {
+    throw new BillingRequestError("Couldn't reach Plenty. Check your connection and try again. Nothing has been charged.");
+  }
+  const data: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = typeof (data as { error?: unknown } | null)?.error === "string" ? (data as { error: string }).error : null;
+    throw new BillingRequestError(message ?? FALLBACK);
+  }
+  return data as T;
+}
+
 function isHttpUrl(value: string): boolean {
   try {
     const { protocol } = new URL(value);

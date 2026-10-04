@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { PageHeader } from "@/components/ui/page-header";
 import { SectionTitle } from "@/components/ui/card";
@@ -46,6 +47,17 @@ export default async function PlanPage({ searchParams }: PageProps<"/settings/pl
       <section aria-labelledby="plans-heading">
         <SectionTitle id="plans-heading">Plans</SectionTitle>
         <PlanComparison model={comparison} />
+        <p className="mt-4 text-[13px] text-ink-3">
+          Subscriptions renew automatically until cancelled. See the{" "}
+          <Link href="/terms" className="font-medium text-ink underline underline-offset-2">
+            Terms of Use
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="font-medium text-ink underline underline-offset-2">
+            Privacy Policy
+          </Link>
+          .
+        </p>
       </section>
       <RestoreCard overview={overview} />
     </div>

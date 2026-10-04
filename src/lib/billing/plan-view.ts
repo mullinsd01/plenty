@@ -163,8 +163,8 @@ export type PlanAction =
   | { kind: "portal"; label: string }
   /** Change it in the store's own subscription settings. */
   | { kind: "store_link"; url: string; label: string }
-  /** Bought through the platform's purchase sheet, which the app opens. Nothing to click here. */
-  | { kind: "store" }
+  /** Bought through the platform's purchase sheet, which the app opens when the person taps subscribe. */
+  | { kind: "store"; plan: "plus" | "family"; period: BillingPeriod; productId: string }
   /** Nothing to click; a plain explanation. */
   | { kind: "text"; text: string }
   | { kind: "none" };
@@ -208,9 +208,10 @@ export function planAction(o: BillingOverview, target: ComparedPlan, period: Bil
   if (target === "free") return { kind: "none" };
 
   if (native) {
-    return o.purchase.store.available && o.purchase.store.products.some((p) => p.plan === target && p.period === period)
-      ? { kind: "store" }
-      : { kind: "none" };
+    const product = o.purchase.store.available
+      ? o.purchase.store.products.find((p) => p.plan === target && p.period === period)
+      : undefined;
+    return product && (target === "plus" || target === "family") ? { kind: "store", plan: target, period, productId: product.productId } : { kind: "none" };
   }
   if (o.purchase.canStartCheckout && o.purchase.options.some((opt) => opt.plan === target && opt.period === period && opt.web)) {
     return { kind: "checkout", plan: target, period };
@@ -257,11 +258,12 @@ function savingText(plan: PlanId): string | null {
 }
 
 /** The text next to a store purchase: price, renewal, and where to cancel, in the store's own terms. */
-export function storeDisclosure(provider: "apple" | "google", plan: "plus" | "family", period: BillingPeriod): string {
+export function storeDisclosure(provider: "apple" | "google", plan: "plus" | "family", period: BillingPeriod, priceText?: string): string {
   const name = PLANS[plan].name;
   const every = period === "monthly" ? "month" : "year";
   const store = provider === "apple" ? "the App Store" : "Google Play";
-  return `${name}: ${formatPlanPrice(plan, period)}. Billed by ${store}. It renews automatically each ${every} until you cancel ${whereToManage(provider)}, and you keep ${name} until the period you've paid for ends.`;
+  // The store's own price (in the person's currency) beats ours whenever the app can read it.
+  return `${name}: ${priceText ? `${priceText} a ${every}` : formatPlanPrice(plan, period)}. Billed by ${store}. It renews automatically each ${every} until you cancel ${whereToManage(provider)}, and you keep ${name} until the period you've paid for ends.`;
 }
 
 export function buildComparison(o: BillingOverview, disclosures: Record<string, string>): ComparisonModel {

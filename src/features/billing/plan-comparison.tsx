@@ -1,13 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Pill } from "@/components/ui/pill";
 import { cn } from "@/lib/cn";
 import type { BillingPeriod } from "@/lib/billing/plans";
 import type { ComparisonModel, PlanAction, PlanCardModel } from "@/lib/billing/plan-view";
-import { ActionError, PortalButton, StoreLink, useBillingRedirect } from "./plan-actions";
+import { storeDisclosure } from "@/lib/billing/plan-view";
+import { ActionError, PortalButton, StoreLink, StoreSubscribeButton, useBillingRedirect } from "./plan-actions";
+import { loadStoreProducts, type StoreProduct } from "./native-purchases";
 
 const PERIOD_OPTIONS: Array<{ value: BillingPeriod; label: string }> = [
   { value: "monthly", label: "Monthly" },
@@ -62,6 +64,7 @@ export function PlanComparison({ model }: { model: ComparisonModel }) {
   const [period, setPeriod] = useState<BillingPeriod>(model.defaultPeriod);
   const [active, setActive] = useState<string | null>(null);
   const checkout = useBillingRedirect("/api/billing/checkout");
+  const prices = useStorePrices(model);
 
   return (
     <div>
@@ -78,6 +81,7 @@ export function PlanComparison({ model }: { model: ComparisonModel }) {
             card={card}
             period={period}
             showPrices={model.showPrices}
+            storePrices={prices}
             busy={checkout.busy}
             starting={checkout.busy && active === card.id}
             error={active === card.id ? checkout.error : null}
@@ -98,6 +102,7 @@ function PlanCard({
   card,
   period,
   showPrices,
+  storePrices,
   busy,
   starting,
   error,
@@ -106,14 +111,19 @@ function PlanCard({
   card: PlanCardModel;
   period: BillingPeriod;
   showPrices: boolean;
+  storePrices: Record<string, StoreProduct>;
   busy: boolean;
   starting: boolean;
   error: string | null;
   onCheckout: (plan: "plus" | "family", period: BillingPeriod) => void;
 }) {
-  const price = card.price[period];
   const action = card.actions[period];
-  const disclosure = card.disclosure[period];
+  // Inside the iPhone app the price is Apple's own, in the person's currency; ours is only the fallback.
+  const storeProduct = action.kind === "store" ? storePrices[action.productId] : undefined;
+  const basePrice = card.price[period];
+  const price = storeProduct && basePrice ? { amount: storeProduct.displayPrice, per: basePrice.per, saving: null } : basePrice;
+  const disclosure =
+    storeProduct && action.kind === "store" ? storeDisclosure("apple", action.plan, action.period, storeProduct.displayPrice) : card.disclosure[period];
   const headingId = `plan-${card.id}`;
   const disclosureId = `plan-${card.id}-terms`;
   return (
@@ -200,12 +210,35 @@ function CardAction({
       return <PortalButton block label={action.label} />;
     case "store_link":
       return <StoreLink block href={action.url} label={action.label} />;
+    case "store":
+      return <StoreSubscribeButton productId={action.productId} label={`Subscribe to ${shortName}`} describedBy={describedBy} />;
     case "pending":
     case "text":
       return <p className="text-[13px] font-medium text-ink-2">{action.text}</p>;
     case "current":
-    case "store":
     case "none":
       return null;
   }
+}
+
+/** Apple's own prices for the products on this page, read from the app. Empty on the web and until the app answers. */
+function useStorePrices(model: ComparisonModel): Record<string, StoreProduct> {
+  const [prices, setPrices] = useState<Record<string, StoreProduct>>({});
+  const ids = Array.from(
+    new Set(
+      model.cards.flatMap((card) => Object.values(card.actions).flatMap((a) => (a.kind === "store" ? [a.productId] : []))),
+    ),
+  ).sort();
+  const key = ids.join(",");
+  useEffect(() => {
+    if (!key) return;
+    let live = true;
+    void loadStoreProducts(key.split(",")).then((products) => {
+      if (live) setPrices(Object.fromEntries(products.map((p) => [p.productId, p])));
+    });
+    return () => {
+      live = false;
+    };
+  }, [key]);
+  return prices;
 }
