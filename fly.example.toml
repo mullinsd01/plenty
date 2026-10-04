@@ -1,0 +1,73 @@
+# EXAMPLE ONLY: running Plenty on Fly.io. Nothing in the repository uses this file. Read docs/deploy.md ("Path A").
+#
+# 1. cp fly.example.toml fly.toml           and change `app`, `primary_region` and the [env] values below
+# 2. fly apps create <app name>             (or `fly launch --no-deploy --copy-config`)
+# 3. fly secrets import < production.env    only the secret lines; see "Secrets" below
+# 4. fly deploy
+# 5. fly ssh console -C "node tools/seed.cjs"   (demo household for App Review)
+# 6. fly ssh console -C "node tools/check-prod.cjs"
+#
+# Not covered by this file, because fly.toml has no cron: the hourly call to /api/cron/notifications. See
+# deploy/cron-notifications.example.yml (GitHub Actions) or use any external scheduler.
+
+app = "plenty-example"        # must be unique across Fly.io
+primary_region = "syd"        # the region closest to your people: `fly platform regions`
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  # Before each new version starts, once, in a temporary machine: migrations + product catalog + recipes (idempotent).
+  # A failure stops the deploy and leaves the running version untouched.
+  release_command = "node tools/setup.cjs"
+
+# Settings that are not secret. Secrets (never put these here) go in with `fly secrets set` or `fly secrets import`:
+#   DATABASE_URL  CRON_SECRET  SMTP_URL  S3_ACCESS_KEY_ID  S3_SECRET_ACCESS_KEY  BILLING_ACCOUNT_SECRET  ANALYTICS_SECRET
+#   STRIPE_SECRET_KEY  STRIPE_WEBHOOK_SECRET  ANTHROPIC_API_KEY  GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
+[env]
+  APP_URL = "https://plenty.example.com"
+  LEGAL_ENTITY_NAME = "Example Pty Ltd"
+  SUPPORT_EMAIL = "support@example.com"
+  EMAIL_FROM = "Plenty <hello@example.com>"
+  DEMO_MODE = "true"
+  # Fly's proxy is the one proxy in front of the app. (Cloudflare in front of Fly makes it 2.)
+  TRUSTED_PROXY_HOPS = "1"
+  # Receipt photos in object storage. This example is Cloudflare R2; see deploy/production.env.example for the others.
+  STORAGE_DRIVER = "s3"
+  S3_ENDPOINT = "https://ACCOUNT_ID.r2.cloudflarestorage.com"
+  S3_REGION = "auto"
+  S3_BUCKET = "plenty-photos"
+  # Apple (not secret; the root certificate is public). Paste the base64 text of Apple's root certificate(s).
+  # APPLE_BUNDLE_ID = "app.plenty.ios"
+  # APPLE_APP_ID = "1234567890"
+  # APPLE_ROOT_CERTS = "MIIC..."
+
+# Alternative to object storage: keep photos on a Fly volume (one machine only). Create it with
+#   fly volumes create plenty_data --region syd --size 3
+# then remove the S3_* lines above (and STORAGE_DRIVER) and uncomment:
+# [mounts]
+#   source = "plenty_data"
+#   destination = "/data"
+# The image keeps photos in /data/uploads and fixes the folder's ownership on start.
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Keep one machine always running: receipts are read in the background after the upload returns, and a machine
+  # that stops in the middle would leave them unread until the hourly job picks them up.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/api/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "40s"
+
+# The whole server measured 170-260 MB in the tests behind this guide, from idle to reading a sample receipt (one
+# at a time). Bigger photos, or several at once, need more: 512 MB is too tight, 1 GB is comfortable.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

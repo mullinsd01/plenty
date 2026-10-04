@@ -67,6 +67,10 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",
+      // A Codespaces forwarded port reaches the app as localhost:3000 while the browser's origin is the public
+      // *.app.github.dev address, which Next treats as a forged request. Allowed while developing only; in production
+      // a form is accepted only from the site's own address.
+      ...(isProduction ? {} : { allowedOrigins: ["*.app.github.dev", "localhost:3000"] }),
     },
   },
   async headers() {
