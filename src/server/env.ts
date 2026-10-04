@@ -35,7 +35,8 @@ function optionalUrl() {
     .optional()
     .transform((v, ctx) => {
       if (!v) return undefined;
-      if (!z.url({ protocol: /^https?$/ }).safeParse(v).success) ctx.addIssue({ code: "custom", message: "must be a web address starting with http:// or https://" });
+      if (!z.url({ protocol: /^https?$/ }).safeParse(v).success)
+        ctx.addIssue({ code: "custom", message: "must be a web address starting with http:// or https://" });
       return v;
     });
 }

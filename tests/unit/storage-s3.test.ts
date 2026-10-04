@@ -32,7 +32,7 @@ const bucket = new Map<string, Stored>();
 const calls: Array<{ name: string; input: Record<string, unknown> }> = [];
 let failWith: ((name: string, input: Record<string, unknown>) => Error | null) | null = null;
 let failDeleteKeys = new Set<string>();
-let seenClient: S3Client | null = null;
+let seenConfig: S3Client["config"] | null = null;
 
 function notFound(): Error {
   return Object.assign(new Error("The specified key does not exist."), { name: "NoSuchKey", $metadata: { httpStatusCode: 404 } });
@@ -40,7 +40,7 @@ function notFound(): Error {
 
 /** Just enough of S3: put, get, delete, batch delete and a listing that pages every PAGE_SIZE keys. */
 async function fakeSend(this: S3Client, command: unknown): Promise<unknown> {
-  seenClient = this;
+  seenConfig = this.config;
   const input = (command as { input: Record<string, unknown> }).input;
   const name = (command as { constructor: { name: string } }).constructor.name;
   calls.push({ name, input });
@@ -118,7 +118,7 @@ beforeEach(() => {
   calls.length = 0;
   failWith = null;
   failDeleteKeys = new Set();
-  seenClient = null;
+  seenConfig = null;
 });
 
 afterEach(() => {
@@ -175,13 +175,13 @@ describe("S3 storage: save and read", () => {
 
   it("builds its client from the settings (endpoint, region, path-style addressing)", async () => {
     await files.saveFile(keyFor(HOUSEHOLD_A, 5), photo());
-    expect(seenClient).not.toBeNull();
-    expect(await seenClient!.config.region()).toBe("auto");
-    expect(seenClient!.config.forcePathStyle).toBe(true);
-    const endpoint = await seenClient!.config.endpoint!();
+    expect(seenConfig).not.toBeNull();
+    expect(await seenConfig!.region()).toBe("auto");
+    expect(seenConfig!.forcePathStyle).toBe(true);
+    const endpoint = await seenConfig!.endpoint!();
     expect(endpoint.hostname).toBe("minio.test");
     expect(endpoint.port).toBe(9000);
-    const credentials = await seenClient!.config.credentials();
+    const credentials = await seenConfig!.credentials();
     expect(credentials.accessKeyId).toBe(SETTINGS.S3_ACCESS_KEY_ID);
   });
 });
@@ -238,7 +238,9 @@ describe("S3 storage: deleting a household's photos", () => {
     // Every page after the first continues from where the previous one stopped.
     expect(listings.map((c) => c.input.ContinuationToken)).toEqual([undefined, keyFor(HOUSEHOLD_A, 2), keyFor(HOUSEHOLD_A, 4)]);
 
-    const deleted = sentCommands("DeleteObjectsCommand").flatMap((c) => (c.input.Delete as { Objects: Array<{ Key: string }> }).Objects.map((o) => o.Key));
+    const deleted = sentCommands("DeleteObjectsCommand").flatMap((c) =>
+      (c.input.Delete as { Objects: Array<{ Key: string }> }).Objects.map((o) => o.Key),
+    );
     expect(deleted).toHaveLength(5);
     expect(deleted.every((k) => k.startsWith(`${HOUSEHOLD_A}/`))).toBe(true);
   });

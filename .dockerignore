@@ -21,6 +21,8 @@ next-env.d.ts
 .data
 .env
 .env.*
+*.env
+production.env
 deploy
 test-results
 playwright-report

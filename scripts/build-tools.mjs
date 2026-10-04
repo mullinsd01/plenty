@@ -37,7 +37,16 @@ await build({
   tsconfig: "tsconfig.json",
   // Native or WASM packages, and ones the app loads by file path, come from the image's node_modules (the Next.js
   // standalone output ships them; see outputFileTracingIncludes in next.config.ts), exactly as in the web server.
-  external: ["sharp", "@node-rs/argon2", "tesseract.js", "tesseract.js-core", "@tesseract.js-data/eng", "nodemailer", "@aws-sdk/client-s3", "pg-native"],
+  external: [
+    "sharp",
+    "@node-rs/argon2",
+    "tesseract.js",
+    "tesseract.js-core",
+    "@tesseract.js-data/eng",
+    "nodemailer",
+    "@aws-sdk/client-s3",
+    "pg-native",
+  ],
   logLevel: "info",
   legalComments: "none",
 });

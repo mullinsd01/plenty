@@ -78,10 +78,22 @@ describe("checkEnvironment: a complete setup", () => {
 
 describe("checkEnvironment: an empty one", () => {
   const checks = checkEnvironment({});
-  it.each(["DATABASE_URL", "APP_URL", "CRON_SECRET", "LEGAL_ENTITY_NAME", "SUPPORT_EMAIL", "PRIVACY_CONTACT_EMAIL", "SMTP_URL"])("fails %s", (name) => {
-    expect(levels(checks, name)).toContain("FAIL");
-  });
-  it.each(["ANALYTICS_SECRET", "DEMO_MODE", "TRUSTED_PROXY_HOPS", "BILLING_ACCOUNT_SECRET", "STRIPE", "APPLE", "STORAGE_DIR", "EMAIL_FROM"])("warns about %s", (name) => {
+  it.each(["DATABASE_URL", "APP_URL", "CRON_SECRET", "LEGAL_ENTITY_NAME", "SUPPORT_EMAIL", "PRIVACY_CONTACT_EMAIL", "SMTP_URL"])(
+    "fails %s",
+    (name) => {
+      expect(levels(checks, name)).toContain("FAIL");
+    },
+  );
+  it.each([
+    "ANALYTICS_SECRET",
+    "DEMO_MODE",
+    "TRUSTED_PROXY_HOPS",
+    "BILLING_ACCOUNT_SECRET",
+    "STRIPE",
+    "APPLE",
+    "STORAGE_DIR",
+    "EMAIL_FROM",
+  ])("warns about %s", (name) => {
     expect(levels(checks, name)).toEqual(["WARN"]);
   });
   it("passes the things that are fine when absent", () => {
@@ -100,19 +112,31 @@ describe("checkEnvironment: DATABASE_URL", () => {
     expect(levels(checkEnvironment(withEnv({ DATABASE_URL: "not a url" })), "DATABASE_URL")).toEqual(["FAIL"]);
   });
   it("accepts postgres:// and postgresql://", () => {
-    expect(levels(checkEnvironment(withEnv({ DATABASE_URL: "postgresql://u:p@db.example.com/plenty?sslmode=require" })), "DATABASE_URL")).toEqual(["PASS"]);
+    expect(
+      levels(checkEnvironment(withEnv({ DATABASE_URL: "postgresql://u:p@db.example.com/plenty?sslmode=require" })), "DATABASE_URL"),
+    ).toEqual(["PASS"]);
   });
   it("warns about an internet database without sslmode, but not about a private one", () => {
-    expect(levels(checkEnvironment(withEnv({ DATABASE_URL: "postgres://u:p@db.example.com:5432/plenty" })), "DATABASE_URL")).toEqual(["PASS", "WARN"]);
+    expect(levels(checkEnvironment(withEnv({ DATABASE_URL: "postgres://u:p@db.example.com:5432/plenty" })), "DATABASE_URL")).toEqual([
+      "PASS",
+      "WARN",
+    ]);
     for (const host of ["postgres", "db.internal", "plenty-db.flycast", "10.0.0.5", "192.168.1.9"]) {
-      expect(levels(checkEnvironment(withEnv({ DATABASE_URL: `postgres://u:p@${host}:5432/plenty` })), "DATABASE_URL"), host).toEqual(["PASS"]);
+      expect(levels(checkEnvironment(withEnv({ DATABASE_URL: `postgres://u:p@${host}:5432/plenty` })), "DATABASE_URL"), host).toEqual([
+        "PASS",
+      ]);
     }
   });
   it("warns when encryption is explicitly off for an internet database", () => {
-    expect(levels(checkEnvironment(withEnv({ DATABASE_URL: "postgres://u:p@db.example.com/plenty?sslmode=disable" })), "DATABASE_URL")).toEqual(["PASS", "WARN"]);
+    expect(
+      levels(checkEnvironment(withEnv({ DATABASE_URL: "postgres://u:p@db.example.com/plenty?sslmode=disable" })), "DATABASE_URL"),
+    ).toEqual(["PASS", "WARN"]);
   });
   it("warns about localhost", () => {
-    expect(levels(checkEnvironment(withEnv({ DATABASE_URL: "postgres://u:p@localhost:5432/plenty" })), "DATABASE_URL")).toEqual(["PASS", "WARN"]);
+    expect(levels(checkEnvironment(withEnv({ DATABASE_URL: "postgres://u:p@localhost:5432/plenty" })), "DATABASE_URL")).toEqual([
+      "PASS",
+      "WARN",
+    ]);
   });
 });
 
@@ -144,7 +168,8 @@ describe("checkEnvironment: CRON_SECRET", () => {
     expect(levels(checkEnvironment(withEnv({ CRON_SECRET: "   " })), "CRON_SECRET")).toEqual(["FAIL"]);
     expect(levels(checkEnvironment(withEnv({ CRON_SECRET: "x".repeat(23) })), "CRON_SECRET")).toEqual(["FAIL"]);
   });
-  it("passes at exactly 24", () => expect(levels(checkEnvironment(withEnv({ CRON_SECRET: "x".repeat(24) })), "CRON_SECRET")).toEqual(["PASS"]));
+  it("passes at exactly 24", () =>
+    expect(levels(checkEnvironment(withEnv({ CRON_SECRET: "x".repeat(24) })), "CRON_SECRET")).toEqual(["PASS"]));
 });
 
 describe("checkEnvironment: who runs Plenty", () => {
@@ -185,13 +210,15 @@ describe("checkEnvironment: analytics, email, plan, demo", () => {
     expect(levels(checkEnvironment(withEnv({ EMAIL_OUTBOX: "false" })), "EMAIL_OUTBOX")).toEqual([]);
   });
   it("fails PLAN_OVERRIDE whatever it is set to", () => {
-    for (const v of ["family", "plus", "pro", "free"]) expect(levels(checkEnvironment(withEnv({ PLAN_OVERRIDE: v })), "PLAN_OVERRIDE"), v).toEqual(["FAIL"]);
+    for (const v of ["family", "plus", "pro", "free"])
+      expect(levels(checkEnvironment(withEnv({ PLAN_OVERRIDE: v })), "PLAN_OVERRIDE"), v).toEqual(["FAIL"]);
     expect(levels(checkEnvironment(withEnv({ PLAN_OVERRIDE: "" })), "PLAN_OVERRIDE")).toEqual(["PASS"]);
   });
   it("warns unless DEMO_MODE is on, reading it as the app does", () => {
     expect(levels(checkEnvironment(withEnv({ DEMO_MODE: "true" })), "DEMO_MODE")).toEqual(["PASS"]);
     expect(levels(checkEnvironment(withEnv({ DEMO_MODE: "1" })), "DEMO_MODE")).toEqual(["PASS"]);
-    for (const v of ["false", "0", "yes", "", "TRUE"]) expect(levels(checkEnvironment(withEnv({ DEMO_MODE: v })), "DEMO_MODE"), v).toEqual(["WARN"]);
+    for (const v of ["false", "0", "yes", "", "TRUE"])
+      expect(levels(checkEnvironment(withEnv({ DEMO_MODE: v })), "DEMO_MODE"), v).toEqual(["WARN"]);
     expect(levels(checkEnvironment(without(GOOD, "DEMO_MODE")), "DEMO_MODE")).toEqual(["WARN"]);
   });
 });
@@ -204,15 +231,21 @@ describe("checkEnvironment: TRUSTED_PROXY_HOPS", () => {
     expect(c.hint).toMatch(/proxy/);
   });
   it("passes once it is set, including to 0 or 2", () => {
-    for (const v of ["0", "1", "2"]) expect(levels(checkEnvironment(withEnv({ TRUSTED_PROXY_HOPS: v })), "TRUSTED_PROXY_HOPS"), v).toEqual(["PASS"]);
+    for (const v of ["0", "1", "2"])
+      expect(levels(checkEnvironment(withEnv({ TRUSTED_PROXY_HOPS: v })), "TRUSTED_PROXY_HOPS"), v).toEqual(["PASS"]);
   });
 });
 
 describe("checkEnvironment: photo storage", () => {
-  const local = (extra: EnvSource) => checkEnvironment({ ...without(GOOD, "STORAGE_DRIVER", "S3_BUCKET", "S3_REGION", "S3_ENDPOINT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"), ...extra });
+  const local = (extra: EnvSource) =>
+    checkEnvironment({
+      ...without(GOOD, "STORAGE_DRIVER", "S3_BUCKET", "S3_REGION", "S3_ENDPOINT", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"),
+      ...extra,
+    });
   it("warns when local storage has no explicit STORAGE_DIR", () => expect(levels(local({}), "STORAGE_DIR")).toEqual(["WARN"]));
   it("warns about a relative path, /tmp and the app folder", () => {
-    for (const dir of [".data/uploads", "uploads", "/tmp/uploads", "/var/tmp/x", "/app/uploads", "/app"]) expect(levels(local({ STORAGE_DIR: dir }), "STORAGE_DIR"), dir).toEqual(["WARN"]);
+    for (const dir of [".data/uploads", "uploads", "/tmp/uploads", "/var/tmp/x", "/app/uploads", "/app"])
+      expect(levels(local({ STORAGE_DIR: dir }), "STORAGE_DIR"), dir).toEqual(["WARN"]);
   });
   it("passes an absolute path on a volume", () => {
     expect(levels(local({ STORAGE_DIR: "/data/uploads" }), "STORAGE_DIR")).toEqual(["PASS"]);
@@ -243,7 +276,9 @@ describe("checkEnvironment: billing", () => {
   });
   it("warns when Stripe is missing or partial, and passes when whole", () => {
     expect(levels(checkEnvironment(GOOD), "STRIPE")).toEqual(["PASS"]);
-    expect(levels(checkEnvironment(without(GOOD, "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICES")), "STRIPE")).toEqual(["WARN"]);
+    expect(levels(checkEnvironment(without(GOOD, "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICES")), "STRIPE")).toEqual([
+      "WARN",
+    ]);
     for (const name of ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICES"]) {
       const c = only(checkEnvironment(without(GOOD, name)), "STRIPE");
       expect(c.level, name).toBe("WARN");
@@ -270,12 +305,17 @@ describe("checkEnvironment: billing", () => {
     const readFile = (p: string) => (p === "/certs/root.cer" ? Buffer.from(TEST_CERT_BASE64, "base64") : Buffer.from("nope"));
     expect(levels(checkEnvironment(withEnv({ APPLE_ROOT_CERTS: "/certs/root.cer" }), { readFile }), "APPLE_ROOT_CERTS")).toEqual(["PASS"]);
     // several, comma separated
-    expect(only(checkEnvironment(withEnv({ APPLE_ROOT_CERTS: `${TEST_CERT_BASE64}, /certs/root.cer` }), { readFile }), "APPLE_ROOT_CERTS").message).toMatch(/^2 certificates/);
+    expect(
+      only(checkEnvironment(withEnv({ APPLE_ROOT_CERTS: `${TEST_CERT_BASE64}, /certs/root.cer` }), { readFile }), "APPLE_ROOT_CERTS")
+        .message,
+    ).toMatch(/^2 certificates/);
     // a path that isn't there, and junk
     const missing = () => {
       throw new Error("ENOENT");
     };
-    expect(levels(checkEnvironment(withEnv({ APPLE_ROOT_CERTS: "/certs/missing.cer" }), { readFile: missing }), "APPLE_ROOT_CERTS")).toEqual(["WARN"]);
+    expect(
+      levels(checkEnvironment(withEnv({ APPLE_ROOT_CERTS: "/certs/missing.cer" }), { readFile: missing }), "APPLE_ROOT_CERTS"),
+    ).toEqual(["WARN"]);
     expect(levels(checkEnvironment(withEnv({ APPLE_ROOT_CERTS: "bm90IGEgY2VydA==" })), "APPLE_ROOT_CERTS")).toEqual(["WARN"]);
   });
   it("warns about an expired root certificate", () => {
@@ -391,19 +431,33 @@ const HEALTHY: Array<[RegExp, Reply]> = [
   [/to_regclass/, [{ present: true }]],
   [/from drizzle\.__drizzle_migrations/, [{ created_at: "1000" }, { created_at: "2000" }]],
   [/from pg_roles where rolname = \$1/, [{ rolsuper: false, rolbypassrls: false, rolcanlogin: false }]],
-  [/from pg_class c/, [{ name: "households", rls: true }, { name: "products", rls: true }]],
+  [
+    /from pg_class c/,
+    [
+      { name: "households", rls: true },
+      { name: "products", rls: true },
+    ],
+  ],
   [/select current_user as u, 1 as one/, [{ u: "plenty_app", one: 1 }]],
   [/count\(\*\) from households/, [{ h: 0, m: 0 }]],
   [/from products where household_id is null/, [{ p: 411, m: 64 }]],
 ];
 const withReplies = (...overrides: Array<[RegExp, Reply]>) => [...overrides, ...HEALTHY];
-const run = (replies: Array<[RegExp, Reply]>, journal: typeof JOURNAL | null = JOURNAL) => checkDatabase(fakeDb(replies), { journal, target: "db.example.com:5432/plenty" });
+const run = (replies: Array<[RegExp, Reply]>, journal: typeof JOURNAL | null = JOURNAL) =>
+  checkDatabase(fakeDb(replies), { journal, target: "db.example.com:5432/plenty" });
 
 describe("checkDatabase", () => {
   it("passes a healthy database", async () => {
     const checks = await run(HEALTHY);
     expect(checks.filter((c) => c.level !== "PASS")).toEqual([]);
-    expect(checks.map((c) => c.name)).toEqual(["Database connection", "Migrations", "Role plenty_app", "Row-level security", "Query as plenty_app", "Product catalog and recipes"]);
+    expect(checks.map((c) => c.name)).toEqual([
+      "Database connection",
+      "Migrations",
+      "Role plenty_app",
+      "Row-level security",
+      "Query as plenty_app",
+      "Product catalog and recipes",
+    ]);
   });
 
   it("always rolls back the smoke test transaction, and runs it as plenty_app with a person who has no household", async () => {
@@ -429,7 +483,9 @@ describe("checkDatabase", () => {
     expect(only(checks, "Migrations").level).toBe("FAIL");
   });
   it("warns when the database is ahead of this version", async () => {
-    const checks = await run(withReplies([/from drizzle\.__drizzle_migrations/, [{ created_at: "1000" }, { created_at: "2000" }, { created_at: "3000" }]]));
+    const checks = await run(
+      withReplies([/from drizzle\.__drizzle_migrations/, [{ created_at: "1000" }, { created_at: "2000" }, { created_at: "3000" }]]),
+    );
     expect(only(checks, "Migrations").level).toBe("WARN");
   });
   it("can't compare without the journal, and says so", async () => {
@@ -443,13 +499,25 @@ describe("checkDatabase", () => {
     expect(c.hint).toMatch(/CREATE ROLE/);
   });
   it("fails when plenty_app could bypass row-level security", async () => {
-    for (const role of [{ rolsuper: true, rolbypassrls: false }, { rolsuper: false, rolbypassrls: true }]) {
+    for (const role of [
+      { rolsuper: true, rolbypassrls: false },
+      { rolsuper: false, rolbypassrls: true },
+    ]) {
       expect(only(await run(withReplies([/from pg_roles where rolname = \$1/, [role]])), "Role plenty_app").level).toBe("FAIL");
     }
   });
 
   it("fails and names every table that doesn't have row-level security", async () => {
-    const checks = await run(withReplies([/from pg_class c/, [{ name: "households", rls: true }, { name: "notes", rls: false }, { name: "extras", rls: false }]]));
+    const checks = await run(
+      withReplies([
+        /from pg_class c/,
+        [
+          { name: "households", rls: true },
+          { name: "notes", rls: false },
+          { name: "extras", rls: false },
+        ],
+      ]),
+    );
     const c = only(checks, "Row-level security");
     expect(c.level).toBe("FAIL");
     expect(c.message).toContain("notes");
@@ -468,12 +536,17 @@ describe("checkDatabase", () => {
     expect(c.message).toMatch(/can see households/);
   });
   it("explains a database user that can't switch to plenty_app", async () => {
-    const c = only(await run(withReplies([/set_config\('role'/, new Error('permission denied to set role "plenty_app"')])), "Query as plenty_app");
+    const c = only(
+      await run(withReplies([/set_config\('role'/, new Error('permission denied to set role "plenty_app"')])),
+      "Query as plenty_app",
+    );
     expect(c.level).toBe("FAIL");
     expect(c.hint).toMatch(/GRANT plenty_app/);
   });
   it("fails when the query doesn't run as plenty_app", async () => {
-    expect(only(await run(withReplies([/select current_user as u, 1 as one/, [{ u: "plenty", one: 1 }]])), "Query as plenty_app").level).toBe("FAIL");
+    expect(
+      only(await run(withReplies([/select current_user as u, 1 as one/, [{ u: "plenty", one: 1 }]])), "Query as plenty_app").level,
+    ).toBe("FAIL");
   });
   it("still rolls back when the smoke test throws", async () => {
     const db = fakeDb(withReplies([/set_config\('role'/, new Error("boom")]));
@@ -482,7 +555,11 @@ describe("checkDatabase", () => {
   });
 
   it("fails when the catalog or recipes haven't been loaded (migrations alone don't load them)", async () => {
-    for (const row of [{ p: 0, m: 64 }, { p: 411, m: 0 }, { p: 0, m: 0 }]) {
+    for (const row of [
+      { p: 0, m: 64 },
+      { p: 411, m: 0 },
+      { p: 0, m: 0 },
+    ]) {
       const c = only(await run(withReplies([/from products where household_id is null/, [row]])), "Product catalog and recipes");
       expect(c.level).toBe("FAIL");
       expect(c.hint).toMatch(/setup/);
@@ -493,7 +570,9 @@ describe("checkDatabase", () => {
     expect(only(checks, "Database user").level).toBe("WARN");
   });
   it("keeps the connection string out of what it reports", async () => {
-    const text = JSON.stringify(await run(withReplies([/to_regclass/, new Error("could not connect to postgres://plenty:pw-sEcReT@db/plenty")])));
+    const text = JSON.stringify(
+      await run(withReplies([/to_regclass/, new Error("could not connect to postgres://plenty:pw-sEcReT@db/plenty")])),
+    );
     expect(text).not.toContain("pw-sEcReT");
   });
 });

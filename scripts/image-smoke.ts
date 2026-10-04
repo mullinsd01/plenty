@@ -49,7 +49,8 @@ async function main() {
     const { ocrReceipt, terminateOcrWorker } = await import("../src/server/receipts/ocr");
     try {
       const { text, confidence } = await ocrReceipt(await ocrVariant(prepared));
-      if (!/coles/i.test(text) || !/\d+\.\d\d/.test(text)) throw new Error("the engine ran but read nothing sensible from the sample receipt");
+      if (!/coles/i.test(text) || !/\d+\.\d\d/.test(text))
+        throw new Error("the engine ran but read nothing sensible from the sample receipt");
       return `read the sample receipt (confidence ${Math.round(confidence)}%)`;
     } finally {
       await terminateOcrWorker();

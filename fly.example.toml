@@ -2,10 +2,10 @@
 #
 # 1. cp fly.example.toml fly.toml           and change `app`, `primary_region` and the [env] values below
 # 2. fly apps create <app name>             (or `fly launch --no-deploy --copy-config`)
-# 3. fly secrets import < production.env    only the secret lines; see "Secrets" below
+# 3. fly secrets set NAME=value ...         the secret settings listed under [env] below (never put them in this file)
 # 4. fly deploy
-# 5. fly ssh console -C "node tools/seed.cjs"   (demo household for App Review)
-# 6. fly ssh console -C "node tools/check-prod.cjs"
+# 5. fly ssh console -C "/app/docker-entrypoint.sh seed"   (demo household for App Review)
+# 6. fly ssh console -C "/app/docker-entrypoint.sh check"
 #
 # Not covered by this file, because fly.toml has no cron: the hourly call to /api/cron/notifications. See
 # deploy/cron-notifications.example.yml (GitHub Actions) or use any external scheduler.

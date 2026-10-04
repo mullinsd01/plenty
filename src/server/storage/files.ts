@@ -123,7 +123,9 @@ function isNotFound(err: unknown): boolean {
 const s3Driver: Driver = {
   async save(key, data) {
     const { sdk, client, bucket } = await s3();
-    await client.send(new sdk.PutObjectCommand({ Bucket: bucket, Key: key, Body: data, ContentType: "image/jpeg", CacheControl: "private, no-store" }));
+    await client.send(
+      new sdk.PutObjectCommand({ Bucket: bucket, Key: key, Body: data, ContentType: "image/jpeg", CacheControl: "private, no-store" }),
+    );
   },
   async read(key) {
     const { sdk, client, bucket } = await s3();
@@ -147,16 +149,21 @@ const s3Driver: Driver = {
     let token: string | undefined;
     let failed = 0;
     do {
-      const page = await client.send(new sdk.ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token, MaxKeys: S3_BATCH }));
+      const page = await client.send(
+        new sdk.ListObjectsV2Command({ Bucket: bucket, Prefix: prefix, ContinuationToken: token, MaxKeys: S3_BATCH }),
+      );
       const keys = (page.Contents ?? []).flatMap((o) => (o.Key?.startsWith(prefix) ? [o.Key] : []));
       if (keys.length > 0) {
-        const res = await client.send(new sdk.DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true } }));
+        const res = await client.send(
+          new sdk.DeleteObjectsCommand({ Bucket: bucket, Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true } }),
+        );
         failed += res.Errors?.length ?? 0;
       }
       token = page.IsTruncated ? page.NextContinuationToken : undefined;
     } while (token);
     // Unlike a local folder, a photo that stays in a bucket is invisible to the app: say so, so it reaches the log.
-    if (failed > 0) throw new AppError("storage", `${failed} photo file(s) for household ${householdId} could not be removed from object storage.`);
+    if (failed > 0)
+      throw new AppError("storage", `${failed} photo file(s) for household ${householdId} could not be removed from object storage.`);
   },
 };
 

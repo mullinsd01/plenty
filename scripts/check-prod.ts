@@ -16,6 +16,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
+import { AppError } from "../src/server/errors";
 import {
   checkDatabase,
   checkEnvironment,
@@ -29,7 +30,9 @@ import {
 
 function readJournal(): JournalEntry[] | null {
   try {
-    const raw = JSON.parse(readFileSync(path.join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as { entries?: JournalEntry[] };
+    const raw = JSON.parse(readFileSync(path.join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as {
+      entries?: JournalEntry[];
+    };
     return (raw.entries ?? []).map((e) => ({ tag: e.tag, when: e.when }));
   } catch {
     return null;
@@ -43,7 +46,14 @@ async function databaseChecks(databaseUrl: string): Promise<Check[]> {
   try {
     await client.connect();
   } catch (err) {
-    return [{ level: "FAIL", name: "Database connection", message: `to ${target} failed: ${safeMessage(err)}`, hint: "Check the host, port, user, password, database name and that the database accepts connections from here (firewall, sslmode)." }];
+    return [
+      {
+        level: "FAIL",
+        name: "Database connection",
+        message: `to ${target} failed: ${safeMessage(err)}`,
+        hint: "Check the host, port, user, password, database name and that the database accepts connections from here (firewall, sslmode).",
+      },
+    ];
   }
   try {
     return await checkDatabase(client, { journal: readJournal(), target });
@@ -67,13 +77,33 @@ async function storageCheck(): Promise<Check> {
   try {
     await files.saveFile(key, bytes);
     const back = await files.readStoredFile(key);
-    if (!back || !back.equals(bytes)) return { level: "FAIL", name, message: `wrote a test file to ${where} but couldn't read the same bytes back.`, hint: "Check the credentials can read objects, or the folder's permissions." };
+    if (!back || !back.equals(bytes))
+      return {
+        level: "FAIL",
+        name,
+        message: `wrote a test file to ${where} but couldn't read the same bytes back.`,
+        hint: "Check the credentials can read objects, or the folder's permissions.",
+      };
     // The same call that removes a household's photos when it is deleted: needs list and delete rights.
     await files.deleteHouseholdFiles(household);
-    if (await files.readStoredFile(key)) return { level: "FAIL", name, message: `the test file in ${where} was not removed.`, hint: "The storage user needs permission to list and delete objects, or household deletion would leave photos behind." };
+    if (await files.readStoredFile(key))
+      return {
+        level: "FAIL",
+        name,
+        message: `the test file in ${where} was not removed.`,
+        hint: "The storage user needs permission to list and delete objects, or household deletion would leave photos behind.",
+      };
     return { level: "PASS", name, message: `wrote, read and removed a test file in ${where}.` };
   } catch (err) {
-    return { level: "FAIL", name, message: `couldn't use ${where} (${safeMessage(err)}). See any [storage] line printed above.`, hint: e.STORAGE_DRIVER === "s3" ? "Check the bucket exists and the key can put, get, list and delete in it (and the endpoint and region)." : "Check the folder exists and is writable by the user the app runs as." };
+    return {
+      level: "FAIL",
+      name,
+      message: `couldn't use ${where}${err instanceof AppError ? "" : ` (${safeMessage(err)})`}. The reason is in the [storage] line printed above the report.`,
+      hint:
+        e.STORAGE_DRIVER === "s3"
+          ? "Check the bucket exists and the key can put, get, list and delete in it (and the endpoint and region)."
+          : "Check the folder exists and is writable by the user the app runs as.",
+    };
   } finally {
     await files.deleteHouseholdFiles(household).catch(() => undefined);
   }
@@ -86,7 +116,8 @@ async function main(): Promise<number> {
     return 0;
   }
   const envFileIndex = args.findIndex((a) => a === "--env-file" || a.startsWith("--env-file="));
-  const envFile = envFileIndex < 0 ? null : args[envFileIndex].includes("=") ? args[envFileIndex].split("=").slice(1).join("=") : args[envFileIndex + 1];
+  const envFile =
+    envFileIndex < 0 ? null : args[envFileIndex].includes("=") ? args[envFileIndex].split("=").slice(1).join("=") : args[envFileIndex + 1];
   const envOnly = args.includes("--env-only");
   const color = !args.includes("--no-color") && !process.env.NO_COLOR && Boolean(process.stdout.isTTY);
 
@@ -125,17 +156,32 @@ async function main(): Promise<number> {
       appAccepts = true;
       checks.push({ level: "PASS", name: "App settings", message: "are accepted by the app's own validation." });
     } catch (err) {
-      checks.push({ level: "FAIL", name: "App settings", message: `are refused by the app: ${safeMessage(err)}`, hint: "The server would not start with these values. Fix them." });
+      checks.push({
+        level: "FAIL",
+        name: "App settings",
+        message: `are refused by the app: ${safeMessage(err)}`,
+        hint: "The server would not start with these values. Fix them.",
+      });
     }
   }
 
   if (envOnly) {
-    checks.push({ level: "WARN", name: "Database and storage", message: "were not checked (--env-only).", hint: "Run without --env-only against the real environment before going live." });
+    checks.push({
+      level: "WARN",
+      name: "Database and storage",
+      message: "were not checked (--env-only).",
+      hint: "Run without --env-only against the real environment before going live.",
+    });
   } else {
     const databaseUrl = snapshot.DATABASE_URL?.trim();
     if (databaseUrl && /^postgres(ql)?:\/\//.test(databaseUrl)) checks.push(...(await databaseChecks(databaseUrl)));
     if (appAccepts) checks.push(await storageCheck());
-    else checks.push({ level: "WARN", name: "Receipt photo storage", message: "was not tested because the settings above need fixing first." });
+    else
+      checks.push({
+        level: "WARN",
+        name: "Receipt photo storage",
+        message: "was not tested because the settings above need fixing first.",
+      });
   }
 
   console.log(formatReport(checks, { color }));

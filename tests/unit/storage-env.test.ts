@@ -4,7 +4,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const NAMES = ["STORAGE_DRIVER", "STORAGE_DIR", "S3_ENDPOINT", "S3_REGION", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_FORCE_PATH_STYLE"];
+const NAMES = [
+  "STORAGE_DRIVER",
+  "STORAGE_DIR",
+  "S3_ENDPOINT",
+  "S3_REGION",
+  "S3_BUCKET",
+  "S3_ACCESS_KEY_ID",
+  "S3_SECRET_ACCESS_KEY",
+  "S3_FORCE_PATH_STYLE",
+];
 
 async function load(settings: Record<string, string>) {
   vi.resetModules();
@@ -34,7 +43,17 @@ describe("storage settings", () => {
   });
 
   it("treats blank values (an empty line in an env file) as not set", async () => {
-    const e = (await load({ STORAGE_DRIVER: "", STORAGE_DIR: "  ", S3_ENDPOINT: "", S3_REGION: "", S3_BUCKET: "", S3_ACCESS_KEY_ID: "", S3_SECRET_ACCESS_KEY: "" }))();
+    const e = (
+      await load({
+        STORAGE_DRIVER: "",
+        STORAGE_DIR: "  ",
+        S3_ENDPOINT: "",
+        S3_REGION: "",
+        S3_BUCKET: "",
+        S3_ACCESS_KEY_ID: "",
+        S3_SECRET_ACCESS_KEY: "",
+      })
+    )();
     expect(e.STORAGE_DRIVER).toBe("local");
     expect(e.STORAGE_DIR).toBe(".data/uploads");
     expect(e.S3_ENDPOINT).toBeUndefined();
@@ -47,7 +66,9 @@ describe("storage settings", () => {
   });
 
   it("accepts a complete S3 configuration", async () => {
-    const e = (await load({ ...S3, S3_ENDPOINT: "https://abc123.r2.cloudflarestorage.com", S3_REGION: "auto", S3_FORCE_PATH_STYLE: "true" }))();
+    const e = (
+      await load({ ...S3, S3_ENDPOINT: "https://abc123.r2.cloudflarestorage.com", S3_REGION: "auto", S3_FORCE_PATH_STYLE: "true" })
+    )();
     expect(e).toMatchObject({
       STORAGE_DRIVER: "s3",
       S3_BUCKET: "photos",

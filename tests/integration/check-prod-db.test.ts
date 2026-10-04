@@ -10,7 +10,9 @@ import { checkDatabase, describeDatabaseUrl, type Check, type JournalEntry } fro
 import { syncCatalog } from "@/server/services/products";
 import { syncRecipeLibrary } from "@/server/services/meals";
 
-const journal: JournalEntry[] = (JSON.parse(readFileSync(path.join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as { entries: JournalEntry[] }).entries;
+const journal: JournalEntry[] = (
+  JSON.parse(readFileSync(path.join(process.cwd(), "drizzle", "meta", "_journal.json"), "utf8")) as { entries: JournalEntry[] }
+).entries;
 
 let client: Client;
 const byName = (checks: Check[], name: string) => checks.find((c) => c.name === name);
@@ -32,7 +34,14 @@ describe("check:prod database checks", () => {
   it("passes on a migrated database whose catalog is loaded", async () => {
     const checks = await run();
     expect(checks.filter((c) => c.level === "FAIL")).toEqual([]);
-    for (const name of ["Database connection", "Migrations", "Role plenty_app", "Row-level security", "Query as plenty_app", "Product catalog and recipes"]) {
+    for (const name of [
+      "Database connection",
+      "Migrations",
+      "Role plenty_app",
+      "Row-level security",
+      "Query as plenty_app",
+      "Product catalog and recipes",
+    ]) {
       expect(byName(checks, name)?.level, name).toBe("PASS");
     }
     expect(byName(checks, "Migrations")?.message).toContain(`all ${journal.length} applied`);

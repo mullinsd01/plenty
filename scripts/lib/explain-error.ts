@@ -29,7 +29,13 @@ export function explainDatabaseError(err: unknown): string {
       "connects as afterwards. See 'Choose a Postgres host' in docs/deploy.md for what to ask your host for."
     );
   }
-  if (cause.code === "ECONNREFUSED" || cause.code === "ENOTFOUND" || cause.code === "ETIMEDOUT" || cause.code === "28P01" || cause.code === "3D000") {
+  if (
+    cause.code === "ECONNREFUSED" ||
+    cause.code === "ENOTFOUND" ||
+    cause.code === "ETIMEDOUT" ||
+    cause.code === "28P01" ||
+    cause.code === "3D000"
+  ) {
     return `${text}\nCheck DATABASE_URL: the host, port, user, password and database name, and that the database accepts connections from here.`;
   }
   return text;

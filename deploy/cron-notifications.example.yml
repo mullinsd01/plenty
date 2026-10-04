@@ -27,7 +27,7 @@ permissions: {}
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 12
     steps:
       - name: Call the jobs endpoint
         env:
@@ -38,6 +38,6 @@ jobs:
           test -n "$PLENTY_URL" || { echo "Set the PLENTY_URL variable."; exit 1; }
           test -n "$CRON_SECRET" || { echo "Set the CRON_SECRET secret."; exit 1; }
           # The endpoint answers with counts only (no personal data). A non-200 answer fails the run, so GitHub emails you.
-          curl --fail --silent --show-error --max-time 290 --retry 2 --retry-delay 15 \
+          curl --fail --silent --show-error --max-time 290 --retry 1 --retry-delay 15 \
             -X POST -H "Authorization: Bearer $CRON_SECRET" "$PLENTY_URL/api/cron/notifications"
           echo
