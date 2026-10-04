@@ -20,7 +20,7 @@ await rm(outdir, { recursive: true, force: true });
 await build({
   entryPoints: {
     migrate: "scripts/migrate-cli.ts",
-    setup: "scripts/setup.ts",
+    setup: "scripts/setup-cli.ts",
     seed: "scripts/seed.ts",
     cron: "scripts/cron.ts",
     "check-prod": "scripts/check-prod.ts",
