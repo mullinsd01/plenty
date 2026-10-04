@@ -1,5 +1,5 @@
 /** When the public Privacy Policy, Terms and Support pages were last changed. Update it with the text, and only then. */
-export const LEGAL_LAST_UPDATED = "2026-10-03";
+export const LEGAL_LAST_UPDATED = "2026-10-04";
 
 /** "3 October 2026" */
 export function formatLegalDate(iso: string = LEGAL_LAST_UPDATED): string {

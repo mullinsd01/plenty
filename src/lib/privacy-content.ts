@@ -27,7 +27,7 @@ export const DATA_GROUPS: DataGroup[] = [
       "Your email address and the name you choose",
       "Your password, kept only as a salted one-way hash. Plenty can't read it",
       "Your sign-in sessions: a hashed token, when you last used it and your browser's description",
-      "Your notification settings, and whether you've turned analytics off",
+      "Your notification settings, and your analytics choice (off until you turn it on)",
     ],
     why: "To sign you in, keep your account secure, and send the emails you ask for (password resets, and notification emails if you turn them on).",
     sharedWith: "The hosting and database provider; an email delivery provider, only to send you email.",
@@ -83,7 +83,7 @@ export const DATA_GROUPS: DataGroup[] = [
     ],
     why: "To see which parts of Plenty are used so they can be improved. Analytics never includes names, emails, item names, receipt text or IP addresses, and uses no advertising identifiers or third-party analytics tools.",
     sharedWith: "Nobody. Analytics stays on Plenty's own server.",
-    kept: "For up to 13 months, or until you delete the household. You can turn it off for yourself in Privacy & data.",
+    kept: "For up to 13 months, or until you delete the household. It's off until you turn it on for yourself in Privacy & data, and you can turn it off again at any time.",
   },
   {
     id: "security",

@@ -85,7 +85,8 @@ export default function PrivacyPolicyPage() {
         <Bullets
           items={[
             "To provide Plenty to you (including your account, kitchen, lists, receipts and predictions): it's necessary to run the service you asked for.",
-            "To keep Plenty secure and prevent abuse, and to count how features are used so they can be improved: Plenty's legitimate interests, kept to the minimum above. You can turn analytics off.",
+            "To keep Plenty secure and prevent abuse: Plenty's legitimate interests, kept to the minimum above.",
+            "To count how features are used so they can be improved: only with your permission. Usage analytics are off until you turn them on in Settings → Privacy & data, and you can turn them off again at any time.",
             "To send data to an outside AI service: only with your permission, which you can withdraw at any time.",
             "To keep payment records, and to respond to legal requirements: where the law requires it.",
           ]}
@@ -109,7 +110,7 @@ export default function PrivacyPolicyPage() {
               , including if you can&apos;t sign in.
             </>,
             <>
-              <strong className="font-semibold text-ink">Withdraw consent and opt out.</strong> Turn AI features or analytics off in Settings → Privacy &amp; data.
+              <strong className="font-semibold text-ink">Withdraw consent and opt out.</strong> Turn AI features or usage analytics off at any time in Settings → Privacy &amp; data.
             </>,
             <>
               <strong className="font-semibold text-ink">Ask us.</strong> For anything else, including a complaint, contact us below. Depending on where you live you may also have rights under local privacy law, including
