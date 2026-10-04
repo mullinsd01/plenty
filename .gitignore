@@ -47,3 +47,13 @@ next-env.d.ts
 /blob-report/
 /playwright/.cache/
 !.env.example
+
+# iOS shell (mobile/)
+/mobile/node_modules/
+/mobile/ios/App/Pods/
+/mobile/ios/DerivedData/
+/mobile/ios/build/
+/mobile/ios/App/build/
+/mobile/build/
+*.xcuserstate
+xcuserdata/
