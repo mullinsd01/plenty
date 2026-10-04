@@ -641,8 +641,29 @@ function typoCandidates(index: ProductIndex, word: string): { canon: string[]; s
   return { canon: best.sort(), strength: bestDistance <= 1 ? TYPO_STRENGTH_ONE_EDIT : TYPO_STRENGTH_TWO_EDITS };
 }
 
-function resolveToken(index: ProductIndex, surface: string, singular: string): QueryToken {
+/** Share of a descriptor a final cut-off word must keep ("LOOS" is 4/5 of "loose"). */
+const TRUNCATED_DESCRIPTOR_MIN_SHARE = 0.75;
+
+/**
+ * A descriptor cut short at the end of a line ("MANDARIN LOOS" for "…LOOSE"):
+ * receipt printers truncate and OCR drops last letters, and a descriptor
+ * missing a letter is far likelier than the plural of a rare word ("loos").
+ */
+function truncatedDescriptor(index: ProductIndex, surface: string): string | null {
+  if (surface.length < PREFIX_MIN_LENGTH || index.surfaces.has(surface)) return null;
+  for (const word of DESCRIPTORS) {
+    if (word.length > surface.length && word.startsWith(surface) && surface.length / word.length >= TRUNCATED_DESCRIPTOR_MIN_SHARE) return word;
+  }
+  return null;
+}
+
+function resolveToken(index: ProductIndex, surface: string, singular: string, isLast = false): QueryToken {
   const base = { surface, modifier: isModifier(singular), descriptor: isDescriptor(singular), unstocked: false };
+  const cutOff = isLast ? truncatedDescriptor(index, surface) : null;
+  if (cutOff) {
+    const known = index.surfaces.get(cutOff);
+    return { ...base, canon: known ? [known] : [], strength: PREFIX_STRENGTH_SINGLE, weight: known ? (index.weights.get(known) ?? UNKNOWN_TOKEN_WEIGHT) : 0, descriptor: true };
+  }
   const known = index.surfaces.get(surface) ?? index.surfaces.get(singular);
   if (known) return { ...base, canon: [known], strength: 1, weight: index.weights.get(known) ?? UNKNOWN_TOKEN_WEIGHT };
 
@@ -900,7 +921,7 @@ function rankCandidates(rawText: string, cleaned: CleanedReceiptText, opts: Matc
     if (words.tokens.length > 0) {
       const exact = exactMatch(index, words.tokens);
       if (exact) found.push(exact);
-      const query = words.tokens.map((token, i) => resolveToken(index, words.surfaces[i], token));
+      const query = words.tokens.map((token, i) => resolveToken(index, words.surfaces[i], token, words.tokens.length > 1 && i === words.tokens.length - 1));
       const fuzzy = scoreProducts(index, query);
       found.push(...fuzzy);
       const bestFuzzy = fuzzy.reduce((max, s) => Math.max(max, s.score), 0);

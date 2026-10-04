@@ -166,11 +166,12 @@ describe("recipe ingredient names resolve to the catalog", () => {
 
   it("never confidently mistakes a food Plenty doesn't stock for one it does", () => {
     // Each of these once resolved to the wrong product (scallops → spring onion lost a shellfish
-    // allergen; turkey mince → beef mince; brandy → lollies).
+    // allergen; turkey mince → beef mince; brandy → lollies). Turkey breast is stocked now (deli turkey),
+    // so the other turkey cuts stand in for it: they still must not drift to chicken or beef.
     const unstocked = [
       "duck breast",
       "turkey mince",
-      "turkey breast",
+      "turkey drumsticks",
       "kangaroo fillet",
       "lamb shanks",
       "beef brisket",
