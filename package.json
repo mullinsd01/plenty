@@ -18,7 +18,9 @@
     "db:reset": "tsx --conditions=react-server scripts/reset.ts",
     "setup": "tsx --conditions=react-server scripts/setup.ts",
     "receipts:fixtures": "tsx scripts/generate-receipt-fixtures.ts",
-    "cron:notifications": "tsx --conditions=react-server scripts/cron.ts"
+    "cron:notifications": "tsx --conditions=react-server scripts/cron.ts",
+    "check:prod": "tsx --conditions=react-server scripts/check-prod.ts",
+    "build:tools": "node scripts/build-tools.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.129.0",
@@ -58,6 +60,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.11",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.7",
     "tailwindcss": "^4",

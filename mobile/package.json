@@ -6,7 +6,7 @@
   "scripts": {
     "capacitor:sync:before": "node scripts/apply-app-config.mjs",
     "apply-config": "node scripts/apply-app-config.mjs",
-    "check": "node scripts/apply-app-config.mjs --check && tsc --noEmit",
+    "check": "node scripts/apply-app-config.mjs --check && node scripts/verify-shell.mjs && tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "sync": "cap sync ios",
     "open": "cap open ios",

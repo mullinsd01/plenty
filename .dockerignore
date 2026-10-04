@@ -1,0 +1,38 @@
+# Keep the build context small and keep secrets out of the image.
+.git
+.github
+.gitignore
+.dockerignore
+Dockerfile*
+docker-compose*.yml
+fly*.toml
+
+# Dependencies and build output are made inside the image.
+node_modules
+.next
+out
+build
+/tools
+/dist-tools
+*.tsbuildinfo
+next-env.d.ts
+
+# Local data, secrets and test output. Settings reach the container at run time, never through the image.
+.data
+.env
+.env.*
+deploy
+test-results
+playwright-report
+blob-report
+coverage
+
+# Not part of the web server.
+mobile
+e2e
+tests
+docs
+*.md
+
+.DS_Store
+npm-debug.log*

@@ -13,6 +13,11 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+// The website's own `tsc` / `next build` also compiles this file (the root tsconfig includes **/*.ts) in
+// checkouts where mobile/node_modules does not exist, so the missing package must not be an error there.
+// Inside mobile/ (where `npm ci` has run) the import resolves and the config is fully type-checked.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore TS2307 only when mobile/node_modules is absent
 import type { CapacitorConfig } from "@capacitor/cli";
 
 interface AppConfig {

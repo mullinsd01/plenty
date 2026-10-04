@@ -57,3 +57,14 @@ next-env.d.ts
 /mobile/build/
 *.xcuserstate
 xcuserdata/
+
+# iOS signing material and build products: never commit these
+*.p8
+*.p12
+*.mobileprovision
+*.ipa
+*.xcarchive
+*.xcresult
+
+# bundled operational scripts (npm run build:tools)
+/dist-tools/

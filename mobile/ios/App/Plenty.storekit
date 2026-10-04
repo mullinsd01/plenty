@@ -1,0 +1,158 @@
+{
+  "identifier": "7E57A001",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA",
+    "_storeKitErrors": [
+      {
+        "current": null,
+        "enabled": false,
+        "name": "Load Products"
+      },
+      {
+        "current": null,
+        "enabled": false,
+        "name": "Purchase"
+      },
+      {
+        "current": null,
+        "enabled": false,
+        "name": "Verification"
+      },
+      {
+        "current": null,
+        "enabled": false,
+        "name": "App Store Sync"
+      },
+      {
+        "current": null,
+        "enabled": false,
+        "name": "Subscription Status"
+      },
+      {
+        "current": null,
+        "enabled": false,
+        "name": "App Transaction"
+      },
+      {
+        "current": null,
+        "enabled": false,
+        "name": "Manage Subscriptions Sheet"
+      },
+      {
+        "current": null,
+        "enabled": false,
+        "name": "Refund Request Sheet"
+      },
+      {
+        "current": null,
+        "enabled": false,
+        "name": "Offer Code Redeem Sheet"
+      }
+    ]
+  },
+  "subscriptionGroups": [
+    {
+      "id": "21700001",
+      "localizations": [],
+      "name": "Plenty plans",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "89.99",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "6740000001",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Plus for up to 12 people, with private items",
+              "displayName": "Plenty Family",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "app.plenty.family.annual",
+          "promotionalOffers": [],
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Family annual",
+          "subscriptionGroupID": "21700001",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.99",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "6740000002",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Plus for up to 12 people, with private items",
+              "displayName": "Plenty Family",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "app.plenty.family.monthly",
+          "promotionalOffers": [],
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Family monthly",
+          "subscriptionGroupID": "21700001",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "49.99",
+          "familyShareable": false,
+          "groupNumber": 3,
+          "internalID": "6740000003",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Unlimited items, predictions and meal plans",
+              "displayName": "Plenty Plus",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "app.plenty.plus.annual",
+          "promotionalOffers": [],
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Plus annual",
+          "subscriptionGroupID": "21700001",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "4.99",
+          "familyShareable": false,
+          "groupNumber": 4,
+          "internalID": "6740000004",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "Unlimited items, predictions and meal plans",
+              "displayName": "Plenty Plus",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "app.plenty.plus.monthly",
+          "promotionalOffers": [],
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Plus monthly",
+          "subscriptionGroupID": "21700001",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

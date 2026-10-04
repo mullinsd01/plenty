@@ -1,0 +1,359 @@
+# Plenty iOS shell: build checks and TestFlight uploads.
+#
+#   build-check  every push that touches mobile/: compile for the iOS simulator, no signing, no secrets.
+#                Compile errors in the Swift code show up here.
+#   release      run it by hand (Actions > iOS > Run workflow) or push a tag like ios-v1.0.0:
+#                archive, sign with an App Store Connect API key, export an .ipa, upload to TestFlight.
+#
+# Setup (accounts, secrets, variables): docs/ios-release.md.
+#
+# Required for `release` (Settings > Secrets and variables > Actions):
+#   secrets   APP_STORE_CONNECT_KEY_ID      the key's id (10 characters)
+#             APP_STORE_CONNECT_ISSUER_ID   the issuer id (a UUID)
+#             APP_STORE_CONNECT_KEY_P8      the AuthKey_XXXX.p8 file, base64 encoded (a pasted PEM also works)
+#             APPLE_TEAM_ID                 the 10-character team id
+#   variable  PLENTY_URL                    the hosted site, https, no path (for example https://plenty.example.com)
+#
+# Actions are pinned to commit SHAs; the comment says which release each one is.
+
+name: iOS
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/ios.yml"
+    tags: ["ios-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Apple only accepts uploads built with a current Xcode; Capacitor 8 needs Xcode 26 as well.
+  XCODE_MIN_MAJOR: "26"
+  PROJECT: mobile/ios/App/App.xcodeproj
+  SCHEME: App
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-check:
+    name: Build check (simulator, no signing)
+    # Tag pushes and manual runs go to the release job, which compiles the app anyway.
+    if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    timeout-minutes: 45
+    concurrency:
+      group: ios-build-check-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      # The site's address only matters at run time; any https address lets the project build.
+      PLENTY_URL: ${{ vars.PLENTY_URL || 'https://plenty.example.com' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install the shell's dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Check config and TypeScript
+        working-directory: mobile
+        run: npm run check
+
+      - name: Sync Capacitor into the Xcode project
+        working-directory: mobile
+        run: npx cap sync ios
+
+      - name: Select Xcode
+        run: |
+          set -eu
+          newest=$(ls -d /Applications/Xcode_[0-9]*.app 2>/dev/null | grep -v -i beta | sort -V | tail -1 || true)
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest/Contents/Developer"; fi
+          xcodebuild -version
+          major=$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')
+          if [ "${major:-0}" -lt "$XCODE_MIN_MAJOR" ]; then
+            echo "::error::Xcode $XCODE_MIN_MAJOR or newer is required, this runner has Xcode ${major:-unknown}. Installed: $(ls /Applications | grep -i xcode | tr '\n' ' ')"
+            exit 1
+          fi
+
+      - name: Resolve Swift packages
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          for attempt in 1 2 3; do
+            if xcodebuild -resolvePackageDependencies -project "$PROJECT" -scheme "$SCHEME" 2>&1 | tee "$RUNNER_TEMP/logs/resolve-packages.log"; then
+              exit 0
+            fi
+            echo "Package resolution failed (attempt $attempt), retrying..."
+            sleep 15
+          done
+          exit 1
+
+      - name: Show the build settings that matter
+        run: |
+          xcodebuild -showBuildSettings -project "$PROJECT" -scheme "$SCHEME" -configuration Debug \
+            | grep -E '^ *(PRODUCT_BUNDLE_IDENTIFIER|MARKETING_VERSION|CURRENT_PROJECT_VERSION|IPHONEOS_DEPLOYMENT_TARGET|TARGETED_DEVICE_FAMILY|SWIFT_VERSION) ='
+
+      - name: Build for the simulator
+        run: |
+          xcodebuild build \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee "$RUNNER_TEMP/logs/build-check.log"
+
+      - name: Check the built app's Info.plist and privacy manifest
+        run: |
+          set -eu
+          app=$(find "$RUNNER_TEMP/DerivedData/Build/Products" -maxdepth 2 -name 'App.app' -type d | head -1)
+          test -n "$app" || { echo "::error::App.app was not produced"; exit 1; }
+          plutil -p "$app/Info.plist" | grep -E 'CFBundleIdentifier|CFBundleDisplayName|CFBundleShortVersionString|CFBundleVersion|ITSAppUsesNonExemptEncryption|NSCameraUsageDescription|NSPhotoLibraryUsageDescription'
+          test -f "$app/PrivacyInfo.xcprivacy" || { echo "::error::PrivacyInfo.xcprivacy is not in the app bundle"; exit 1; }
+          test -f "$app/public/index.html" || { echo "::error::the offline page (public/index.html) is not in the app bundle"; exit 1; }
+          test -f "$app/capacitor.config.json" || { echo "::error::capacitor.config.json is not in the app bundle"; exit 1; }
+          grep -q '"appendUserAgent": "PlentyApp/1.0 (ios)"' "$app/capacitor.config.json" || { echo "::error::the PlentyApp user-agent token is missing from capacitor.config.json"; exit 1; }
+          echo "App bundle looks right."
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-build-check-logs
+          path: ${{ runner.temp }}/logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+  release:
+    name: Release (sign, export, upload to TestFlight)
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/ios-v')
+    runs-on: macos-latest
+    timeout-minutes: 60
+    concurrency:
+      group: ios-release
+      cancel-in-progress: false
+    env:
+      PLENTY_URL: ${{ vars.PLENTY_URL }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+      # Unique and increasing for every run of this workflow: Apple wants a new build number per upload.
+      PLENTY_BUILD_NUMBER: ${{ github.run_number }}
+      PLENTY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Check the settings are present
+        run: |
+          missing=()
+          [ -n "${PLENTY_URL:-}" ] || missing+=("variable PLENTY_URL")
+          [ -n "${APPLE_TEAM_ID:-}" ] || missing+=("secret APPLE_TEAM_ID")
+          [ -n "${ASC_KEY_ID:-}" ] || missing+=("secret APP_STORE_CONNECT_KEY_ID")
+          [ -n "${ASC_ISSUER_ID:-}" ] || missing+=("secret APP_STORE_CONNECT_ISSUER_ID")
+          [ -n "${ASC_KEY_P8:-}" ] || missing+=("secret APP_STORE_CONNECT_KEY_P8")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Not set: ${missing[*]}. See docs/ios-release.md, 'GitHub secrets and variables'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Check the tag matches the version in app.config.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -eu
+          version=$(node -p "require('./mobile/app.config.json').version")
+          tag_version="${GITHUB_REF_NAME#ios-v}"
+          case "$tag_version" in
+            "$version"|"$version"-*) echo "Tag $GITHUB_REF_NAME matches version $version." ;;
+            *) echo "::error::Tag $GITHUB_REF_NAME says $tag_version but mobile/app.config.json says $version. Change one of them."; exit 1 ;;
+          esac
+
+      - name: Install the shell's dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Check config and TypeScript
+        working-directory: mobile
+        run: npm run check
+
+      - name: Sync Capacitor into the Xcode project
+        # Also writes the bundle id, version, team id and PLENTY_BUILD_NUMBER into the project.
+        working-directory: mobile
+        run: npx cap sync ios
+
+      - name: Select Xcode
+        run: |
+          set -eu
+          newest=$(ls -d /Applications/Xcode_[0-9]*.app 2>/dev/null | grep -v -i beta | sort -V | tail -1 || true)
+          if [ -n "$newest" ]; then sudo xcode-select -s "$newest/Contents/Developer"; fi
+          xcodebuild -version
+          major=$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')
+          if [ "${major:-0}" -lt "$XCODE_MIN_MAJOR" ]; then
+            echo "::error::Xcode $XCODE_MIN_MAJOR or newer is required, this runner has Xcode ${major:-unknown}. Installed: $(ls /Applications | grep -i xcode | tr '\n' ' ')"
+            exit 1
+          fi
+
+      - name: Install the App Store Connect API key
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$HOME/.appstoreconnect/private_keys" "$RUNNER_TEMP/logs"
+          key_path="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          if printf '%s' "$ASC_KEY_P8" | head -1 | grep -q -- '-----BEGIN'; then
+            printf '%s\n' "$ASC_KEY_P8" > "$key_path"
+          else
+            printf '%s' "$ASC_KEY_P8" | base64 --decode > "$key_path"
+          fi
+          if ! head -1 "$key_path" | grep -q -- '-----BEGIN PRIVATE KEY-----'; then
+            echo "::error::APP_STORE_CONNECT_KEY_P8 does not look like an Apple .p8 key (base64 of the AuthKey_XXXX.p8 file)."
+            rm -f "$key_path"
+            exit 1
+          fi
+          echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Resolve Swift packages
+        run: |
+          for attempt in 1 2 3; do
+            if xcodebuild -resolvePackageDependencies -project "$PROJECT" -scheme "$SCHEME" 2>&1 | tee "$RUNNER_TEMP/logs/resolve-packages.log"; then
+              exit 0
+            fi
+            echo "Package resolution failed (attempt $attempt), retrying..."
+            sleep 15
+          done
+          exit 1
+
+      - name: Show the build settings that matter
+        run: |
+          xcodebuild -showBuildSettings -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
+            | grep -E '^ *(PRODUCT_BUNDLE_IDENTIFIER|MARKETING_VERSION|CURRENT_PROJECT_VERSION|DEVELOPMENT_TEAM|IPHONEOS_DEPLOYMENT_TARGET|TARGETED_DEVICE_FAMILY) ='
+
+      - name: Archive (automatic signing with the API key)
+        run: |
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Plenty.xcarchive" \
+            -resultBundlePath "$RUNNER_TEMP/logs/Archive.xcresult" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            2>&1 | tee "$RUNNER_TEMP/logs/archive.log"
+
+      - name: Export the .ipa
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>export</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+          plutil -lint "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Plenty.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee "$RUNNER_TEMP/logs/export.log"
+          ipa=$(ls "$RUNNER_TEMP"/export/*.ipa | head -1)
+          echo "IPA_PATH=$ipa" >> "$GITHUB_ENV"
+          ls -la "$RUNNER_TEMP/export"
+
+      - name: Check what is inside the .ipa
+        run: |
+          set -eu
+          work="$RUNNER_TEMP/ipa-inspect"
+          rm -rf "$work" && mkdir -p "$work"
+          unzip -q "$IPA_PATH" -d "$work"
+          app=$(ls -d "$work"/Payload/*.app | head -1)
+          plutil -p "$app/Info.plist" | grep -E 'CFBundleIdentifier|CFBundleDisplayName|CFBundleShortVersionString|CFBundleVersion|MinimumOSVersion|ITSAppUsesNonExemptEncryption|NSCameraUsageDescription|NSPhotoLibraryUsageDescription'
+          expected=$(node -p "require('./mobile/app.config.json').bundleId")
+          actual=$(plutil -extract CFBundleIdentifier raw "$app/Info.plist")
+          [ "$actual" = "$expected" ] || { echo "::error::Bundle id in the app is $actual, app.config.json says $expected"; exit 1; }
+          build=$(plutil -extract CFBundleVersion raw "$app/Info.plist")
+          [ "$build" = "$PLENTY_BUILD_NUMBER" ] || { echo "::error::Build number in the app is $build, expected $PLENTY_BUILD_NUMBER"; exit 1; }
+          test -f "$app/PrivacyInfo.xcprivacy" || { echo "::error::PrivacyInfo.xcprivacy is not in the app"; exit 1; }
+          echo "The .ipa is app $actual build $build."
+
+      - name: Keep the .ipa (to install through Transporter by hand if the upload step fails)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Plenty-ipa-build-${{ github.run_number }}
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload to App Store Connect (TestFlight)
+        run: |
+          set -u
+          echo "Validating with altool..."
+          if xcrun altool --validate-app -f "$IPA_PATH" -t ios --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/logs/altool-validate.log" \
+             && echo "Uploading with altool..." \
+             && xcrun altool --upload-app -f "$IPA_PATH" -t ios --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID" 2>&1 | tee "$RUNNER_TEMP/logs/altool-upload.log"; then
+            echo "Uploaded with altool."
+            exit 0
+          fi
+          echo "::warning::altool did not complete (see logs/altool-*.log). Trying xcodebuild -exportArchive with destination=upload."
+          sed 's#<string>export</string>#<string>upload</string>#' "$RUNNER_TEMP/ExportOptions.plist" > "$RUNNER_TEMP/ExportOptions-upload.plist"
+          plutil -lint "$RUNNER_TEMP/ExportOptions-upload.plist"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Plenty.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export-upload" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-upload.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee "$RUNNER_TEMP/logs/upload-with-xcodebuild.log"
+          echo "Uploaded with xcodebuild."
+
+      - name: Remove the API key from the runner
+        if: always()
+        run: rm -f "$HOME"/.appstoreconnect/private_keys/AuthKey_*.p8
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-release-logs
+          path: ${{ runner.temp }}/logs
+          if-no-files-found: ignore
+          retention-days: 14
